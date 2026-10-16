@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<title>导航</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="stylesheet" href="/vendor/element-plus.css?v=1">
+<link rel="stylesheet" href="/css/app.css?v=48">
+</head>
+<body>
+<div id="app" v-cloak>
+
+  <div class="np-bg" :style="bgStyle"></div>
+  <div class="np-dim" :style="{background: 'rgba(0,0,0,' + (Number(s.wallpaper_dim) / 100) + ')'}"></div>
+
+  <!-- 需要登录：未登录时服务端不下发任何条目，这里只渲染登录框 -->
+  <div class="np-lock" v-if="locked">
+    <div class="np-lock-box">
+      <img v-if="s.site_logo" class="np-lock-badge-img" :src="logoUrl" alt="">
+      <div v-else class="np-lock-badge">◆</div>
+      <div class="np-lock-title">{{ s.site_title || '导航页' }}</div>
+      <div class="np-lock-sub">登录后查看导航内容</div>
+      <el-input v-model="pw" type="password" placeholder="请输入访问密码" size="large"
+                show-password @keyup.enter="doLogin"></el-input>
+      <el-button type="primary" size="large" class="np-w100" :loading="busy" @click="doLogin">进入</el-button>
+      <div class="np-lock-tip" v-if="s.has_password === false">首次使用：这里填的密码会成为管理员密码</div>
+    </div>
+  </div>
+
+  <div class="np-shell" v-else :class="'np-theme-' + (s.card_theme || 'glass')" :style="{ '--np-card-min': cardMin }">
+    <!-- 顶栏 -->
+    <header class="np-top">
+      <div class="np-brand">
+        <!-- 自定义图标优先；没配就退回内置 ◆ 字形块（2026-10-16） -->
+        <img v-if="s.site_logo" class="np-logo-img" :src="logoUrl" alt="">
+        <span v-else class="np-logo">◆</span>
+        <div class="np-brand-text">
+          <div class="np-title">{{ s.site_title }}</div>
+          <div class="np-sub" v-if="s.site_subtitle">{{ s.site_subtitle }}</div>
+        </div>
+      </div>
+      <!-- 顶栏最右侧的统一入口：汉堡菜单（编辑布局 / 设置）
+           2026-10-15：设置齿轮从右下角悬浮按钮搬到顶栏，桌面与手机同一个入口。 -->
+      <div class="np-menu-wrap" @click.stop>
+        <button class="np-menu-btn" :class="{ 'is-open': menuOpen }"
+                :title="menuOpen ? '收起菜单' : '菜单'" @click="toggleMenu">
+          <!-- 三横线汉堡（EP 的 i-menu 是 2×2 四宫格，不是汉堡），打开时变 × -->
+          <span class="np-menu-bars"><i></i><i></i><i></i></span>
+        </button>
+        <div class="np-menu-pop" v-if="menuOpen">
+          <button class="np-menu-item" v-if="token && !layoutMode" @click="menuLayout">
+            <el-icon><i-rank /></el-icon><span>编辑布局</span>
+          </button>
+          <button class="np-menu-item" @click="menuAdmin">
+            <el-icon><i-setting /></el-icon><span>设置</span>
+          </button>
+        </div>
+      </div>
+      <div class="np-top-right">
+        <div class="np-netbadge" :class="network.mode === 'lan' ? 'is-lan' : 'is-wan'"
+             :title="'判定依据：' + (network.source || '未知') + (network.host ? ' ｜ 访问主机：' + network.host : '')">
+          <span class="np-netdot"></span>
+          <span>{{ network.mode === 'lan' ? '内网访问' : '外网访问' }}</span>
+          <span class="np-netip" v-if="network.client_ip">{{ network.client_ip }}</span>
+        </div>
+        <div class="np-modeswitch">
+          <button v-for="m in modeOptions" :key="m.v"
+                  :class="{on: modeChoice === m.v}"
+                  @click="setMode(m.v)">{{ m.t }}</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- 时钟 + 搜索 -->
+    <section class="np-hero">
+      <div class="np-clock">{{ clock }}</div>
+      <div class="np-date">{{ dateStr }}</div>
+      <div class="np-searchwrap">
+        <el-input v-model="q" size="large" clearable class="np-search"
+                  placeholder="搜索应用或网址，回车用搜索引擎搜索"
+                  @keyup.enter="onEnter">
+          <template #prefix><i-search></i-search></template>
+        </el-input>
+        <div class="np-engines">
+          <span v-for="(e, i) in (s.search_engines || [])" :key="i"
+                :class="{on: i === engineIdx}" @click="engineIdx = i">{{ e.name }}</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 分组卡片 -->
+    <main class="np-main">
+      <div class="np-group" v-for="g in filteredGroups" :key="g.key"
+           :class="{ 'np-plain': g.plain, 'is-dropzone': layoutMode, 'is-over': dragOverKey === g.key }"
+           :style="groupStyle"
+           @dragover="onDragOverGroup($event, g)"
+           @drop="onDrop($event, g, null)">
+        <div class="np-group-head" :style="g.headStyle">
+          <span class="np-group-name">{{ g.name }}</span>
+          <span class="np-group-count">{{ g.items.length }}</span>
+          <span class="np-group-line"></span>
+        </div>
+        <div class="np-grid" :style="g.gridStyle" :class="{ 'is-empty': g.empty }">
+          <div class="np-drop-hint" v-if="g.empty">
+            {{ layoutMode ? '拖动卡片到此处' : '该分类还没有卡片' }}
+          </div>
+          <a class="np-card" v-for="it in g.items" :key="it.id"
+             :href="it.url || 'javascript:void(0)'"
+             :target="it.url ? '_blank' : '_self'" rel="noopener"
+             :class="{is_disabled: !it.url, is_missing: it.missing, is_widget: it.has_widget, is_xs: sizeOf(it, g) === 'xs', 'is-dragging': dragId === it.id, 'is-layout': layoutMode}"
+             :style="cardStyle(it, g)"
+             :title="layoutMode ? '拖动我调整位置或换分组' : cardTitle(it)"
+             :draggable="layoutMode ? 'true' : 'false'"
+             @dragstart="onDragStart($event, it, g)"
+             @dragover="onDragOverCard($event)"
+             @drop="onDrop($event, g, it)"
+             @dragend="onDragEnd"
+             @click="onCardClick($event, it)"
+             @contextmenu="onCardMenu($event, it)">
+            <div class="np-card-icon">
+              <img v-if="it.icon_url" :src="it.icon_url" alt="" @error="onIconError(it)">
+              <span v-else class="np-initial" :style="{background: colorOf(it.name)}">{{ initial(it.name) }}</span>
+            </div>
+            <div class="np-card-text">
+              <div class="np-card-name">{{ it.name }}</div>
+              <div class="np-card-desc" v-if="s.show_desc && it.description">{{ it.description }}</div>
+              <!-- 状态小组件：homepage 风格 = 一行摘要 + 一排指标小方块 -->
+              <div class="np-card-widget" v-if="it.has_widget && wdg[it.id]"
+                   :class="{ 'is-err': !wdg[it.id].ok }">
+                <template v-if="wdg[it.id].ok">
+                  <div class="np-wrow">
+                    <span class="np-wtext">{{ wdg[it.id].text }}</span>
+                  </div>
+                  <div class="np-wstats" v-if="wdg[it.id].stats && wdg[it.id].stats.length">
+                    <span class="np-wstat" v-for="(st, si) in wdg[it.id].stats" :key="si"
+                          :class="'tone-' + (st.tone || 'default')">
+                      <i>{{ st.label }}</i><b>{{ st.value }}</b>
+                    </span>
+                  </div>
+                </template>
+                <template v-else>
+                  <span class="np-wdot err"></span>
+                  <span class="np-wtext">{{ wdg[it.id].error }}</span>
+                </template>
+              </div>
+              <div class="np-card-host" v-if="showUrlFor(it)">{{ hostOf(it.url) }}</div>
+            </div>
+            <span class="np-wbar" v-if="it.has_widget && wdg[it.id] && wdg[it.id].ok && wdg[it.id].progress">
+              <span class="np-wbar-fill" :style="{width: barW(wdg[it.id].progress.value)}"></span>
+            </span>
+            <!-- 右上角状态区：状态灯固定钉在卡片右上角，「仅内网/仅外网」角标排在它**左边**
+                 （2026-10-16 用户要求：角标不能把状态灯挤离角落） -->
+            <span class="np-badges" v-if="dotOf(it) || it.availability !== 'both'">
+              <span class="np-tag tag-lan" v-if="it.availability === 'lan'">仅内网</span>
+              <span class="np-tag tag-wan" v-else-if="it.availability === 'wan'">仅外网</span>
+              <span class="np-tag tag-none" v-else-if="it.availability === 'none'">未设地址</span>
+              <span class="np-dot" v-if="dotOf(it)" :class="'is-' + dotOf(it).state" :title="dotTip(it)"></span>
+            </span>
+          </a>
+        </div>
+      </div>
+      <div class="np-empty" v-if="!filteredGroups.length">
+        {{ q ? '没有匹配「' + q + '」的条目' : '还没有条目，点右下角齿轮 → 扫描导入容器' }}
+      </div>
+    </main>
+
+    <footer class="np-foot" v-if="s.footer_text">{{ s.footer_text }}</footer>
+
+    <!-- 布局模式：拖动卡片换位置 / 换分组 -->
+    <div class="np-layoutbar" v-if="layoutMode">
+      <span class="np-lb-tip">
+        <b>布局模式</b> · 拖动卡片调整顺序，拖到别的分组即可换组
+      </span>
+      <span class="np-lb-dirty" v-if="layoutDirty">未保存</span>
+      <el-button size="small" @click="quickAddGroup">+ 新建分组</el-button>
+      <el-button size="small" @click="cancelLayout">取消</el-button>
+      <el-button size="small" type="primary" :loading="savingLayout" @click="saveLayout">保存布局</el-button>
+    </div>
+  </div>
+
+  <!-- ============ 管理抽屉 ============ -->
+  <el-drawer v-model="adminOpen" :size="drawerSize" :with-header="false" class="np-drawer">
+    <div class="np-admin">
+      <div class="np-admin-head">
+        <span class="np-admin-title">管理控制台</span>
+        <span class="np-admin-actions">
+          <el-button v-if="token" size="small" @click="reload">刷新</el-button>
+          <el-button v-if="token" size="small" type="danger" plain @click="logout">退出</el-button>
+          <el-button size="small" text @click="adminOpen = false">关闭</el-button>
+        </span>
+      </div>
+
+      <!-- 未登录 -->
+      <div v-if="!token" class="np-login">
+        <p class="np-login-tip" v-if="!s.has_password">首次使用，请先设置一个管理员密码。</p>
+        <p class="np-login-tip" v-else>请输入管理员密码。</p>
+        <el-input v-model="pw" type="password" show-password size="large"
+                  :placeholder="s.has_password ? '管理员密码' : '设置密码（至少 4 位）'"
+                  @keyup.enter="doLogin"></el-input>
+        <el-button type="primary" size="large" class="np-w100" :loading="busy" @click="doLogin">
+          {{ s.has_password ? '登录' : '设置并登录' }}
+        </el-button>
+      </div>
+
+      <el-tabs v-else v-model="tab" class="np-tabs" @focusout="flushAutoSave" @tab-change="centerTab">
+        <!-- ---------------- 项目 ---------------- -->
+        <el-tab-pane label="项目" name="items">
+          <div class="np-bar">
+            <el-button type="primary" size="small" @click="openItem(null)">新增条目</el-button>
+            <el-button size="small" @click="refreshIcons()">重抓图标</el-button>
+            <span class="np-bar-tip">共 {{ items.length }} 条</span>
+          </div>
+          <div class="np-scroll">
+            <table class="ep-table">
+              <thead>
+                <tr><th class="c-icon">图标</th><th class="c-name">名称</th><th class="c-lan">内网地址</th><th class="c-wan">外网地址</th><th class="c-cat">分类</th><th class="c-op">操作</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="it in items" :key="it.id" :class="{dim: it.hidden}">
+                  <td>
+                    <span class="np-mini" :style="it.icon_url ? {} : {background: colorOf(it.name)}">
+                      <img v-if="it.icon_url" :src="it.icon_url" alt="" @error="onIconError(it)">
+                      <template v-else>{{ initial(it.name) }}</template>
+                    </span>
+                  </td>
+                  <td>
+                    <div class="np-strong">{{ it.name }}</div>
+                    <div class="np-muted">
+                      <span v-if="it.source === 'docker'" class="np-chip">docker</span>
+                      <span v-if="it.missing" class="np-chip warn">容器已消失</span>
+                      <span v-if="it.hidden" class="np-chip warn">已排除</span>
+                      <span v-if="!it.url_lan && !it.url_wan" class="np-chip">待填地址</span>
+                      {{ it.container_image }}
+                    </div>
+                  </td>
+                  <td class="np-url">{{ it.url_lan_view || it.url_lan || '—' }}</td>
+                  <td class="np-url">{{ it.url_wan_view || it.url_wan || '—' }}</td>
+                  <td>{{ catName(it.category_id) }}</td>
+                  <td>
+                    <el-button size="small" text type="primary" @click="openItem(it)">编辑</el-button>
+                    <el-button v-if="it.hidden" size="small" text @click="setExcluded(it, false)">恢复</el-button>
+                    <el-button v-else size="small" text @click="setExcluded(it, true)">排除</el-button>
+                    <el-button size="small" text type="danger" @click="delItem(it)">删除</el-button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="np-empty-sm" v-if="!items.length">暂无条目</div>
+          </div>
+        </el-tab-pane>
+
+        <!-- ---------------- 分类 ---------------- -->
+        <el-tab-pane label="分类" name="cats">
+          <div class="np-bar">
+            <el-input v-model="newCat" size="small" placeholder="新分类名称" style="max-width:200px"></el-input>
+            <el-button type="primary" size="small" @click="addCat">添加</el-button>
+            <span class="np-bar-tip">{{ selCats.length ? '已选 ' + selCats.length + ' / ' + categories.length : '勾选后可批量删除' }}</span>
+            <el-button type="danger" size="small" plain
+                       :disabled="!selCats.length" @click="bulkDelCats">
+              批量删除<span v-if="selCats.length">（{{ selCats.length }}）</span>
+            </el-button>
+          </div>
+          <div class="np-scroll">
+            <div class="np-hint">分类就是首页的分组。建好后到首页点右上角汉堡里的「编辑布局」，把卡片拖进分组即可。用「排序」列的 ↑ ↓ 调整分组在首页的先后顺序。</div>
+            <table class="ep-table">
+              <thead><tr>
+                <th class="c-chk">
+                  <el-checkbox :model-value="catAllChecked" :indeterminate="catIndeterminate"
+                               :disabled="!categories.length" @change="toggleAllCats"></el-checkbox>
+                </th>
+                <th class="c-name-w">名称</th><th class="c-count">条目数</th><th class="c-size">卡片尺寸</th><th class="c-move">排序</th><th class="c-act">操作</th>
+              </tr></thead>
+              <tbody>
+                <tr v-for="c in categories" :key="c.id" :class="{ sel: selCats.indexOf(c.id) >= 0 }">
+                  <td>
+                    <el-checkbox :model-value="selCats.indexOf(c.id) >= 0"
+                                 @change="onCatCheck(c.id, $event)"></el-checkbox>
+                  </td>
+                  <td>{{ c.name }}</td>
+                  <td>{{ countInCat(c.id) }}</td>
+                  <td class="c-size">
+                    <el-select :model-value="c.card_size || 'inherit'" size="small" style="width:104px"
+                               @change="setCatSize(c, $event)">
+                      <el-option v-for="o in sizeOptionsCat" :key="o.v" :label="o.t" :value="o.v"></el-option>
+                    </el-select>
+                  </td>
+                  <td class="c-move">
+                    <el-button size="small" :title="'上移'" :disabled="catIdx(c.id) <= 0"
+                               @click="moveCat(c, -1)">↑</el-button>
+                    <el-button size="small" :title="'下移'" :disabled="catIdx(c.id) >= categories.length - 1"
+                               @click="moveCat(c, 1)">↓</el-button>
+                  </td>
+                  <td>
+                    <el-button size="small" text type="primary" @click="renameCat(c)">改名</el-button>
+                    <el-button size="small" text type="danger" @click="delCat(c)">删除</el-button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="np-empty-sm" v-if="!categories.length">暂无分类</div>
+          </div>
+        </el-tab-pane>
+
+        <!-- ---------------- 扫描导入 ---------------- -->
+        <el-tab-pane label="扫描导入" name="scan">
+          <div class="np-bar">
+            <el-button type="primary" size="small" :loading="scanning" @click="doScan">扫描容器</el-button>
+            <el-button size="small" :loading="scanning" @click="syncAll">全量同步（保留我的修改）</el-button>
+            <el-button size="small" :loading="autocatting" @click="autocatAll">按服务类型归类</el-button>
+          </div>
+          <div class="np-scroll">
+          <div class="np-docker" :class="docker.ok ? 'ok' : 'bad'">
+            <template v-if="docker.ok">
+              Docker 已连接 · {{ docker.version }} · API {{ docker.api_version }}
+            </template>
+            <template v-else>
+              Docker 不可用：{{ docker.error || '未挂载 socket' }}（host: {{ docker.host }}）
+            </template>
+          </div>
+
+          <template v-if="scanResult">
+            <div class="np-scan-sec">
+              <div class="np-scan-head">
+                <b>新发现 {{ scanResult.new.length }} 个</b>
+                <span class="np-bar-tip" v-if="scanResult.new.length">
+                  <a href="javascript:void(0)" @click="selectAllNew">全选</a> /
+                  <a href="javascript:void(0)" @click="selNew = []">清空</a>
+                </span>
+                <el-button type="primary" size="small" :loading="importing"
+                           :disabled="!selNew.length" @click="importSelected">
+                  导入选中 {{ selNew.length }} 个
+                </el-button>
+              </div>
+              <table class="ep-table" v-if="scanResult.new.length">
+                <thead><tr><th class="c-chk"></th><th class="c-name-m">名称</th><th class="c-box">容器</th><th class="c-port">端口</th><th class="c-lan">内网地址</th></tr></thead>
+                <tbody>
+                  <tr v-for="c in scanResult.new" :key="c.container_name">
+                    <td><input type="checkbox" v-model="selNew" :value="c.container_name"></td>
+                    <td>{{ c.name }}<div class="np-muted">自动归入：{{ c.auto_category || c.category || '未分类' }}</div></td>
+                    <td class="np-muted">{{ c.container_name }}</td>
+                    <td>
+                      <span v-if="c.no_port" class="np-chip">无端口</span>
+                      <template v-else>{{ c.container_port }}</template>
+                    </td>
+                    <td class="np-url">
+                      <span v-if="!c.url_lan" class="np-muted">导入后在「项目」里手填</span>
+                      <template v-else>{{ c.url_lan }}</template>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="np-scan-sec">
+              <div class="np-scan-head"><b>已收录 {{ scanResult.existing.length }} 个</b></div>
+              <table class="ep-table" v-if="scanResult.existing.length">
+                <thead><tr><th class="c-name-l">名称</th><th class="c-box">容器</th><th class="c-port">端口</th><th class="c-state">状态</th></tr></thead>
+                <tbody>
+                  <tr v-for="c in scanResult.existing" :key="c.container_name">
+                    <td>{{ c.name }}</td>
+                    <td class="np-muted">{{ c.container_name }}</td>
+                    <td>{{ c.container_port }}</td>
+                    <td class="np-muted">{{ c.status }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="np-scan-sec" v-if="scanResult.missing.length">
+              <div class="np-scan-head"><b>已消失 {{ scanResult.missing.length }} 个</b></div>
+              <table class="ep-table">
+                <thead><tr><th class="c-name-xl">名称</th><th class="c-box">容器</th><th class="c-act">操作</th></tr></thead>
+                <tbody>
+                  <tr v-for="c in scanResult.missing" :key="c.id">
+                    <td>{{ c.name }}</td>
+                    <td class="np-muted">{{ c.container_name }}</td>
+                    <td><el-button size="small" text type="danger" @click="delItemById(c.id)">删除</el-button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="np-scan-sec" v-if="scanResult.skipped && scanResult.skipped.length">
+              <div class="np-scan-head"><b>已跳过 {{ scanResult.skipped.length }} 个</b>
+                <span class="np-bar-tip">按设置跳过或已被排除</span></div>
+              <div class="np-muted np-skip">
+                <span v-for="(x, i) in scanResult.skipped" :key="x.name">{{ i ? '、' : '' }}{{ x.name }}（{{ x.reason }}）</span>
+              </div>
+            </div>
+          </template>
+          <div class="np-empty-sm" v-else>点「扫描容器」列出 NAS 上的所有容器（含无端口映射的）</div>
+          </div>
+        </el-tab-pane>
+
+        <!-- ---------------- 外观 ---------------- -->
+        <el-tab-pane label="外观" name="look">
+          <div class="np-scroll">
+          <div class="np-sec">
+            <div class="np-sec-head">站点信息</div>
+            <div class="np-field"><label>站点标题</label><el-input v-model="s.site_title" size="small"></el-input></div>
+            <div class="np-field">
+              <label>左上角图标</label>
+              <div class="np-wall">
+                <label class="np-upload">
+                  <input type="file" accept="image/*" @change="uploadLogo" hidden>
+                  <span>上传图片</span>
+                </label>
+                <el-input v-model="logoUrlInput" size="small" placeholder="或粘贴图片 URL"></el-input>
+                <el-button size="small" @click="useLogoUrl">使用</el-button>
+                <el-button size="small" @click="clearLogo">恢复默认</el-button>
+              </div>
+              <div class="np-hint">
+                显示在左上角标题前，登录页也会用。建议正方形、128×128 以上的 PNG / SVG（透明底更好看）；
+                当前：<b>{{ s.site_logo ? '自定义图标' : '默认 ◆' }}</b>
+              </div>
+            </div>
+            <div class="np-field"><label>副标题</label><el-input v-model="s.site_subtitle" size="small"></el-input></div>
+            <div class="np-field"><label>页脚文字</label><el-input v-model="s.footer_text" size="small" placeholder="可留空"></el-input></div>
+          </div>
+          <div class="np-sec">
+            <div class="np-sec-head">壁纸 <span>可存多张，点缩略图切换</span></div>
+          <div class="np-field">
+            <label>当前壁纸</label>
+            <div class="np-wall">
+              <label class="np-upload">
+                <input type="file" accept="image/*" @change="uploadWall" hidden>
+                <span>上传图片</span>
+              </label>
+              <el-input v-model="wallUrlInput" size="small" placeholder="或粘贴图片 URL"></el-input>
+              <el-button size="small" @click="useWallUrl">使用</el-button>
+              <el-button size="small" @click="clearWall">清除</el-button>
+            </div>
+            <div class="np-wall-list" v-if="wallpapers.length">
+              <div v-for="w in wallpapers" :key="w.name"
+                   class="np-wall-item" :class="{on: s.wallpaper === w.name}"
+                   @click="pickWall(w.name)">
+                <img :src="w.url" alt="">
+                <span class="np-wall-del" @click.stop="delWall(w)">×</span>
+              </div>
+            </div>
+            <div class="np-muted np-wall-cur">
+              当前：<b>{{ s.wallpaper || '默认渐变' }}</b>
+              <span v-if="s.wallpaper && s.wallpaper.indexOf('http') === 0">（URL，已回填到上方）</span>
+            </div>
+          </div>
+          <div class="np-field row">
+            <label>模糊</label>
+            <div class="np-sliderrow">
+              <el-slider v-model="s.wallpaper_blur" :min="0" :max="30" size="small"></el-slider>
+              <span class="np-num">{{ s.wallpaper_blur }}px</span>
+            </div>
+          </div>
+          <div class="np-field row">
+            <label>暗化</label>
+            <div class="np-sliderrow">
+              <el-slider v-model="s.wallpaper_dim" :min="0" :max="85" size="small"></el-slider>
+              <span class="np-num">{{ s.wallpaper_dim }}%</span>
+            </div>
+          </div>
+          <div class="np-field">
+            <label>随机壁纸</label>
+            <el-switch v-model="s.wallpaper_random"></el-switch>
+            <div class="np-hint">每次刷新随机换一张。</div>
+          </div>
+          </div>
+          <div class="np-sec">
+            <div class="np-sec-head">卡片 <span>首页卡片的外观与信息量</span></div>
+            <div class="np-field">
+            <label>卡片风格</label>
+            <div class="np-seg">
+              <button v-for="o in themeOptions" :key="o.v" :class="{on: s.card_theme === o.v}"
+                      @click="s.card_theme = o.v">{{ o.t }}</button>
+            </div>
+            </div>
+          <div class="np-field">
+            <label>卡片大小</label>
+            <div class="np-seg">
+              <button v-for="o in sizeOptions" :key="o.v" :class="{on: s.card_size === o.v}"
+                      @click="s.card_size = o.v">{{ o.t }}</button>
+            </div>
+          </div>
+            <div class="np-field row">
+              <label>每行分组数</label>
+              <div class="np-ctlrow">
+                <el-input-number v-model="s.columns" :min="0" :max="8" size="small" controls-position="right"></el-input-number>
+                <span class="np-hint">0=自适应，1=每个分类独占一行</span>
+              </div>
+            </div>
+            <div class="np-field">
+              <label>显示描述</label>
+              <el-switch v-model="s.show_desc"></el-switch>
+            </div>
+            <div class="np-field">
+              <label>服务状态</label>
+              <el-switch v-model="s.widgets_enabled"></el-switch>
+              <div class="np-hint">
+                在「项目」里给条目配上 API 地址，卡片就会显示下载速度、正在播放等实时信息（数据只在内网抓取，需登录可见）。
+              </div>
+            </div>
+            <div class="np-field row" v-if="s.widgets_enabled">
+              <label>刷新间隔</label>
+              <div class="np-ctlrow">
+                <el-input-number v-model="s.widget_interval" :min="10" :max="600" size="small"
+                                 controls-position="right"></el-input-number>
+                <span class="np-hint">秒</span>
+              </div>
+            </div>
+            <div class="np-field">
+              <label>显示服务地址</label>
+              <el-switch v-model="s.show_url"></el-switch>
+              <div class="np-hint">关掉更干净；单个条目可在编辑弹窗里单独覆盖。</div>
+            </div>
+            <div class="np-field">
+              <label>容器状态灯</label>
+              <el-switch v-model="s.status_dot"></el-switch>
+              <div class="np-hint">
+                容器卡片图标右下角的小圆点：<b>绿</b>=正常、<b>黄</b>=延迟偏高、<b>红</b>=访问不了（悬停看毫秒数）。
+                由面板从内网探测，跟随上面的刷新间隔；网站收藏卡片不显示。
+              </div>
+            </div>
+            <div class="np-field row" v-if="s.status_dot">
+              <label>延迟阈值</label>
+              <div class="np-ctlrow">
+                <el-input-number v-model="s.status_slow_ms" :min="100" :max="10000" :step="100"
+                                 size="small" controls-position="right"></el-input-number>
+                <span class="np-hint">毫秒，超过显示黄点</span>
+              </div>
+            </div>
+          </div>
+          </div>
+          <div class="np-savebar">
+            <el-button type="primary" :loading="busy" @click="saveSettings()">保存外观设置</el-button>
+            <span class="np-savebar-tip">改动即自动保存，按钮用于手动确认</span>
+          </div>
+        </el-tab-pane>
+
+        <!-- ---------------- 网络与安全 ---------------- -->
+        <el-tab-pane label="网络与安全" name="net">
+          <div class="np-scroll">
+          <div class="np-sec">
+            <div class="np-sec-head">地址与域名 <span>决定卡片链接怎么拼</span></div>
+            <div class="np-field">
+              <label>内网地址</label>
+              <el-input v-model="s.host_lan_ip" size="small" placeholder="留空即按浏览器访问地址自动推导"></el-input>
+              <div class="np-hint">留空最省事：用内网 IP 打开面板，链接就自动用它。</div>
+            </div>
+            <div class="np-field">
+              <label>外网域名</label>
+              <el-input v-model="s.host_wan" size="small" placeholder="如 nas.example.com，可留空"></el-input>
+              <div class="np-hint">用于自动拼外网地址。</div>
+            </div>
+            <div class="np-field row">
+              <label>外网协议</label>
+              <div class="np-seg">
+                <button v-for="o in schemeOptions" :key="o" :class="{on: s.wan_scheme === o}"
+                        @click="s.wan_scheme = o">{{ o }}</button>
+              </div>
+              <div class="np-hint">frp 直通 TCP 时只有 <b>http</b> 能开，填 https 会打不开链接。</div>
+            </div>
+            <div class="np-field">
+              <label>内网网段</label>
+              <el-input v-model="s.lan_cidrs" type="textarea" :rows="3" size="small"></el-input>
+              <div class="np-hint">逗号分隔，用于判定「内网访问」。</div>
+            </div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-sec-head">网络判定 <span>服务端怎么认内网 / 外网</span></div>
+            <div class="np-field">
+              <label>外网访问域名</label>
+              <el-input v-model="s.wan_hosts" size="small"
+                        placeholder="如 nas.example.com,*.mydomain.com（逗号分隔）"></el-input>
+              <div class="np-hint">从 frp / 反代进来时服务端看到的仍是内网 IP，填上外网域名才判得准（支持 <code>*.example.com</code>）。</div>
+            </div>
+            <div class="np-field">
+              <label>用域名访问即视为外网</label>
+              <el-switch v-model="s.domain_means_wan"></el-switch>
+              <div class="np-hint">内网也用域名访问（本地 DNS 解析到 NAS）就关掉。</div>
+            </div>
+            <div class="np-field">
+              <label>frp 自定义请求头</label>
+              <div class="np-2col">
+                <el-input v-model="s.frp_header_name" size="small" placeholder="头名，如 X-Navpage-Net"></el-input>
+                <el-input v-model="s.frp_header_value" size="small" placeholder="头值，如 wan（留空=只看头存在）"></el-input>
+              </div>
+              <div class="np-hint">frp 的 HTTP 代理可在 frpc 里加 <code>requestHeaders.set.X-Navpage-Net = wan</code>，比按域名判更稳；TCP 代理不支持加头。</div>
+            </div>
+            <div class="np-field">
+              <label>信任 X-Forwarded-For</label>
+              <el-switch v-model="s.trust_proxy"></el-switch>
+              <div class="np-hint">反向代理后面才需要开。</div>
+            </div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-sec-head">切换与访问</div>
+            <div class="np-field">
+              <label>自动内网 / 外网切换</label>
+              <el-switch v-model="s.auto_switch"></el-switch>
+              <div class="np-hint">由浏览器探测内网是否可达来自动选链接；顶栏手动选内网 / 外网会覆盖它。</div>
+            </div>
+            <div class="np-field row" v-if="!s.auto_switch">
+              <label>固定使用</label>
+              <div class="np-seg">
+                <button :class="{on: s.default_mode === 'lan'}" @click="s.default_mode = 'lan'">内网</button>
+                <button :class="{on: s.default_mode === 'wan'}" @click="s.default_mode = 'wan'">外网</button>
+              </div>
+            </div>
+            <div class="np-field">
+              <label>打开首页需要登录</label>
+              <el-switch v-model="s.require_login"></el-switch>
+            </div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-sec-head">扫描行为</div>
+            <div class="np-field">
+              <label>扫描排除的容器名</label>
+              <el-input v-model="s.scan_exclude" size="small" placeholder="如 redis-mp,lunatv-redis（逗号分隔）"></el-input>
+              <div class="np-hint">在「项目」页点「排除」会自动写进这里，重新扫描也不会再导回来；「恢复」反向操作。</div>
+            </div>
+            <div class="np-field">
+              <label>跳过无端口映射的容器</label>
+              <el-switch v-model="s.scan_hide_no_port"></el-switch>
+              <div class="np-hint">默认关闭：这类容器也会生成卡片，地址留空，到「项目」里手动补端口。</div>
+            </div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-sec-head">管理员密码</div>
+            <div class="np-field row">
+              <label>新密码</label>
+              <div class="np-ctlrow">
+                <el-input v-model="newPw" type="password" show-password size="small"
+                          placeholder="至少 4 位" style="max-width:260px"></el-input>
+                <el-button size="small" @click="changePw">修改</el-button>
+              </div>
+            </div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-sec-head">当前判定 <span>排查内外网判断问题时看这里</span></div>
+            <div class="np-kv">
+              <span>模式</span><b>{{ network.mode }}（服务端判定 {{ network.auto_mode }}）</b>
+              <span>切换模式</span>
+              <b>{{ modeChoice === 'auto' ? '自动（按探测结果）' : (modeChoice === 'lan' ? '手动锁定 = 内网' : '手动锁定 = 外网') }}</b>
+              <span>客户端 IP</span><b>{{ network.client_ip }} · 来源 {{ network.source }}</b>
+              <span>局域网探测</span><b>{{ probeText }}</b>
+              <span>探测地址</span><b class="mono">{{ probeUrlText }}</b>
+            </div>
+          </div>
+
+          </div>
+          <div class="np-savebar">
+            <el-button type="primary" :loading="busy" @click="saveSettings()">保存网络设置</el-button>
+            <el-button size="small" @click="reprobeLan">重新探测内网</el-button>
+            <span class="np-savebar-tip">{{ autoSaveAt ? '已自动保存 ' + autoSaveAt : '改动即自动保存，按钮用于手动确认' }}</span>
+          </div>
+        </el-tab-pane>
+
+        <!-- ---------------- 镜像更新 ---------------- -->
+        <el-tab-pane label="镜像" name="images">
+          <div class="np-bar">
+            <el-button type="primary" size="small" :loading="imgLoading" @click="loadImages(true)">
+              检查更新
+            </el-button>
+            <el-button size="small" :disabled="!imgOutdated || imgAllow === false" :loading="imgUpdating"
+                       @click="updateAllImages">更新全部 {{ imgOutdated }} 个</el-button>
+            <span class="np-bar-tip" v-if="imgRows.length">
+              共 {{ imgRows.length }} 个容器 · <b class="np-warn-txt">{{ imgOutdated }}</b> 个可更新
+            </span>
+          </div>
+          <div class="np-scroll">
+            <div class="np-hint">比对本地镜像与 registry 上的最新摘要。Docker Hub 按 IP 限流匿名查询，一次扫几十个很容易整片 429（现象就是「一直显示不出来更新」），填镜像源可绕开。</div>
+            <div class="np-sec">
+              <div class="np-sec-head">更新设置</div>
+              <div class="np-field">
+                <label>镜像源</label>
+                <el-input v-model="s.image_mirror" size="small"
+                          placeholder="https://docker.1panel.live，只对 Docker Hub 镜像生效"></el-input>
+                <div class="np-hint">直连镜像站、不占 Docker Hub 配额，通常 1~3 秒返回；查不到时自动回退下面的代理。</div>
+              </div>
+              <div class="np-field">
+                <label>代理（兜底）</label>
+                <el-input v-model="s.image_proxy" size="small"
+                          placeholder="http://user:pass@192.168.1.10:7893，留空=直连"></el-input>
+              </div>
+              <div class="np-field row">
+                <label>结果缓存</label>
+                <div class="np-ctlrow">
+                  <el-input-number v-model="s.image_check_cache" :min="60" :max="86400" size="small"
+                                   controls-position="right"></el-input-number>
+                  <span class="np-hint">秒</span>
+                </div>
+              </div>
+              <div class="np-field">
+                <label>允许从面板更新镜像</label>
+                <el-switch v-model="s.allow_image_update"></el-switch>
+                <div class="np-hint">
+                  面板没挂 docker.sock，要用它更新得<b>两把锁同时打开</b>：① 这个开关；
+                  ② 给 <code>navpage-socket-proxy</code> 加上 <code>POST=1 ALLOW_START=1 ALLOW_STOP=1</code> 并重启它。
+                  只开①会报 403。②等于把宿主机 root 能力交给面板，请自行权衡；不开也能用「检查更新」手动更新。
+                </div>
+              </div>
+            </div>
+            <div class="np-sec">
+              <div class="np-sec-head">定时自动检查 <span>到点自动比对更新，可只更新勾选过的镜像</span></div>
+              <div class="np-field row">
+                <label>定时检查</label>
+                <div class="np-ctlrow">
+                  <el-switch v-model="s.image_auto_check"></el-switch>
+                  <span class="np-hint">关掉时后台完全不跑</span>
+                </div>
+              </div>
+              <template v-if="s.image_auto_check">
+                <div class="np-field row">
+                  <label>检查时间</label>
+                  <div class="np-ctlrow">
+                    <el-select v-model="cronPreset" size="small" style="width:132px">
+                      <el-option v-for="p in cronPresets" :key="p[0]" :label="p[1]" :value="p[0]"></el-option>
+                      <el-option label="自定义" value=""></el-option>
+                    </el-select>
+                    <el-input v-model="s.image_auto_cron" size="small" class="mono" style="width:140px"
+                              placeholder="0 3 * * *"></el-input>
+                  </div>
+                </div>
+                <div class="np-hint">
+                  5 段 cron：<b>分 时 日 月 周</b>。例：<code>0 3 * * *</code> 每天 3 点 ·
+                  <code>0 */6 * * *</code> 每 6 小时 · <code>0 3 * * 0</code> 每周日 3 点（周日写 0 或 7）。
+                </div>
+                <div class="np-hint np-warn-txt" v-if="imgAuto && !imgAuto.valid">
+                  这个表达式认不出来，定时检查不会执行。
+                </div>
+                <div class="np-hint" v-else-if="imgAuto && imgAuto.next">
+                  下次运行：<b>{{ fmtTs(imgAuto.next) }}</b>（{{ imgAuto.desc }}）
+                </div>
+                <div class="np-field row">
+                  <label>检查到更新就自动更新</label>
+                  <div class="np-ctlrow">
+                    <el-switch v-model="s.image_auto_update"></el-switch>
+                    <span class="np-hint">
+                      只更新下面表格里勾了「自动更新」的镜像（已勾 {{ autoNames.length }} 个）
+                    </span>
+                  </div>
+                </div>
+                <div class="np-hint" v-if="s.image_auto_update && !s.allow_image_update">
+                  上面的「允许从面板更新镜像」还关着，到点只会检查、不会真的更新。
+                </div>
+              </template>
+              <div class="np-hint" v-if="imgAuto && imgAuto.last">
+                上次运行（{{ fmtTs(imgAuto.last.ts) }}）：{{ autoLastText }}
+              </div>
+            </div>
+            <!-- ---------------- 定时清理未使用镜像（2026-10-16 用户要求） ----------------
+                 和上面的「定时自动检查」并列，但开关/cron 完全独立（后端也是两个独立任务）。 -->
+            <div class="np-sec">
+              <div class="np-sec-head">定时清理未使用镜像 <span>到点自动删掉没被容器使用的镜像，释放磁盘</span></div>
+              <div class="np-field row">
+                <label>定时清理</label>
+                <div class="np-ctlrow">
+                  <el-switch v-model="s.image_auto_prune"></el-switch>
+                  <span class="np-hint">关掉时后台完全不跑</span>
+                </div>
+              </div>
+              <template v-if="s.image_auto_prune">
+                <div class="np-field row">
+                  <label>清理时间</label>
+                  <div class="np-ctlrow">
+                    <el-select v-model="prunePreset" size="small" style="width:132px">
+                      <el-option v-for="p in cronPresets" :key="p[0]" :label="p[1]" :value="p[0]"></el-option>
+                      <el-option label="自定义" value=""></el-option>
+                    </el-select>
+                    <el-input v-model="s.image_auto_prune_cron" size="small" class="mono" style="width:140px"
+                              placeholder="0 3 * * 0"></el-input>
+                  </div>
+                </div>
+                <div class="np-hint np-warn-txt" v-if="pruneSt && !pruneSt.valid">
+                  这个表达式认不出来，定时清理不会执行。
+                </div>
+                <div class="np-hint" v-else-if="pruneSt && pruneSt.next">
+                  下次运行：<b>{{ fmtTs(pruneSt.next) }}</b>（{{ pruneSt.desc }}）
+                </div>
+              </template>
+              <div class="np-field">
+                <label>清理范围</label>
+                <div class="np-seg">
+                  <button v-for="o in pruneModes" :key="o.v" :class="{on: s.image_prune_mode === o.v}"
+                          @click="s.image_prune_mode = o.v">{{ o.t }}</button>
+                </div>
+                <div class="np-hint">
+                  <b>悬空镜像</b>：没有标签的 &lt;none&gt; 中间层，最安全（等同 <code>docker image prune</code>）。
+                  <b>未被使用</b>：连有标签但没容器用的也删（等同 <code>docker image prune -a</code>，
+                  会删掉「拉过还没跑」的镜像和上一版备份，删了就没了）。
+                  两种范围都<b>不会碰正在或曾经被容器用过的镜像</b>——停止中的容器也算「在用」。
+                </div>
+              </div>
+              <div class="np-field">
+                <label>白名单</label>
+                <div class="np-ctlrow">
+                  <el-input v-model="keepInput" size="small" style="max-width:260px"
+                            placeholder="如 deluan/navidrome:latest" @keyup.enter="addKeep"></el-input>
+                  <el-button size="small" @click="addKeep">添加</el-button>
+                </div>
+                <div class="np-keep-list" v-if="keepList.length">
+                  <el-tag v-for="k in keepList" :key="k" size="small" closable @close="delKeep(k)">{{ k }}</el-tag>
+                </div>
+                <div class="np-hint">白名单里的镜像永远不清理，支持 <code>*</code> 通配（如 <code>linuxserver/*</code>）。</div>
+              </div>
+              <div class="np-field row">
+                <label>手动清理</label>
+                <div class="np-ctlrow">
+                  <el-button size="small" :loading="pruneBusy" @click="previewPrune">预览可清理</el-button>
+                  <el-button size="small" type="danger" plain :loading="pruneBusy" @click="runPrune()">立即清理</el-button>
+                </div>
+              </div>
+              <div class="np-hint" v-if="prunePrev">
+                可清理 <b>{{ prunePrev.count }}</b> 个，共 <b>{{ prunePrev.bytes_text }}</b>
+                <template v-if="prunePrev.count">：{{ pruneNames }}</template>
+                <template v-else>（没有可清理的镜像）</template>
+              </div>
+              <div class="np-hint np-warn-txt" v-if="pruneSt && pruneSt.last && pruneSt.last.error">
+                上次清理出错：{{ pruneSt.last.error }}
+              </div>
+              <div class="np-hint" v-else-if="pruneSt && pruneSt.last">
+                上次清理（{{ fmtTs(pruneSt.last.ts) }}）：{{ pruneLastText }}
+              </div>
+            </div>
+            <div class="np-docker" v-if="imgError" :class="'bad'">{{ imgError }}</div>
+            <!-- 当前正在进行的操作 + 拉取进度（吸顶：必须是 .np-scroll 的直接子级） -->
+            <div class="np-task" v-if="imgUpdatingName">
+              <div class="np-task-step">
+                <span class="np-task-dot"></span>
+                <span class="np-task-name">{{ imgUpdatingName }}</span>
+                {{ imgStep || '准备中…' }}
+              </div>
+              <div class="np-task-bar" :class="{ busy: imgPhase !== 'pull' }">
+                <i :style="imgPhase === 'pull' ? { width: imgPct + '%' } : {}"></i>
+              </div>
+              <div class="np-task-meta">
+                <span v-if="imgPhase === 'pull'">镜像拉取 {{ imgPct }}%</span>
+                <span v-else>正在执行：{{ imgPhase === 'recreate' ? '重建容器' : (imgPhase === 'rollback' ? '回滚' : '准备') }}</span>
+                <span class="np-task-hint">· 已用 {{ imgElapsed }}s · 更新期间容器会短暂中断，完成前请勿关闭面板</span>
+              </div>
+            </div>
+            <!-- 日志放在表格「上方」：表格有几十行，放下面等于用户看不见 -->
+            <div class="np-sec" v-if="imgLog.length || imgUpdatingName || imgLast">
+              <div class="np-sec-title">更新日志</div>
+              <pre class="np-log" v-if="imgLog.length">{{ imgLog.join('\n') }}</pre>
+              <div class="np-last" v-if="imgLast && !imgUpdatingName">
+                上次：{{ imgLast.container }}
+                <b :class="imgLast.success === true ? 'np-ok-txt' : (imgLast.success === false ? 'np-err-txt' : 'np-warn-txt')">{{
+                  imgLast.success === true ? '成功' : (imgLast.success === false ? '失败' : '结果未知') }}</b>
+                （{{ ago(imgLast.ts) }}<span v-if="imgLast.elapsed"> · 用时 {{ imgLast.elapsed }}s</span>）
+                <span v-if="!imgLast.success" class="np-muted">{{ imgLast.message }}</span>
+              </div>
+            </div>
+            <table class="ep-table" v-if="imgRows.length">
+              <thead>
+                <tr><th class="c-box">容器</th><th class="c-tag">镜像</th><th class="c-state">状态</th>
+                    <th class="c-ver">本地 / 远程</th><th class="c-auto">自动更新</th><th class="c-act">操作</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="r in imgRows" :key="r.container">
+                  <td>
+                    <div class="np-strong">{{ r.container }}</div>
+                    <div class="np-muted">
+                      <span v-if="r.project" class="np-chip">{{ r.project }}</span>
+                      <span class="np-chip" :class="{warn: r.state !== 'running'}">{{ r.state }}</span>
+                    </div>
+                  </td>
+                  <td class="np-url">{{ r.image }}</td>
+                  <td>
+                    <span class="np-imgst" :class="[r.status, { local: r.local_only }]">
+                      {{ r.local_only ? '本地镜像'
+                         : (r.status === 'outdated' ? '可更新' : (r.status === 'current' ? '已最新' : '未知')) }}
+                    </span>
+                  </td>
+                  <td class="np-muted np-mono">
+                    {{ r.local_digest || '—' }}<br>
+                    <span :class="{ 'np-warn-txt': r.status === 'outdated' }">{{ r.remote_digest || '—' }}</span>
+                  </td>
+                  <td class="c-center">
+                    <el-checkbox :model-value="isAutoName(r.container)"
+                                 :disabled="!!r.local_only"
+                                 :title="r.local_only ? '本地构建的镜像没有远端版本可比' : '定时检查到更新时自动更新这个容器'"
+                                 @change="toggleAutoName(r.container, $event)"></el-checkbox>
+                  </td>
+                  <td>
+                    <div class="np-row-busy" v-if="imgUpdatingName === r.container">
+                      <span class="np-task-dot"></span>{{ imgPct > 0 && imgPhase === 'pull' ? imgPct + '%' : '进行中' }}
+                    </div>
+                    <el-button size="small" text type="primary" v-else
+                               :disabled="imgAllow === false || imgAnyBusy"
+                               @click="updateImage(r)">{{ r.local_only ? '重建' : '更新' }}</el-button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="np-empty-sm" v-else-if="!imgLoading">
+              点「检查更新」比对本地镜像和 registry 的最新版本
+            </div>
+          </div>
+          <div class="np-savebar">
+            <el-button type="primary" :loading="busy" @click="saveSettings()">保存镜像设置</el-button>
+            <span class="np-savebar-tip">改动即自动保存，按钮用于手动确认</span>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
+    </div>
+  </el-drawer>
+
+  <!-- ============ 条目编辑弹窗 ============ -->
+  <el-dialog v-model="itemDlg" :title="editItem.id ? '编辑条目' : '新增条目'" width="560px" class="np-dlg">
+    <div class="np-field">
+      <label>名称</label>
+      <el-input v-model="editItem.name" size="small"></el-input>
+    </div>
+    <div class="np-field">
+      <label>内网地址</label>
+      <div class="np-urlsplit">
+        <el-input v-model="editItem.addr_lan" size="small" placeholder="{scheme}://{host}"></el-input>
+        <span class="np-colon">:</span>
+        <el-input v-model="editItem.port_lan" size="small" class="np-port" placeholder="8096"></el-input>
+      </div>
+    </div>
+    <div class="np-field">
+      <label>外网地址（可留空）</label>
+      <div class="np-urlsplit">
+        <el-input v-model="editItem.addr_wan" size="small" placeholder="https://nas.example.com"></el-input>
+        <span class="np-colon">:</span>
+        <el-input v-model="editItem.port_wan" size="small" class="np-port" placeholder="留空"></el-input>
+      </div>
+    </div>
+    <div class="np-hint">
+      地址和端口分开填：平时换服务只需要改右边端口号，地址（<code>{scheme}://{host}</code> 或内网 IP）不用动。
+      端口留空就是不加端口。<br>
+      支持占位符：<code>{host}</code> 换成当前访问地址的主机名（局域网访问就是 NAS 的 IP，
+      外网访问就是域名），<code>{scheme}</code> 换成当前模式对应的协议。
+      扫描导入的条目默认写成 <code>{scheme}://{host}:端口</code>，内网外网自动各用各的地址。
+    </div>
+    <div class="np-field">
+      <label>图标（可留空，留空显示首字母）</label>
+      <div class="np-iconrow">
+        <span class="np-iconprev" :title="iconPreviewName">
+          <img v-if="iconPreview" :src="iconPreview" alt="">
+          <b v-else>{{ initial(editItem.name) || '?' }}</b>
+        </span>
+        <el-input v-model="editItem.icon" size="small"
+                  placeholder="点右侧「图标库」挑一个，或直接粘贴图片 URL"></el-input>
+        <el-button size="small" plain :loading="iconFetching" @click="fetchItemIcon">抓取图标</el-button>
+        <el-button size="small" type="primary" plain @click="openIconPicker">图标库</el-button>
+      </div>
+      <div class="np-hint">
+        「抓取图标」= 拿上面填的网址去站点抓 favicon 存进本地图标库（换个地址再点一次即可重抓）。
+        抓不到多半是站点没有 favicon，或要登录才能打开。
+      </div>
+      <div class="np-hint">
+        在线图标库来自 GitHub 公开仓库（默认 <code>homarr-labs/dashboard-icons</code>，可在图标库弹窗的
+        「图标源管理」里添加更多仓库，支持多个）。
+        选中的图标会下载到数据目录 <code>data/icons/</code> 永久保存，其他卡片也能直接复用。
+      </div>
+    </div>
+    <div class="np-field">
+      <label>描述</label>
+      <el-input v-model="editItem.description" size="small"></el-input>
+    </div>
+    <div class="np-wdg-box">
+      <div class="np-wdg-head">
+        <span class="np-wdg-title">状态小组件（可选）</span>
+        <el-select v-model="editItem.widget.type" size="small" placeholder="不显示" clearable
+                   style="width:180px" @change="onWidgetTypeChange">
+          <!-- 显式的「不显示」：值为空串，走 onWidgetTypeChange('') → 保存时落库 widget=null，
+               卡片回到普通样式（以前只能靠 clearable 的 × 清空，界面上看不出来） -->
+          <el-option label="不显示" value=""></el-option>
+          <el-option v-for="p in widgetProviders" :key="p.type"
+                     :label="p.icon + ' ' + p.label" :value="p.type"></el-option>
+        </el-select>
+      </div>
+      <div class="np-hint" v-if="wdgHint">{{ wdgHint }}</div>
+      <template v-if="editItem.widget && editItem.widget.type">
+        <div class="np-field" v-for="f in wdgFields" :key="f.k">
+          <label>{{ f.t }}</label>
+          <el-input v-model="editItem.widget[f.k]" size="small"
+                    :type="f.pw ? 'password' : 'text'" :show-password="!!f.pw"
+                    :placeholder="f.ph || ''"></el-input>
+          <div class="np-hint" v-if="f.hint">{{ f.hint }}</div>
+        </div>
+        <div>
+          <el-button size="small" :loading="wdgTesting" @click="testWidget">测试连接</el-button>
+        </div>
+        <div class="np-wdg-result" v-if="wdgResult" :class="wdgResult.ok ? 'ok' : 'err'">
+          {{ wdgResult.ok ? wdgResult.text : wdgResult.error }}
+          <div class="np-wdg-detail" v-if="wdgResult.ok && wdgResult.detail">
+            <span v-for="(d, i) in wdgResult.detail" :key="i">{{ d[0] }} <b>{{ d[1] }}</b></span>
+          </div>
+        </div>
+      </template>
+    </div>
+    <div class="np-field row">
+      <label>卡片上显示地址</label>
+      <el-select v-model="editItem.url_visible" size="small" style="width:200px">
+        <el-option label="跟随全局设置" :value="-1"></el-option>
+        <el-option label="总是显示" :value="1"></el-option>
+        <el-option label="总是隐藏" :value="0"></el-option>
+      </el-select>
+    </div>
+    <div class="np-field row">
+      <label>卡片尺寸</label>
+      <el-select v-model="editItem.card_size" size="small" style="width:200px">
+        <el-option v-for="o in sizeOptionsItem" :key="o.v" :label="o.t" :value="o.v"></el-option>
+      </el-select>
+    </div>
+    <div class="np-field row">
+      <label>分类</label>
+      <el-select v-model="editItem.category_id" size="small" placeholder="未分类" clearable style="width:200px">
+        <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id"></el-option>
+      </el-select>
+    </div>
+    <div class="np-field row">
+      <label>隐藏</label>
+      <el-switch v-model="editItem.hidden"></el-switch>
+    </div>
+    <template #footer>
+      <el-button size="small" @click="itemDlg = false">取消</el-button>
+      <el-button size="small" type="primary" :loading="busy" @click="saveItem">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 图标选择器：本地图标（含上传）+ 在线图标库 -->
+  <el-dialog v-model="iconDlg" title="选择图标" width="680px" class="np-icon-dlg" append-to-body>
+    <el-tabs v-model="iconTab">
+      <el-tab-pane label="我的图标" name="local">
+        <div class="np-icon-bar">
+          <label class="np-upload">
+            <input type="file" accept="image/*,.svg,.ico" @change="uploadIcon" hidden>
+            <span>{{ iconBusy === '__upload__' ? '上传中…' : '上传图标' }}</span>
+          </label>
+          <span class="np-muted">共 {{ iconList.length }} 个 · 上传和选用过的都永久存在 data/icons/</span>
+          <el-button size="small" text @click="loadLocalIcons">刷新</el-button>
+        </div>
+        <div class="np-icon-grid" v-loading="iconLoading">
+          <div v-for="f in iconList" :key="f.name" class="np-icon-cell"
+               :class="{ on: editItem.icon === f.name }" :title="f.name"
+               @click="useIcon(f.name)">
+            <img :src="f.url" alt="" loading="lazy">
+            <span class="np-icon-name">{{ f.name }}</span>
+            <span class="np-icon-tag" v-if="f.kind === 'upload'">上传</span>
+            <span class="np-icon-tag lib" v-else-if="f.kind === 'library'">库</span>
+            <span class="np-icon-del" @click.stop="delLocalIcon(f)">×</span>
+          </div>
+          <div class="np-icon-empty" v-if="!iconLoading && !iconList.length">
+            还没有图标 —— 上传一个，或从「在线图标库」挑一个
+          </div>
+        </div>
+      </el-tab-pane>
+      <el-tab-pane label="在线图标库" name="lib">
+        <div class="np-icon-bar">
+          <el-input v-model="iconQ" size="small" clearable
+                    placeholder="搜名字，如 plex / jellyfin / adguard"
+                    @keyup.enter="searchIconLib(false)"></el-input>
+          <el-button size="small" type="primary" @click="searchIconLib(false)">搜索</el-button>
+          <el-select v-model="iconLibFilter" size="small" class="np-lib-sel" @change="searchIconLib(false)">
+            <el-option label="全部图标库" value=""></el-option>
+            <el-option v-for="l in iconLibs" :key="l.id"
+                       :label="l.label + '（' + (l.count || 0) + '）'" :value="l.id"></el-option>
+          </el-select>
+          <el-button size="small" :loading="iconSearching" @click="searchIconLib(true)">更新清单</el-button>
+        </div>
+        <div class="np-hint" v-if="iconLibErr">{{ iconLibErr }}</div>
+        <div class="np-hint" v-else>
+          共 {{ iconTotal }} 个图标<span v-if="iconLibs.length > 1"> · 来自 {{ iconLibs.length }} 个图标库</span>
+          · 清单 {{ fmtAgo(iconLibAt) }} —— 图标源可在「图标源管理」里增删
+        </div>
+        <div class="np-icon-grid" v-loading="iconSearching">
+          <div v-for="it in iconResults" :key="it.lib + '/' + it.name" class="np-icon-cell"
+               @click="pickLibIcon(it)"
+               :title="'选用 ' + it.name + '（' + it.variant + '）· 来自 ' + it.lib_label">
+            <img :src="it.cdn" alt="" loading="lazy" @error="libIconError($event, it)">
+            <span class="np-icon-name">{{ it.name }}</span>
+            <span class="np-icon-tag lib" v-if="iconLibs.length > 1">{{ it.lib_label }}</span>
+            <span class="np-icon-busy" v-if="iconBusy === it.name">…</span>
+          </div>
+          <div class="np-icon-more" v-if="!iconSearching && iconResults.length < iconTotal">
+            <el-button size="small" text @click="searchIconLib(false, true)">
+              加载更多（{{ iconResults.length }} / {{ iconTotal }}）
+            </el-button>
+          </div>
+          <div class="np-icon-empty" v-if="!iconSearching && !iconResults.length">
+            {{ iconQ ? '没搜到「' + iconQ + '」—— 换个关键词，或在「图标源管理」里加一个图标库'
+                     : '这个图标库还没拉清单，点「更新清单」' }}
+          </div>
+        </div>
+      </el-tab-pane>
+      <el-tab-pane label="图标源管理" name="libs">
+        <div class="np-lib-add">
+          <el-input v-model="newLibUrl" size="small"
+                    placeholder="owner/repo，或 https://github.com/owner/repo/tree/分支/子目录"
+                    @keyup.enter="addIconLib"></el-input>
+          <el-input v-model="newLibLabel" size="small" class="np-lib-inp" placeholder="备注名（可选）"></el-input>
+          <el-button size="small" type="primary" :loading="iconLibBusy === 'add'" @click="addIconLib">添加</el-button>
+        </div>
+        <div class="np-hint">
+          支持任意 <b>GitHub 公开仓库</b>（可以是几个图标的仓库，也可以是几万个的图标库）。
+          识别 <code>svg / png / webp / ico / jpg / gif</code>，一级子目录自动当格式分组（默认优先 svg）。
+          清单缓存 7 天，加进来时会自动拉一次；搜索时缺清单也会按需拉。
+        </div>
+        <div class="np-lib-list">
+          <div class="np-lib-row" v-for="l in iconLibs" :key="l.id">
+            <div class="np-lib-main">
+              <b>{{ l.label }}</b>
+              <span class="np-muted">
+                {{ l.id }}@{{ l.branch }}{{ l.sub ? '/' + l.sub : '' }} ·
+                {{ l.count ? l.count + ' 个图标' : '未拉取清单' }} · {{ fmtAgo(l.cached_at) }}
+              </span>
+              <span class="np-lib-err" v-if="l.error">{{ l.error }}</span>
+            </div>
+            <el-button size="small" text :loading="iconLibBusy === l.id" @click="refreshIconLib(l.id)">更新清单</el-button>
+            <el-button size="small" text type="danger" :loading="iconLibBusy === l.id" @click="delIconLib(l)">移除</el-button>
+          </div>
+          <div class="np-icon-empty" v-if="!iconLibs.length">
+            一个图标库都没有了 —— 填个地址加回来，如 <code>homarr-labs/dashboard-icons</code>
+          </div>
+        </div>
+        <div class="np-icon-bar">
+          <el-button size="small" :loading="iconLibBusy === '__all__'" @click="refreshIconLib('')">全部更新清单</el-button>
+          <span class="np-muted np-lib-eg">
+            示例：<code>selfhst/icons</code>、<code>homarr-labs/dashboard-icons</code>、<code>walkxcode/dashboard-icons</code>
+          </span>
+        </div>
+      </el-tab-pane>
+    </el-tabs>
+    <template #footer>
+      <el-button size="small" @click="useIcon('')">清除图标</el-button>
+      <el-button size="small" type="primary" @click="iconDlg = false">关闭</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 卡片右键菜单（只有登录后的管理员会看到） -->
+  <teleport to="body">
+    <div class="np-ctx" v-if="ctxMenu.open"
+         :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }" @click.stop>
+      <div class="np-ctx-head">{{ ctxMenu.item && ctxMenu.item.name }}</div>
+      <div class="np-ctx-item" @click="ctxEdit">
+        <span>编辑</span><i>名称 / 地址 / 图标</i>
+      </div>
+      <!-- 容器操作：只有容器卡片有（网站收藏卡片没有 container_name） -->
+      <template v-if="ctxIsContainer">
+        <div class="np-ctx-sep"></div>
+        <div class="np-ctx-item" :class="{ off: !ctxAllowOp }" @click="ctxContainer('start')">
+          <span>启动容器</span><i>{{ ctxContainerName }}</i>
+        </div>
+        <div class="np-ctx-item" :class="{ off: !ctxAllowOp }" @click="ctxContainer('restart')">
+          <span>重启容器</span><i>stop + start</i>
+        </div>
+        <div class="np-ctx-item danger" :class="{ off: !ctxAllowOp }" @click="ctxContainer('stop')">
+          <span>停止容器</span><i>服务会中断</i>
+        </div>
+      </template>
+      <div class="np-ctx-sep"></div>
+      <div class="np-ctx-item danger" @click="ctxDelete">
+        <span>删除</span><i>从导航页移除</i>
+      </div>
+    </div>
+  </teleport>
+
+</div>
+
+<script src="/vendor/vue.global.prod.js"></script>
+<script src="/vendor/element-plus.min.js"></script>
+<script src="/vendor/element-icons.min.js"></script>
+<script src="/vendor/axios.min.js"></script>
+<script src="/js/app.js?v=58"></script>
+</body>
+</html>

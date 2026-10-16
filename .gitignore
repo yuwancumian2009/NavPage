@@ -1,0 +1,23 @@
+# 运行时数据（SQLite 库、壁纸、上传图标、logo）——绝不入库
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# 开发/验证脚手架（一次性脚本，含内网地址，不入库）
+scratch/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 编辑器
+.idea/
+.vscode/
+.DS_Store
+
+# 本地运维/开发用，不属于构建与部署所需
+PLAN.md
+scripts/update_images.sh

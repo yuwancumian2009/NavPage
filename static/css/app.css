@@ -1,0 +1,1032 @@
+/* NavPage —— 布局与主题。注意：绝不使用 * { margin:0; padding:0 }，Element Plus 的间距就是布局。 */
+[v-cloak] { display: none; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+               "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  min-height: 100vh;
+  background: #0f172a;
+  color: #fff;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ------------------------------------------------ 背景 */
+.np-bg {
+  position: fixed;
+  inset: -30px;
+  z-index: 0;
+  background-color: #0b1220;
+  background-image: linear-gradient(135deg, #1e3a8a 0%, #0f172a 45%, #312e81 100%);
+  background-size: cover;
+  background-position: center;
+  transform: scale(1.06);
+  transition: filter .25s ease;
+}
+.np-dim { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+
+/* ------------------------------------------------ 骨架 */
+.np-shell {
+  position: relative;
+  z-index: 2;
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 16px 24px 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ------------------------------------------------ 顶栏 */
+.np-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .12);
+  border: 1px solid rgba(255, 255, 255, .18);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.np-brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.np-logo {
+  width: 38px; height: 38px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 12px; font-size: 18px;
+  background: linear-gradient(135deg, #60a5fa, #818cf8);
+  box-shadow: 0 4px 14px rgba(96, 165, 250, .4);
+}
+/* 自定义左上角图标（外观页上传，2026-10-16）。尺寸和内置 ◆ 字形块完全一致，
+   否则顶栏高度会跟着图标变；contain 保证非正方形图也完整显示。 */
+.np-logo-img {
+  width: 38px; height: 38px; flex: none;
+  border-radius: 12px; object-fit: contain;
+}
+.np-keep-list { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.np-brand-text { min-width: 0; }
+.np-title { font-size: 17px; font-weight: 700; letter-spacing: .3px; line-height: 1.2; }
+.np-sub { font-size: 12px; opacity: .72; margin-top: 2px; }
+.np-top-right { display: flex; align-items: center; gap: 12px; flex: none; }
+/* ------------------------------------------------ 顶栏最右侧的汉堡菜单
+   需求（2026-10-15）：设置齿轮从「右下角悬浮按钮」搬到顶栏最右侧，
+   并把「编辑布局 / 设置」一起收进汉堡菜单 —— 桌面与手机同一个入口。
+   定位：[品牌] …… [内外网徽标 + 内外网切换] [☰]（见两个媒体查询里的 order/auto margin） */
+.np-menu-wrap { position: relative; flex: none; }
+.np-menu-btn {
+  display: inline-flex;
+  align-items: center; justify-content: center;
+  width: 34px; height: 34px; padding: 0;
+  border-radius: 10px; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, .22);
+  background: rgba(255, 255, 255, .14);
+  color: #fff; font-size: 17px;
+  transition: background .18s;
+}
+.np-menu-btn:hover, .np-menu-btn.is-open { background: rgba(255, 255, 255, .3); }
+/* 三横线汉堡：EP 没有现成的三横线图标（i-menu 是 2×2 四宫格），自己画。
+   打开时上下两根收拢转 45° 变 ×（间距 6px = gap 4 + 线高 2，正好叠到中线） */
+.np-menu-bars {
+  display: flex; flex-direction: column; justify-content: center; gap: 4px;
+  width: 16px; height: 14px;
+}
+.np-menu-bars i {
+  display: block; width: 100%; height: 2px; border-radius: 2px;
+  background: currentColor;
+  transition: transform .18s, opacity .18s;
+}
+.np-menu-btn.is-open .np-menu-bars i:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.np-menu-btn.is-open .np-menu-bars i:nth-child(2) { opacity: 0; }
+.np-menu-btn.is-open .np-menu-bars i:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+.np-menu-pop {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 40;
+  min-width: 150px; padding: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+  border-radius: 12px;
+  background: rgba(28, 32, 44, .94);
+  border: 1px solid rgba(255, 255, 255, .18);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .38);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.np-menu-item {
+  display: flex; align-items: center; gap: 9px;
+  width: 100%; padding: 9px 10px;
+  border: 0; border-radius: 8px; cursor: pointer;
+  background: transparent; color: #fff;
+  font-family: inherit; font-size: 13px; text-align: left;
+}
+.np-menu-item:hover { background: rgba(255, 255, 255, .15); }
+.np-menu-item .el-icon { font-size: 15px; opacity: .85; }
+
+.np-netbadge {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 12px; border-radius: 999px;
+  font-size: 12px; font-weight: 600;
+  background: rgba(255, 255, 255, .14);
+  border: 1px solid rgba(255, 255, 255, .2);
+}
+.np-netdot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+.np-netbadge.is-wan .np-netdot { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+.np-netip { opacity: .6; font-weight: 400; font-family: ui-monospace, Menlo, monospace; }
+
+.np-modeswitch { display: inline-flex; padding: 3px; gap: 2px; border-radius: 999px; background: rgba(0, 0, 0, .22); }
+.np-modeswitch button {
+  border: 0; cursor: pointer; font: inherit; font-size: 12px;
+  padding: 5px 12px; border-radius: 999px;
+  background: transparent; color: rgba(255, 255, 255, .72);
+  transition: all .18s;
+}
+.np-modeswitch button.on { background: rgba(255, 255, 255, .92); color: #1e293b; font-weight: 600; }
+
+/* ------------------------------------------------ 时钟 + 搜索 */
+.np-hero { text-align: center; padding: 30px 0 18px; text-shadow: 0 2px 14px rgba(0, 0, 0, .5); }
+.np-clock { font-size: 54px; font-weight: 200; letter-spacing: 3px; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.np-date { font-size: 13px; opacity: .82; margin-top: 4px; letter-spacing: 1px; }
+.np-searchwrap { max-width: 620px; margin: 22px auto 0; }
+.np-search .el-input__wrapper {
+  background: rgba(255, 255, 255, .18);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .28) inset !important;
+  border-radius: 14px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  padding: 4px 16px;
+}
+.np-search .el-input__wrapper:hover { background: rgba(255, 255, 255, .24); }
+.np-search .el-input__wrapper.is-focus { background: rgba(255, 255, 255, .3); }
+.np-search .el-input__inner { color: #fff; font-size: 15px; }
+.np-search .el-input__inner::placeholder { color: rgba(255, 255, 255, .8); }
+.np-search .el-input__prefix,
+.np-search .el-input__suffix { color: rgba(255, 255, 255, .8); }
+.np-engines { margin-top: 10px; display: flex; justify-content: center; gap: 14px; font-size: 12px; }
+.np-engines span { opacity: .6; cursor: pointer; padding: 2px 4px; transition: opacity .18s; }
+.np-engines span:hover { opacity: .95; }
+.np-engines span.on { opacity: 1; font-weight: 600; border-bottom: 2px solid rgba(255, 255, 255, .85); }
+
+/* ------------------------------------------------ 分组 + 卡片 */
+/* 分组流式排布：分组数量多、每组条目少时也不会把右侧留空 */
+.np-main {
+  flex: 1;
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  /* 横向居中（2026-10-15 用户要求）：每行里的分组整体居中。
+     「每行分组数」=1 时分组本身是 100% 宽，这一条不生效，靠 .np-grid 居中组内轨道。 */
+  justify-content: center;
+  /* 横向 12px：与 JS 的 GROUP_GAP 保持一致。间隔收紧后 1600px 下每行能多放一个
+     单卡分组，中间行留白从 200-234px 降到 18px 以内（分组靠标题区分，不会糊在一起）。 */
+  gap: 20px 12px;
+}
+.np-group {
+  /* 宽度由组内网格（固定轨道）撑开：刚好放下自己的卡片，多个分组再并排。
+     组内因此不会留白，卡片也不会被压成竖着一列。 */
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+  margin-bottom: 6px;
+}
+/* 固定高度：标题被省略的分组也要占住这块高度，同一行里各分组的卡片顶边才对得齐 */
+.np-group-head { display: flex; align-items: center; gap: 10px; margin: 0 auto 10px; height: 20px; }
+/* 标题栏宽度由 JS 按「组内轨道总宽」写成 inline style（headStyle），这里 margin:0 auto 让它居中 ——
+   于是标题左边缘与第一张卡对齐、渐变线收在最后一张卡右边，窗口缩放时整块一起居中。 */
+/* 单条目且与分组同名的分组：标题和卡片名重复，隐藏文字但**保留高度**（不能用 display:none，否则卡片上移） */
+.np-group.np-plain .np-group-head { visibility: hidden; }
+.np-group-name { font-size: 14px; font-weight: 700; letter-spacing: .5px; }
+.np-group-count {
+  font-size: 11px; padding: 1px 7px; border-radius: 999px;
+  background: rgba(255, 255, 255, .18); border: 1px solid rgba(255, 255, 255, .16);
+}
+.np-group-line { flex: 1; height: 1px; background: linear-gradient(90deg, rgba(255, 255, 255, .22), transparent); }
+
+/* 轨道由 JS 按「组内列数」写成固定宽度（inline style），这里只是兜底。
+   用固定轨道而不是 1fr，是为了让所有卡片等宽、各组也对齐。
+   grid-auto-rows 给出**行高基准**（= 普通卡片自然高度 62px），
+   小组件卡片靠「跨 2 行」拿到 2 倍高度；行高用 minmax(62px, auto)，
+   名字折成两行的卡片能把行撑高而不是被裁掉。
+   行高 62px = 大卡高度 = 小卡边长（2026-10-16 起小卡高度与大卡一致）。 */
+.np-grid {
+  display: grid;
+  gap: 12px;   /* = JS 的 CARD_GAP：大卡 3 格 + 2 间隔 = 3*62 + 2*12 = 210px */
+  /* 轨道是固定宽度（JS 写 inline），分组盒子通常更宽（100% 或 1/n 格）→ 这里水平居中轨道。
+     2026-10-15 用户要求：「窗口缩放时卡片要横向居中，不能贴左、右边留白随窗口变大变小」。 */
+  justify-content: center;
+  grid-auto-rows: minmax(var(--np-card-h, 62px), auto);
+  grid-template-columns: repeat(auto-fit, minmax(var(--np-card-min, 170px), 1fr));
+}
+
+/* 空分类（还没有卡片的分类）：照常渲染分组，给出可见、可拖入的落点
+   （2026-10-16 用户反馈「新建的分类在导航页看不见，没法拖卡片进去」） */
+.np-grid.is-empty { min-height: 62px; }
+.np-drop-hint {
+  grid-column: 1 / -1;
+  box-sizing: border-box;   /* 全局没有 border-box，不加这条 1px 边框会把高度顶成 64 */
+  height: 62px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px dashed rgba(148, 163, 184, .45);
+  border-radius: 14px;
+  color: #94a3b8; font-size: 13px;
+}
+.np-group.is-over .np-drop-hint {
+  border-color: #60a5fa; color: #60a5fa; background: rgba(96, 165, 250, .08);
+}
+/* 带状态小组件的卡片：**宽度与普通卡片完全一致**（1 格），高度跨 2 行 ≈ 2 倍。
+   跨行而不是单纯撑高，是为了让同一格列的下方/旁边还能正常排普通卡片，不留空洞。 */
+.np-card.is_widget { grid-row: span 2; }
+/* 卡片高度 134px，2026-10-15 用户反馈「文字很小且不居中」：
+   原来沿用普通卡片的「图标在左 + 文字列左对齐」，靠 space-between 把名称顶到上、
+   状态块推到底 → 中间留 38px 空洞、整块内容偏左、摘要 11px / 指标块 10px 偏小。
+   改成状态磁贴：图标与名称同排**居成一组**，摘要 / 指标块各占一整行居中。
+   ⚠ 高度必须正好 136px（= 2 行 62px + 12px 行距）：`grid-auto-rows` 是 minmax(62px,auto)，
+   小组件卡片跨 2 行，内容一旦超过 136px 就会把这两行撑到 74px，同排普通卡片被拉伸成
+   两种卡高，整页立刻不齐。所以图标不能单独占一行（会多占 36px 高）。 */
+.np-card.is_widget {
+  flex-wrap: wrap;
+  align-content: center;      /* 折行后整体垂直居中 */
+  justify-content: center;    /* 每一行内容水平居中 */
+  align-items: center;
+  column-gap: 8px; row-gap: 4px;
+  text-align: center;
+  padding: 9px 10px 14px;     /* 底部留出绝对定位的进度条（3px）空间 */
+}
+/* 桌面（多列网格）才需要卡死高度：内容超预算会把网格行撑高、连带拉伸同排普通卡片。
+   手机端是单列（每行一张卡），卡片高一点不连累别人，所以让内容自然撑开、不裁切。 */
+@media (min-width: 769px) {
+  .np-card.is_widget { max-height: calc(var(--np-card-h, 62px) * 2 + 12px); }
+  /* 顶栏第三个孩子（汉堡菜单）：把它钉在最右侧 [品牌] …… [徽标/切换] [☰]。
+     DOM 里菜单在右组之前，所以用 order 调到右组后面 + 右组 auto margin 吃掉空白 */
+  .np-top-right { order: 1; margin-left: auto; }
+  .np-menu-wrap { order: 2; }
+}
+/* display:contents 让名称/描述/状态块直接成为卡片（flex）的子项，
+   名称才能跟图标排在同一行并整体居中 */
+.np-card.is_widget .np-card-text { display: contents; }
+.np-card.is_widget .np-card-name { flex: 0 1 auto; min-width: 0; }
+.np-card.is_widget .np-card-desc,
+.np-card.is_widget .np-card-widget,
+.np-card.is_widget .np-card-host { flex: 0 0 100%; }
+.np-card.is_widget .np-card-desc { margin-top: 0; font-size: 12px; }
+.np-card.is_widget .np-card-widget { margin-top: 0; }
+.np-card.is_widget .np-card-host { font-size: 11.5px; }
+
+
+.np-card {
+  position: relative;
+  display: flex; align-items: center; gap: 11px;
+  padding: 12px 13px;
+  border-radius: 14px;
+  text-decoration: none; color: inherit;
+  background: rgba(255, 255, 255, .14);
+  border: 1px solid rgba(255, 255, 255, .2);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: transform .16s ease, background .16s ease, box-shadow .16s ease;
+  overflow: hidden;
+  min-width: 0;
+}
+.np-card:hover {
+  transform: translateY(-3px);
+  background: rgba(255, 255, 255, .24);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .3);
+}
+.np-card.is_disabled { opacity: .55; cursor: not-allowed; }
+.np-card.is_disabled:hover { transform: none; box-shadow: none; }
+.np-card.is_missing { border-style: dashed; }
+
+/* ------------------------------------------------ 小卡（2026-10-16 新增）
+   纯图标方形卡片：只显示图标，方形 + 圆角，内容居中。
+   边长由网格轨道决定（桌面 1 格 = 62px、手机 1 格 = 51px），高度 = 大卡高度 62px：
+   aspect-ratio:1 保证正方形；align-self:start 防止被行高（62px）拉成竖长方形
+   （2026-10-16：小卡边长 = 大卡高度 62px，「1 格 = 62px」已保证是方形，
+    高度交给行高拉伸即可，不要再写 aspect-ratio + align-self:start —— 那会把卡片
+    钉成 45×45 顶在行首，和「高度与大卡一致」冲突）。
+   文字块（名称/描述/地址/小组件）整块隐藏 —— 信息全靠图标 + 悬停提示。
+   右上角只保留状态灯，放不下「仅内网/仅外网」角标。 */
+.np-card.is_xs {
+  padding: 0;
+  justify-content: center;
+  align-items: center;
+  border-radius: 12px;
+}
+.np-card.is_xs .np-card-text { display: none; }
+.np-card.is_xs .np-card-icon {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+}
+.np-card.is_xs .np-card-icon img,
+.np-card.is_xs .np-card-icon .np-initial {
+  width: 58%; height: 58%; border-radius: 8px; font-size: 15px;
+}
+.np-card.is_xs .np-badges { top: 3px; right: 3px; gap: 0; }
+.np-card.is_xs .np-dot { width: 7px; height: 7px; }
+.np-card.is_xs .np-tag { display: none; }
+
+.np-card-icon { flex: none; width: 36px; height: 36px; position: relative; }
+
+/* ------------------------------------------------ 卡片右上角状态区（2026-10-16）
+   .np-badges 是钉在卡片右上角的 flex 行：[仅内网/仅外网角标][状态灯]。
+   **状态灯永远在最后一个** —— flex 行右对齐，所以最后一个元素就是最靠角的那一个，
+   角标只能排在它左边，不会把状态灯挤离右上角。
+
+   状态灯：绿=正常 / 黄=延迟偏高或服务报错 / 红=访问不了（红点带呼吸动画）。
+   只出现在容器卡片上（container_name 非空），网站收藏卡片没有这个 span。
+   尺寸 7px、无描边，与小组件的绿点同规格（2026-10-16 用户要求去掉白边并统一大小）；
+   下线的呼吸动画改用红色光晕，不再靠白色描边衬托。设置 → 外观可关闭。 */
+.np-badges {
+  position: absolute; top: 7px; right: 7px;
+  display: flex; align-items: center; gap: 6px;
+}
+.np-dot {
+  flex: none;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #94a3b8; cursor: help;
+  transition: background .25s ease;
+}
+.np-dot.is-ok { background: #22c55e; }
+.np-dot.is-slow { background: #f59e0b; }
+.np-dot.is-down { background: #ef4444; animation: np-dot-blink 1.8s ease-in-out infinite; }
+@keyframes np-dot-blink {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, .55); }
+  50%      { box-shadow: 0 0 0 5px rgba(239, 68, 68, 0); }
+}
+.np-card-icon img { width: 36px; height: 36px; object-fit: contain; border-radius: 9px; }
+.np-initial {
+  width: 36px; height: 36px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; font-weight: 700; color: #fff;
+}
+.np-card-text { min-width: 0; flex: 1; }
+.np-card-name {
+  /* 14px + 正常字距时 "moviepilot-v2" 需要 111px 而只有 107px 会被截成省略号；
+     缩 0.5px + 收一点字距刚好放下（视觉上几乎无感，但长名不再断） */
+  font-size: 13.5px; letter-spacing: -.2px; font-weight: 600; line-height: 1.25;
+  /* 放不下的超长名（hermes-webui / mtphotos_face_api）折成两行，
+     而不是截成 "hermes-web…"；短名仍然只占一行 */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-word;
+}
+.np-card-desc {
+  font-size: 12px; opacity: .84; margin-top: 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.np-card-host {
+  font-size: 11px; opacity: .72; margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.np-tag {
+  font-size: 10px; line-height: 1.6; padding: 0 6px; border-radius: 999px;
+  background: rgba(34, 197, 94, .9); color: #052e16; font-weight: 600;
+}
+.np-tag.tag-wan { background: rgba(245, 158, 11, .92); color: #451a03; }
+.np-tag.tag-none { background: rgba(148, 163, 184, .9); color: #0f172a; }
+
+/* 卡片主题 */
+.np-theme-solid .np-card { background: #fff; color: #303133; border-color: rgba(0, 0, 0, .06); }
+.np-theme-solid .np-card:hover { background: #fff; box-shadow: 0 10px 26px rgba(0, 0, 0, .18); }
+.np-theme-solid .np-group-name { color: #fff; }
+.np-theme-dark .np-card { background: rgba(17, 22, 31, .74); color: #e6e8eb; border-color: rgba(255, 255, 255, .08); }
+.np-theme-dark .np-card:hover { background: rgba(30, 38, 52, .86); }
+.np-theme-dark .np-card-desc { opacity: .62; }
+
+.np-empty {
+  text-align: center; padding: 60px 20px; opacity: .7; font-size: 14px;
+}
+.np-foot { text-align: center; font-size: 12px; opacity: .5; padding: 10px 0 0; }
+
+/* 右下角悬浮齿轮已撤销（2026-10-15）：设置入口统一挪到顶栏最右侧的汉堡菜单里，
+   不再遮挡卡片文字，桌面/手机同一位置。 */
+
+/* ------------------------------------------------ 卡片上的服务状态小组件 */
+.np-card-widget {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  font-size: 13px; line-height: 1.35; margin-top: 2px;
+  color: rgba(255, 255, 255, .82);
+}
+.np-wrow { display: flex; align-items: flex-start; justify-content: center; gap: 5px; width: 100%; }
+/* 指标小方块：参考 homepage，把「电影 495 / 剧集 391」拆成可扫读的 chip。
+   2026-10-15 用户反馈「小框框要对齐、大小要一致」：以前是 inline-flex 按文字长短自适应
+   （实测宽 52~84px 不等），且 flex-wrap 居中导致不满一行的行左缘错开 4~8px。
+   改成等宽网格：每行等分（190~210px 卡片稳定两列），不满的末行按同一列左对齐，
+   所有方块宽高完全一致，跨卡片也对齐。 */
+.np-wstats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+  grid-auto-rows: 1fr;   /* 行高统一：某个值换行时整块一起等高等宽，不出现大小不一的方块 */
+  gap: 4px 5px; width: 100%;
+}
+.np-wstat {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: 1px 4px; min-height: 22px;
+  padding: 1px 7px; border-radius: 7px; font-size: 12px; line-height: 19px;
+  background: rgba(255, 255, 255, .16);
+}
+/* 报错态没有 .np-wrow 包裹，横排一行居中 */
+.np-card-widget.is-err { flex-direction: row; justify-content: center; }
+
+.np-wstat i { font-style: normal; opacity: .7; }
+.np-wstat b { font-weight: 600; }
+.np-wstat.tone-good b { color: #8ce99a; }
+.np-wstat.tone-warn b { color: #ffc46b; }
+.np-wstat.tone-bad b { color: #ff9a9a; }
+.np-wstat.tone-muted { opacity: .68; }
+
+/* 卡片底边的进度条（下载进度 / 剧集完成度） */
+.np-wbar {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+  background: rgba(255, 255, 255, .13);
+}
+.np-wbar-fill {
+  display: block; height: 100%; border-radius: 0 2px 2px 0;
+  background: linear-gradient(90deg, #6ab7ff, #8ce99a);
+  transition: width .4s ease;
+}
+/* 手机端卡片只有 ~100px 可用宽度，「电影 495 / 剧集 391 / 单集 13594」必然放不下，
+   所以允许折到第二行（最多两行）而不是截断成省略号 */
+.np-card-widget .np-wtext {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-word;
+}
+.np-wdot {
+  flex: none; width: 7px; height: 7px; border-radius: 50%; margin-top: 5px;
+  background: #67c23a; box-shadow: 0 0 6px rgba(103, 194, 58, .8);
+}
+.np-wdot.err { background: #f56c6c; box-shadow: 0 0 6px rgba(245, 108, 108, .75); }
+.np-card-widget.is-err { color: rgba(255, 196, 196, .9); }
+.np-theme-solid .np-card-widget { color: rgba(48, 49, 51, .7); }
+.np-theme-solid .np-card-widget.is-err { color: #c45656; }
+.np-theme-dark .np-card-widget { color: rgba(230, 232, 235, .74); }
+
+/* ------------------------------------------------ 管理面板里的小组件配置块 */
+.np-2col { display: flex; gap: 8px; }
+.np-2col > * { flex: 1 1 0; min-width: 0; }
+.np-wdg-box {
+  border: 1px solid #e4e7ed; border-radius: 10px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 9px; background: #fafafa;
+}
+.np-wdg-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.np-wdg-title { font-size: 13px; font-weight: 600; color: #303133; }
+.np-wdg-result { font-size: 12px; line-height: 1.5; border-radius: 8px; padding: 7px 9px; word-break: break-all; }
+.np-wdg-result.ok { background: #f0f9eb; color: #529b2e; }
+.np-wdg-result.err { background: #fef0f0; color: #c45656; }
+.np-wdg-detail { display: flex; flex-wrap: wrap; gap: 3px 14px; font-size: 12px; color: #606266; }
+.np-wdg-detail b { font-weight: 600; color: #303133; }
+
+/* ------------------------------------------------ 登录遮罩 */
+.np-lock {
+  position: relative; z-index: 3;
+  min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.np-lock-box {
+  width: 100%; max-width: 340px; padding: 26px 24px;
+  border-radius: 18px; display: flex; flex-direction: column; gap: 14px;
+  background: rgba(255, 255, 255, .14);
+  border: 1px solid rgba(255, 255, 255, .22);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.np-lock-title { font-size: 19px; font-weight: 700; text-align: center; }
+.np-lock-badge {
+  width: 46px; height: 46px; margin: 0 auto 2px; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center; font-size: 22px; color: #fff;
+  background: linear-gradient(140deg, rgba(255, 255, 255, .34), rgba(255, 255, 255, .1));
+  border: 1px solid rgba(255, 255, 255, .26);
+}
+.np-lock-badge-img {
+  width: 46px; height: 46px; margin: 0 auto 2px; border-radius: 14px;
+  display: block; object-fit: contain;
+}
+.np-lock-sub { font-size: 12.5px; text-align: center; opacity: .8; margin-top: -8px; }
+.np-lock-tip { font-size: 11.5px; text-align: center; opacity: .7; line-height: 1.5; }
+.np-w100 { width: 100%; }
+
+/* ------------------------------------------------ 管理抽屉 */
+.np-drawer .el-drawer__body { padding: 0 18px 14px; display: flex; flex-direction: column; overflow: hidden; }
+.np-admin { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.np-admin-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 14px 0 10px; border-bottom: 1px solid #ebeef5; flex: none;
+}
+.np-admin-title { font-size: 15px; font-weight: 700; color: #303133; }
+.np-admin-actions { display: flex; align-items: center; gap: 2px; }
+.np-login { padding: 40px 6px; display: flex; flex-direction: column; gap: 14px; }
+.np-login-tip { margin: 0; font-size: 13px; color: #606266; text-align: center; }
+
+.np-tabs { display: flex; flex-direction: column; flex: 1; min-height: 0; margin-top: 6px; }
+/* 页签栏：可左右滑动（触摸 / 滚轮 / 鼠标拖拽），选中项自动滑到中间。
+   EP 自带的箭头平移（transform + overflow:hidden）在窄屏会直接切掉最后一个页签，已关掉。 */
+.np-tabs > .el-tabs__header { flex: none; margin: 0 0 12px; position: relative; }
+.np-tabs .el-tabs__nav-scroll {
+  overflow-x: auto; overflow-y: hidden; cursor: grab;
+  scroll-behavior: smooth; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.np-tabs .el-tabs__nav-scroll::-webkit-scrollbar { display: none; height: 0; }
+.np-tabs .el-tabs__nav-scroll.dragging { cursor: grabbing; scroll-behavior: auto; }
+.np-tabs .el-tabs__nav { transform: none !important; }
+.np-tabs .el-tabs__nav-prev, .np-tabs .el-tabs__nav-next { display: none; }
+.np-tabs .el-tabs__nav-wrap::after { height: 1px; background: #eef0f3; }
+/* 高亮块：EP 的 active-bar 自带位置过渡，做成圆角药丸就成了「左右滑动」的效果 */
+.np-tabs .el-tabs__active-bar {
+  height: 30px; top: 4px; border-radius: 9px; background: #eaf2ff;
+  transition: transform .32s cubic-bezier(.4, 0, .2, 1), width .32s cubic-bezier(.4, 0, .2, 1);
+}
+.np-tabs .el-tabs__item { height: 38px; line-height: 38px; font-size: 13px; color: #606266; padding: 0 14px; position: relative; z-index: 1; }
+.np-tabs .el-tabs__item.is-active { color: #2f6fd0; font-weight: 600; }
+/* 两端渐隐：只在还能滑动的一侧出现 */
+.np-tabs > .el-tabs__header::before, .np-tabs > .el-tabs__header::after {
+  content: ''; position: absolute; top: 0; bottom: 0; width: 20px; z-index: 2;
+  pointer-events: none; opacity: 0; transition: opacity .2s;
+}
+.np-tabs > .el-tabs__header::before { left: 0; background: linear-gradient(to right, #fff 25%, rgba(255, 255, 255, 0)); }
+.np-tabs > .el-tabs__header::after { right: 0; background: linear-gradient(to left, #fff 25%, rgba(255, 255, 255, 0)); }
+.np-tabs > .el-tabs__header.fade-l::before, .np-tabs > .el-tabs__header.fade-r::after { opacity: 1; }
+.np-tabs > .el-tabs__content { flex: 1; overflow: hidden; }
+.np-tabs .el-tab-pane { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.np-scroll { flex: 1; min-height: 0; overflow: auto; }
+/* 兜底：万一哪个标签页内容没包进 .np-scroll，面板自身也能滚，不会再「看不到保存按钮」 */
+.np-tabs .el-tab-pane { overflow-y: auto; overflow-x: hidden; }
+
+/* ------------------------------------------------ 拖拽布局模式 */
+/* 「编辑布局」按钮已收进顶栏汉堡菜单（2026-10-15），这里不再需要单独的 .np-layout-entry */
+.np-card.is-layout { cursor: grab; }
+.np-card.is-layout:hover { transform: none; }
+.np-card.is-layout::after {
+  content: '⠿'; position: absolute; top: 4px; right: 6px;
+  font-size: 11px; opacity: .55; pointer-events: none;
+}
+.np-card.is-dragging { opacity: .3; }
+.np-group.is-dropzone {
+  outline: 1px dashed rgba(255, 255, 255, .3); outline-offset: 6px;
+  border-radius: 14px; transition: background .15s, outline-color .15s;
+}
+.np-group.is-over {
+  outline: 1px dashed rgba(130, 195, 255, .9);
+  background: rgba(130, 195, 255, .1);
+}
+.np-layoutbar {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+  z-index: 70; display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px; border-radius: 14px; flex-wrap: wrap;
+  max-width: min(94vw, 760px);
+  background: rgba(22, 24, 30, .88); color: #fff;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .4);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+}
+.np-lb-tip { font-size: 12px; opacity: .92; }
+.np-lb-dirty { font-size: 11px; color: #ffc46b; }
+
+/* ------------------------------------------------ 镜像更新标签页 */
+.np-imgst { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 6px; white-space: nowrap; }
+.np-imgst.outdated { background: #fdf6ec; color: #b88230; }
+.np-imgst.current { background: #f0f9eb; color: #529b2e; }
+.np-imgst.unknown { background: #f4f4f5; color: #909399; }
+.np-mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10px; line-height: 1.5; word-break: break-all; }
+.np-warn-txt { color: #e6a23c; }
+.np-strong { font-weight: 600; }
+.np-chip {
+  display: inline-block; font-size: 10px; line-height: 16px; padding: 0 5px;
+  border-radius: 4px; background: #f0f2f5; color: #606266; margin-right: 4px;
+}
+.np-chip.warn { background: #fdf6ec; color: #b88230; }
+.np-log {
+  margin: 0; padding: 10px; border-radius: 8px; max-height: 260px; overflow: auto;
+  background: #1f2024; color: #d5d8dc; font-size: 11px; line-height: 1.6;
+  white-space: pre-wrap; word-break: break-all;
+}
+
+/* ---- 更新进行中：当前操作 + 进度条（2026-10-15 用户要求看实时进度） ---- */
+.np-task-live {
+  margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 400;
+  color: #1d4ed8; background: rgba(64, 158, 255, .12);
+}
+/* 「上次：xxx 成功/失败」一行（刷新页面后也能看到上次发生了什么）2026-10-15 */
+.np-last {
+  margin-top: 8px; padding-top: 7px; border-top: 1px dashed var(--np-line, #e4e7ed);
+  font-size: 12px; color: #606266;
+}
+.np-ok-txt { color: #3fa96b; }
+.np-err-txt { color: #e0574f; }
+/* 本地构建镜像的「本地镜像」状态：灰蓝，跟「未知」区分开 */
+.np-imgst.local { background: #eef2f7; color: #5a6b82; }
+
+.np-task {
+  margin: 0 0 10px; padding: 10px 12px; border-radius: 8px;
+  /* 双层背景：先铺不透明主题底色再叠蓝色调，sticky 时才不会透出下面的表格 */
+  background: linear-gradient(rgba(64, 158, 255, .06), rgba(64, 158, 255, .06)), var(--el-bg-color, #fff);
+  border: 1px solid rgba(64, 158, 255, .18);
+  position: sticky; top: 0; z-index: 5;   /* 吸顶：滚到表格里正在更新的那一行时，仍能看到进度 */
+}
+.np-task-name {
+  flex: none; padding: 1px 7px; border-radius: 4px; font-weight: 600;
+  color: #1d4ed8; background: rgba(64, 158, 255, .16);
+}
+.np-task-step { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #303133; }
+.np-task-dot {
+  flex: none; width: 7px; height: 7px; border-radius: 50%; background: #409eff;
+  box-shadow: 0 0 0 0 rgba(64, 158, 255, .5); animation: np-pulse 1.4s infinite;
+}
+@keyframes np-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(64, 158, 255, .45); }
+  70% { box-shadow: 0 0 0 6px rgba(64, 158, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(64, 158, 255, 0); }
+}
+.np-task-bar {
+  position: relative; height: 8px; margin: 8px 0 6px; border-radius: 999px;
+  background: rgba(64, 158, 255, .14); overflow: hidden;
+}
+.np-task-bar > i {
+  display: block; height: 100%; border-radius: 999px; background: #409eff;
+  transition: width .35s ease;
+}
+/* 非拉取阶段（停旧容器/新建/启动…）没有精确百分比，用流光线表示「正在干活」而不是假进度 */
+.np-task-bar.busy > i {
+  width: 38%; animation: np-flow 1.3s ease-in-out infinite;
+}
+@keyframes np-flow {
+  0% { margin-left: -38%; }
+  100% { margin-left: 100%; }
+}
+.np-task-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px; color: #606266; }
+.np-task-hint { color: #a0a3a8; }
+.np-row-busy { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #409eff; }
+
+.np-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex: none; flex-wrap: wrap; }
+.np-bar-tip { font-size: 12px; color: #909399; margin-left: auto; }
+.np-bar-tip a { color: #409eff; text-decoration: none; }
+
+/* ---------------- 设置项：分区卡片 + 左右对齐行 ----------------
+   .np-field = 一行：label 左、控件右；说明跟在控件下面同一列。
+   手机端（见文件末尾断点）自动变成「标签在上、控件在下」。 */
+.np-field {
+  display: grid; grid-template-columns: 128px minmax(0, 1fr);
+  column-gap: 16px; align-items: center; margin: 0; padding: 8px 0;
+}
+.np-field + .np-field { border-top: 1px solid #f5f7fa; }
+.np-field > label { display: block; margin: 0; font-size: 13px; color: #4b5563; line-height: 1.45; }
+/* 除 label 外的一律排到右列，避免复选/墙纸/多列这类多子元素字段错位 */
+.np-field > *:not(label) { grid-column: 2; }
+.np-field > .np-hint { margin: 5px 0 0; }
+.np-field > .np-muted { margin-top: 4px; }
+.np-field .el-slider { width: 100%; }
+.np-field.row { display: grid; }
+.np-field.row > label { flex: none; }
+/* 控件 + 行内说明（短说明跟控件同一行） */
+.np-ctlrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.np-ctlrow .np-hint { margin: 0; }
+/* 滑块 + 右侧数值读数 */
+.np-sliderrow { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.np-sliderrow .el-slider { flex: 1; min-width: 0; }
+.np-num { flex: none; width: 46px; text-align: right; font-size: 12px; color: #606266; font-variant-numeric: tabular-nums; }
+
+.np-hint { font-size: 12px; color: #8f949c; line-height: 1.6; }
+.np-hint code { background: #f4f5f7; border-radius: 4px; padding: 1px 5px; font-size: 11.5px; color: #5b6472; }
+
+/* 底部操作条：作为标签页的固定页脚（flex 项，不依赖 sticky —— 抽屉里 sticky 不生效），
+   滚动内容再长也一直看得见 */
+.np-savebar {
+  flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 2px 4px; border-top: 1px solid #eef0f3; background: #fff;
+}
+.np-savebar-tip { font-size: 12px; color: #909399; margin-left: auto; }
+
+/* 地址 + 端口 拆成两个输入框（中间一个冒号，读起来就是「地址:端口」） */
+.np-urlsplit { display: flex; align-items: center; gap: 6px; }
+.np-urlsplit .el-input:first-child { flex: 1 1 auto; min-width: 0; }
+.np-urlsplit .np-colon { flex: none; color: #909399; font-weight: 600; }
+.np-urlsplit .el-input.np-port { flex: 0 0 auto; width: 96px; }
+.np-urlsplit .np-port input { text-align: center; letter-spacing: .5px; }
+
+.np-seg { display: inline-flex; padding: 2px; border-radius: 8px; background: #f0f2f5; }
+.np-seg button {
+  border: 0; cursor: pointer; font: inherit; font-size: 12px;
+  padding: 5px 12px; border-radius: 6px; background: transparent; color: #606266;
+}
+.np-seg button.on { background: #fff; color: #409eff; font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, .12); }
+
+/* 分区卡片：标题 + 若干 .np-field */
+.np-sec {
+  margin: 0 0 14px; padding: 2px 14px 8px;
+  border: 1px solid #eef0f3; border-radius: 12px; background: #fafbfc;
+}
+.np-sec-head, .np-sec-title {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 11px 0 9px; margin: 0 0 2px; border-bottom: 1px solid #f2f4f7;
+  font-size: 13.5px; font-weight: 600; color: #1f2d3d;
+}
+.np-sec-head span { font-size: 12px; font-weight: 400; color: #a0a4ab; }
+
+/* 键值行（「当前判定」这类只读信息）：比一坨 <br> 拼起来好读 */
+.np-kv { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 6px 12px; padding: 10px 0 4px; font-size: 12px; }
+.np-kv > span { color: #8f949c; }
+.np-kv > b { font-weight: 500; color: #303133; word-break: break-all; }
+.np-kv > b.mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; }
+
+.np-wall { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.np-wall .el-input { flex: 1; min-width: 140px; }
+.np-upload {
+  display: inline-flex; align-items: center; cursor: pointer;
+  font-size: 12px; padding: 6px 12px; border-radius: 6px;
+  background: #409eff; color: #fff; flex: none;
+}
+.np-upload:hover { background: #66b1ff; }
+.np-wall-list { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+/* 「当前壁纸」常显行：URL 可能很长，允许折行，避免撑破弹窗 */
+.np-wall-cur { margin-top: 6px; word-break: break-all; line-height: 1.5; }
+.np-wall-cur b { color: #303133; font-weight: 600; }
+
+/* ---------------- 图标选择器 ---------------- */
+.np-iconrow { display: flex; align-items: center; gap: 8px; }
+.np-iconrow .el-input { flex: 1; min-width: 0; }
+.np-iconprev {
+  flex: 0 0 auto; width: 36px; height: 36px; border-radius: 8px; overflow: hidden;
+  background: var(--el-fill-color-light, #f2f3f5);
+  display: flex; align-items: center; justify-content: center;
+}
+.np-iconprev img { width: 100%; height: 100%; object-fit: contain; }
+.np-iconprev b {
+  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  background: var(--el-color-primary, #409eff); color: #fff; font-size: 16px;
+}
+.np-icon-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.np-icon-bar .el-input { max-width: 280px; }
+.np-icon-bar .np-muted { flex: 1; font-size: 12px; }
+.np-icon-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px; max-height: 50vh; overflow-y: auto; padding: 2px;
+}
+.np-icon-cell {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 9px 4px 5px; border: 1px solid var(--el-border-color-lighter, #ebeef5);
+  border-radius: 8px; background: var(--el-bg-color, #fff); cursor: pointer;
+  transition: border-color .15s, box-shadow .15s;
+}
+.np-icon-cell:hover {
+  border-color: var(--el-color-primary-light-5, #a0cfff);
+  box-shadow: 0 2px 10px rgba(64, 158, 255, .16);
+}
+.np-icon-cell.on { border-color: var(--el-color-primary, #409eff); background: var(--el-color-primary-light-9, #ecf5ff); }
+/* 浅灰垫底：dashboard-icons 里大量白色 logo，白底上会看不见 */
+.np-icon-cell img { width: 36px; height: 36px; object-fit: contain; background: #f2f3f5;
+  border-radius: 8px; padding: 3px; box-sizing: border-box; }
+.np-icon-name {
+  font-size: 11px; color: var(--el-text-color-secondary, #909399);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.np-icon-tag {
+  position: absolute; left: 0; top: 0; font-size: 10px; line-height: 1; padding: 2px 4px;
+  border-radius: 8px 0 8px 0; background: var(--el-color-success, #67c23a); color: #fff;
+}
+.np-icon-tag.lib { background: var(--el-color-primary, #409eff); }
+.np-icon-del {
+  position: absolute; right: 1px; top: 0; padding: 1px 5px; font-size: 14px; line-height: 1.1;
+  color: var(--el-text-color-placeholder, #c0c4cc); display: none;
+}
+.np-icon-cell:hover .np-icon-del { display: block; }
+.np-icon-del:hover { color: var(--el-color-danger, #f56c6c); }
+.np-icon-busy { position: absolute; right: 5px; top: 3px; color: var(--el-color-primary, #409eff); }
+.np-icon-empty {
+  grid-column: 1 / -1; padding: 30px 0; text-align: center;
+  font-size: 13px; color: var(--el-text-color-secondary, #909399);
+}
+/* ---- 图标源管理（在线图标库可配多个） ---- */
+.np-lib-add { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.np-lib-add .el-input { flex: 1; }
+.np-lib-inp { max-width: 150px; flex: none; }
+.np-lib-sel { width: 190px; flex: none; }
+.np-lib-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.np-lib-row {
+  display: flex; align-items: center; gap: 4px; padding: 7px 10px;
+  border: 1px solid var(--el-border-color-lighter, #ebeef5); border-radius: 8px;
+  background: var(--el-bg-color, #fff);
+}
+.np-lib-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.np-lib-main b { font-size: 13px; color: var(--el-text-color-primary, #303133); }
+.np-lib-err { font-size: 11px; color: var(--el-color-danger, #f56c6c); word-break: break-all; }
+.np-icon-more { grid-column: 1 / -1; text-align: center; padding: 4px 0; }
+/* 示例那行是仓库名（长 token，没有空格）。.np-muted 是 break-all，会在单词中间断开
+   （手机端实测出现 “dashboard-ic / ons”），这里改成只在实在放不下时才断。 */
+.np-lib-eg { word-break: normal; overflow-wrap: break-word; }
+.np-lib-eg code { word-break: keep-all; }
+@media (max-width: 700px) {
+  .np-lib-add { flex-wrap: wrap; }
+  .np-lib-inp { max-width: none; flex: 1 1 100%; }
+  .np-lib-sel { width: 100%; }
+  .np-lib-row { flex-wrap: wrap; }
+  .np-icon-bar { flex-wrap: wrap; }
+}
+/* 手机端：item / icon 两个弹窗都是固定像素宽（560 / 680），会横向超出屏幕 ——
+   改成跟视口收缩（2026-10-15 实测 414 视口下弹窗右边缘到 680，右侧直接被切掉）。 */
+@media (max-width: 768px) {
+  .np-wstat { font-size: 11px; padding: 1px 5px; }   /* 窄卡片两列时避免长值换行 */
+  .np-dlg, .np-icon-dlg { width: 94vw !important; max-width: 94vw; }
+  .np-dlg .el-dialog__body, .np-icon-dlg .el-dialog__body { padding: 12px 12px 6px; }
+  .np-icon-dlg .np-icon-grid { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); max-height: 46vh; }
+  /* 小卡必须正方形（2026-10-16 用户反馈「手机端小卡高和宽不等，希望相等」）。
+     桌面端单位格 = 行高 = 62 → 1 格天然就是 62×62 方形，不用管；
+     手机端单位格 = (大卡宽 177 - 2*12)/3 ≈ 51，而行高仍是 62 → 卡片被行高拉成 51×62 竖条。
+     手机屏窄，小卡宽度由列宽决定（改成 62 宽会顶破列、和相邻卡只差 1px），
+     所以让高度跟随宽度：aspect-ratio:1 + align-self:center 在行内垂直居中，得到 51×51 方形。
+     （桌面端绝不能加这两条：那边要的是「高度 = 大卡高度 62」，加了会把卡钉成 62 宽顶在行首。） */
+  .np-card.is_xs { aspect-ratio: 1; align-self: center; }
+}
+
+/* ---------------- 卡片右键菜单 ---------------- */
+.np-ctx {
+  position: fixed; z-index: 3000; min-width: 172px; padding: 4px;
+  background: var(--el-bg-color-overlay, #fff);
+  border: 1px solid var(--el-border-color-lighter, #ebeef5);
+  border-radius: 10px; box-shadow: 0 8px 28px rgba(0, 0, 0, .18);
+}
+.np-ctx-head {
+  padding: 6px 10px 5px; margin-bottom: 4px; font-size: 12px;
+  color: var(--el-text-color-secondary, #909399);
+  border-bottom: 1px solid var(--el-border-color-lighter, #ebeef5);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.np-ctx-item {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 7px 10px; border-radius: 8px; cursor: pointer;
+}
+.np-ctx-item span { font-size: 13px; color: var(--el-text-color-primary, #303133); }
+.np-ctx-item i { font-style: normal; font-size: 11px; color: var(--el-text-color-placeholder, #a8abb2); }
+.np-ctx-item:hover { background: var(--el-color-primary-light-9, #ecf5ff); }
+.np-ctx-item.danger:hover { background: var(--el-color-danger-light-9, #fef0f0); }
+.np-ctx-item.danger span { color: var(--el-color-danger, #f56c6c); }
+/* 容器操作开关（「允许从面板更新镜像」）关着时，菜单项照常显示但压暗 ——
+   藏起来用户会以为没这个功能，压暗才知道「要先开开关」 */
+.np-ctx-item.off { opacity: .45; }
+.np-ctx-item.off:hover { background: var(--el-fill-color-light, #f5f7fa); }
+.np-ctx-sep { height: 1px; margin: 4px 6px; background: var(--el-border-color-lighter, #ebeef5); }
+.np-wall-item {
+  position: relative; width: 78px; height: 48px; border-radius: 8px; overflow: hidden;
+  cursor: pointer; border: 2px solid transparent;
+}
+.np-wall-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.np-wall-item.on { border-color: #409eff; }
+.np-wall-del {
+  position: absolute; top: 1px; right: 1px; width: 16px; height: 16px; line-height: 14px;
+  text-align: center; border-radius: 50%; background: rgba(0, 0, 0, .6); color: #fff; font-size: 12px;
+}
+
+.np-docker {
+  font-size: 12px; padding: 7px 10px; border-radius: 8px; margin-bottom: 12px;
+  background: #f0f9eb; color: #529b2e; word-break: break-all; flex: none;
+}
+.np-docker.bad { background: #fef0f0; color: #c45656; }
+.np-scan-sec { margin-bottom: 18px; }
+.np-scan-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+  font-size: 13px; color: #303133; flex-wrap: wrap;
+}
+.np-skip { font-size: 12px; line-height: 1.6; word-break: break-all; }
+.np-empty-sm { padding: 26px 0; text-align: center; color: #909399; font-size: 13px; }
+
+/* ---- 表单提示 ---- */
+.np-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #909399;
+  background: #f5f7fa;
+  border-left: 3px solid #c6e2ff;
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 6px 0 2px;
+}
+.np-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: #409eff;
+  background: #ecf5ff;
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+/* ------------------------------------------------ 原生表格（避开 el-table 空数据列宽塌陷） */
+/* 表格：固定列宽 + 单元格单行省略 —— 保证每一列上下严格对齐、行高一致。
+   （auto 布局下长地址会把单元格撑成 3~4 行，行高忽高忽低，看着就是"列没对齐"） */
+.ep-table { width: 100%; border-collapse: collapse; font-size: 13px; color: #303133; table-layout: fixed; }
+.ep-table thead th {
+  background: #f5f7fa; font-weight: 700; padding: 8px 10px; text-align: left;
+  border-bottom: 1px solid #ebeef5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ep-table tbody td {
+  padding: 8px 10px; border-bottom: 1px solid #ebeef5; line-height: 1.4; vertical-align: middle;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 单元格 width 默认按内容盒算，padding 会额外撑宽 → 各列相加超过表格宽度。
+   统一成 border-box，列宽才是所见即所得（表格不会横向溢出）。 */
+.ep-table thead th, .ep-table tbody td { box-sizing: border-box; }
+/* 单元格内的多行块（名称下的标签行、地址小字）同样单行截断，避免把行撑高 */
+.ep-table tbody td > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 列宽：挂在各表 th 的类名上。table-layout:fixed 下必须每列都给宽——
+   留一列 auto 的话浏览器会把它挤到几十像素（名称列曾只剩 36px）。 */
+.ep-table .c-chk { width: 40px; }
+.ep-table .c-icon { width: 52px; }    /* 表头「图标」两字要放得下，别截成「图…」 */
+.ep-table .c-name { width: 140px; }     /* 项目：名称 */
+.ep-table .c-name-w { width: 268px; }   /* 分类：名称（让出 96px 给「排序」、104px 给「卡片尺寸」） */
+.ep-table .c-name-m { width: 302px; }   /* 扫描 · 待导入 */
+.ep-table .c-name-l { width: 406px; }   /* 扫描 · 已存在 */
+.ep-table .c-name-xl { width: 424px; }  /* 扫描 · 其他 */
+.ep-table .c-lan { width: 134px; }
+.ep-table .c-wan { width: 134px; }
+.ep-table .c-cat { width: 88px; }
+.ep-table .c-op { width: 196px; }
+.ep-table .c-count { width: 96px; }
+.ep-table .c-size { width: 104px; }     /* 分类：卡片尺寸（跟随全局/大/小） */
+.ep-table .c-move { width: 96px; white-space: nowrap; }  /* 分类：排序 ↑↓ */
+.ep-table .c-move .el-button { padding: 5px 7px; }   /* ↑↓ 紧凑一点，列宽 96 够放两个 */
+.ep-table .c-move .el-button + .el-button { margin-left: 4px; }
+/* 镜像表格六列：150+146+70+130+92+120 = 708，与加「自动更新」列之前的总宽一致 */
+.ep-table .c-act { width: 120px; }
+.ep-table .c-box { width: 150px; }
+.ep-table .c-port { width: 88px; }
+.ep-table .c-tag { width: 146px; }
+.ep-table .c-state { width: 70px; }
+.ep-table .c-ver { width: 130px; }
+.ep-table .c-auto { width: 92px; }
+.ep-table tbody td.c-center { text-align: center; }
+.ep-table tbody tr:hover td { background: #f5f7fa; }
+.ep-table tbody tr.sel td { background: #ecf5ff; }
+.ep-table tbody tr.sel:hover td { background: #e2efff; }
+.ep-table tr.dim { opacity: .5; }
+.np-strong { font-weight: 600; }
+.np-muted { font-size: 11px; color: #909399; margin-top: 2px; word-break: break-all; }
+.np-url { font-size: 11px; color: #606266; word-break: break-all; font-family: ui-monospace, Menlo, monospace; }
+.np-chip {
+  display: inline-block; font-size: 10px; padding: 0 5px; border-radius: 4px;
+  background: #ecf5ff; color: #409eff; margin-right: 4px;
+}
+.np-chip.warn { background: #fdf6ec; color: #e6a23c; }
+.np-mini {
+  width: 26px; height: 26px; border-radius: 7px; display: flex; align-items: center;
+  justify-content: center; color: #fff; font-size: 12px; font-weight: 700; overflow: hidden;
+}
+.np-mini img { width: 100%; height: 100%; object-fit: contain; }
+
+/* ------------------------------------------------ 手机端 */
+@media (max-width: 768px) {
+  .np-shell { padding: 12px 12px 30px; }
+  .np-top { padding: 10px 12px; border-radius: 14px; flex-wrap: wrap; gap: 10px; }
+  .np-logo { width: 32px; height: 32px; font-size: 15px; border-radius: 10px; }
+  .np-logo-img { width: 32px; height: 32px; border-radius: 10px; }
+  .np-title { font-size: 15px; }
+  .np-sub { display: none; }
+  .np-top-right { width: 100%; justify-content: space-between; }
+  .np-netip { display: none; }
+  .np-modeswitch button { padding: 5px 10px; }
+  .np-hero { padding: 20px 0 12px; }
+  .np-clock { font-size: 34px; letter-spacing: 2px; }
+  .np-date { font-size: 12px; }
+  .np-searchwrap { margin-top: 16px; }
+  /* 手机端分组也**独占一行**（2026-10-15 用户要求：与桌面「每个分类另起一行」一致）。
+     原来是「两个分组并排 + 组内单列竖向堆叠」：观感和桌面不统一，而且只剩一个分组
+     落单时会被 flex-grow 拉满整行宽，同页出现 170 / 351 两种卡片宽度。 */
+  .np-main { gap: 10px; }
+  .np-group {
+    flex: 0 0 100%;
+    min-width: 0;
+    max-width: 100%;
+    margin-bottom: 0;
+  }
+  .np-group-head { gap: 6px; margin: 0 auto 7px; height: 17px; }
+  .np-group-name { font-size: 11.5px; letter-spacing: 0; }
+  .np-group-count { font-size: 10px; padding: 0 5px; }
+  .np-group-line { display: none; }
+  /* 组内横向排列：**别再写 grid-template-columns 覆盖**（旧版这里是 1fr !important，
+     会把卡片退回单列竖向堆叠）。列数与列宽由 JS 按屏宽反算后写进 inline style
+     （mobCols / mobCardW：能放几列放几列，列宽刚好填满一行）。
+     间距必须等于 JS 的 CARD_GAP(12)，否则行宽推算与浏览器实际换行会差几像素。 */
+  .np-grid { gap: 12px; }
+  /* 小组件卡片保持跨 2 格（= 整行宽）：手机端列数至少 2，不会像单列时那样撑出隐式列 */
+  .np-card { padding: 10px; gap: 8px; border-radius: 12px; }
+  .np-card-icon, .np-card-icon img, .np-initial { width: 30px; height: 30px; font-size: 14px; }
+  .np-card-name { font-size: 13px; }
+  .np-card-desc { display: none; }
+  .np-card-host { font-size: 10px; }
+  .np-badges { top: 5px; right: 5px; gap: 4px; }
+  .np-dot { width: 7px; height: 7px; }
+  .np-tag { font-size: 9px; }
+  /* 顶栏折成两行：上行品牌 + 汉堡菜单（最右），下行内外网徽标 + 内外网切换，避免挤压 */
+  .np-brand { flex: 1 1 auto; }
+  .np-menu-wrap { margin-left: auto; }
+  .np-top-right { flex: 1 1 100%; justify-content: space-between; gap: 8px; }
+  .np-modeswitch button { padding: 4px 9px; font-size: 11.5px; }
+  .np-drawer .el-drawer__body { padding: 0 12px 12px; }
+  .np-tabs .el-tabs__item { padding: 0 11px; }
+  /* 手机上不压缩列（压了文字全挤成一团），给个最小宽度让表格横向滑动，列依然对齐 */
+  .ep-table { font-size: 12px; min-width: 640px; }
+  .ep-table thead th, .ep-table tbody td { padding: 6px 7px; }
+  .ep-table .c-chk { width: 38px; } .ep-table .c-icon { width: 44px; }
+  .ep-table .c-name { width: 114px; } .ep-table .c-name-w { width: 232px; }
+  .ep-table .c-name-m { width: 310px; } .ep-table .c-name-l { width: 320px; } .ep-table .c-name-xl { width: 384px; }
+  .ep-table .c-lan { width: 104px; } .ep-table .c-wan { width: 104px; }
+  .ep-table .c-cat { width: 76px; } .ep-table .c-op { width: 198px; }
+  .ep-table .c-count { width: 76px; } .ep-table .c-size { width: 92px; } .ep-table .c-move { width: 76px; } .ep-table .c-act { width: 146px; }
+  .ep-table .c-box { width: 114px; } .ep-table .c-port { width: 72px; }
+  .ep-table .c-tag { width: 130px; } .ep-table .c-state { width: 132px; } .ep-table .c-ver { width: 128px; } .ep-table .c-act { width: 136px; }
+
+  /* 设置项：手机上没有横向空间，改成「标签在上、控件在下」占满整行 */
+  .np-field { grid-template-columns: 1fr; row-gap: 6px; }
+  .np-field > *:not(label) { grid-column: 1; }
+  .np-sec { padding: 2px 11px 6px; }
+  .np-kv { grid-template-columns: 72px minmax(0, 1fr); }
+}

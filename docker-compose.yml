@@ -1,0 +1,59 @@
+services:
+  navpage:
+    build: .
+    # CI 会把多架构镜像推到 Docker Hub；本地 build 也会打上这个 tag，
+    # 所以 `docker compose pull` 和 `docker compose up -d --build` 两条路都通。
+    image: yuwancumian2009/navpage:latest
+    container_name: navpage
+    restart: unless-stopped
+    ports:
+      - "8095:8080"
+    environment:
+      TZ: Asia/Shanghai
+      NAVPAGE_DATA: /data
+      # ↓ 首次启动的管理员初始密码 —— 部署前请改成你自己的密码。
+      #   只在数据库里还没有密码时生效（已有部署改这里不会覆盖现有密码）；
+      #   删掉这一行则随机生成一个并打印到容器日志。
+      NAVPAGE_DEFAULT_PASSWORD: changeme
+      # 走 socket-proxy，不把裸 docker.sock 交给应用容器
+      DOCKER_HOST: tcp://navpage-socket-proxy:2375
+    volumes:
+      - ./data:/data
+    depends_on:
+      - socket-proxy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/api/health',timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 6s
+      start_period: 12s
+      retries: 3
+
+  # Docker API 代理。GET 只读端点 + 「更新镜像」所需的最小写权限。
+  # 2026-10-15：用户明确选择恢复面板内更新（方案B），知悉并自行承担风险后开启。
+  # 开启的原因：navpage 面板里的「更新/更新全部」按钮要能真的更新镜像。
+  # 代价：POST=1 配合 CONTAINERS=1 等于面板能创建特权容器（≈宿主机 root）。
+  # 已知风险点（开之前务必确认能接受）：
+  #   1) /api/login **没有防爆破**（无限速、无失败锁定、密码最短 4 位）；
+  #   2) 面板一旦被反代 / 内网穿透到公网，上面两条就是公网可达的。
+  # 想降风险：把 POST / ALLOW_START / ALLOW_STOP 改回 0 并重建本容器
+  # （只读后「检查更新」仍可用，只是不能真的更新）。
+  socket-proxy:
+    image: ccr.ccs.tencentyun.com/bestnav/docker-socket-proxy:latest
+    container_name: navpage-socket-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      VERSION: 1
+      PING: 1
+      INFO: 1
+      IMAGES: 1
+      NETWORKS: 1
+      POST: 1
+      EXEC: 0
+      BUILD: 0
+      ALLOW_START: 1
+      ALLOW_STOP: 1
+      ALLOW_RESTARTS: 0
+      LOG_LEVEL: warning
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro

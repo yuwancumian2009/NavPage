@@ -223,6 +223,19 @@ def expand_url(raw, mode, ctx):
     return raw.replace("{host}", base).replace("{scheme}", scheme).rstrip("/")
 
 
+def normalize_url(raw):
+    """把「只填了端口」的残缺值补成模板：':9091' -> '{scheme}://{host}:9091'。
+
+    历史原因（前端拼接缺前缀、早期入口不规范）库里存过这种值：渲染和抓图标两处
+    各自打过补丁兜住，但**存的值始终残缺** —— 管理台地址框显示为空（看着像「没填
+    占位符」），批量刷新图标还会拿 ':9091' 去请求、直接失败。统一在这里补全。
+    """
+    raw = (raw or "").strip()
+    if raw.startswith(":"):
+        return "{scheme}://{host}" + raw
+    return raw
+
+
 def template_url(port, scheme="http"):
     """扫描时生成的地址模板。"""
     if not port:

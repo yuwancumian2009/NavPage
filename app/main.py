@@ -230,8 +230,7 @@ def api_status(request: Request, ids: str = ""):
             raw = (it.get(key) or "").strip()
             if not raw:
                 continue
-            if raw.startswith(":"):          # ':9091' 这种只写了端口的残缺值，补全模板再展开
-                raw = "{scheme}://{host}" + raw
+            raw = netutil.normalize_url(raw)   # ':9091' 这种残缺值补全模板再展开
             u = netutil.expand_url(raw, mode, ctx)
             if u.startswith("http://") or u.startswith("https://"):
                 url = u
@@ -1847,10 +1846,8 @@ def admin_item_icon(request: Request, body: ItemIconBody, _=Depends(require_admi
             raw_lan = (it.get("url_lan") or "").strip()
             raw_wan = (it.get("url_wan") or "").strip()
     # ':8096' 这种只填了端口的残缺值：补成模板再展开
-    if raw_lan.startswith(":"):
-        raw_lan = "{scheme}://{host}" + raw_lan
-    if raw_wan.startswith(":"):
-        raw_wan = "{scheme}://{host}" + raw_wan
+    raw_lan = netutil.normalize_url(raw_lan)
+    raw_wan = netutil.normalize_url(raw_wan)
     if not raw_lan and not raw_wan:
         return _err("先在地址栏填一个网址，再来抓图标")
     base = _fetchable_url(raw_lan, ctx) or _fetchable_url(raw_wan, ctx)

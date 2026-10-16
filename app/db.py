@@ -12,6 +12,8 @@ import base64
 import secrets
 import threading
 
+from . import netutil
+
 DATA_DIR = os.environ.get("NAVPAGE_DATA", "/data")
 DB_PATH = os.path.join(DATA_DIR, "navpage.db")
 WALLPAPER_DIR = os.path.join(DATA_DIR, "wallpapers")
@@ -393,6 +395,11 @@ def _migrate(c):
         for name, decl in cols:
             if name not in have:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+    # 存量数据修复：早期「只填端口」被存成了残缺值 ':9091'（缺 {scheme}://{host} 前缀），
+    # 这里补全成模板，让老卡片在管理台里也显示正确的占位符地址。幂等，可反复执行。
+    for col in ("url_lan", "url_wan"):
+        c.execute(f"UPDATE items SET {col} = '{{scheme}}://{{host}}' || {col} "
+                  f"WHERE {col} LIKE ':%'")
     c.commit()
 
 
@@ -460,8 +467,8 @@ def create_item(data):
     d = {k: data.get(k) for k in ITEM_FIELDS}
     d["name"] = (d.get("name") or "未命名").strip()
     d["description"] = d.get("description") or ""
-    d["url_lan"] = d.get("url_lan") or ""
-    d["url_wan"] = d.get("url_wan") or ""
+    d["url_lan"] = netutil.normalize_url(d.get("url_lan"))
+    d["url_wan"] = netutil.normalize_url(d.get("url_wan"))
     d["icon"] = d.get("icon") or ""
     d["source"] = d.get("source") or "manual"
     d["container_name"] = d.get("container_name") or ""
@@ -500,6 +507,8 @@ def update_item(iid, patch):
                 v = 1 if v else 0
             if k == "container_port":
                 v = int(v or 0)
+            if k in ("url_lan", "url_wan"):
+                v = netutil.normalize_url(v)
             if k == "widget":
                 v = _enc_widget(v)
             if k in TRI_FIELDS:

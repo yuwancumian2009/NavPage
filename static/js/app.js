@@ -925,7 +925,10 @@
         const a = (addr || '').trim().replace(/\/+$/, '');
         const p = (port || '').trim().replace(/^:+/, '');
         const t = tail || '';
-        if (!a) return p ? ':' + p + t : t;
+        /* 地址框留空、只填端口时补上默认模板，而不是存成残缺的 ':9091'：
+           残缺值会让管理台地址框显示为空（看着像「没填占位符」），
+           批量刷新图标还会拿 ':9091' 去请求而失败。 */
+        if (!a) return p ? '{scheme}://{host}:' + p + t : t;
         return p ? a + ':' + p + t : a + t;
       }
       function fillUrlParts(it) {

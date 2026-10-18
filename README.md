@@ -104,6 +104,31 @@ cp -r data data.bak                          # 备份配置
 sudo docker compose up -d --build
 ```
 
+## 版本与镜像标签
+
+当前版本：**v1.0.0**（页面「☰ → 关于」里也能看到）。
+
+Docker Hub 上的镜像按版本打标签，`latest` 会跟着主分支走：
+
+| 标签 | 含义 |
+| --- | --- |
+| `latest` | 主分支最新构建 |
+| `1.0.0` / `v1.0.0` | 对应版本的固定镜像（推荐生产用） |
+| `1.0` | 该次版本的最新补丁 |
+| `sha-<commit>` | 某次提交的构建 |
+
+生产建议钉死版本，避免 `latest` 悄悄升级：
+
+```yaml
+image: yuwancumian2009/navpage:1.0.0
+```
+
+升级时把版本号改掉再 `docker compose pull && docker compose up -d`。
+改了哪些东西看 [CHANGELOG.md](CHANGELOG.md)。
+
+发版流程：改 `app/version.py` 里的 `VERSION` → 在 `CHANGELOG.md` 顶部加一节 →
+`git tag vX.Y.Z && git push origin vX.Y.Z`，CI 会自动构建并推对应版本标签。
+
 ## 端口
 
 默认对外 `8095`，容器内 `8080`。改 `docker-compose.yml` 里的 `ports` 即可。

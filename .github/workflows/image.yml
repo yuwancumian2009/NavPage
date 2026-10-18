@@ -36,6 +36,10 @@ jobs:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/navpage
           tags: |
             type=raw,value=latest
+            # 版本号：打 v1.0.0 这样的 tag 时，镜像同时得到 1.0.0 / 1.0 / v1.0.0，
+            # 部署端可以钉死到某个版本（image: .../navpage:1.0.0）而不用跟着 latest 漂。
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=ref,event=tag
             type=sha,format=short
 

@@ -78,12 +78,25 @@ body {
   align-items: center; justify-content: center;
   width: 34px; height: 34px; padding: 0;
   border-radius: 10px; cursor: pointer;
-  border: 1px solid rgba(255, 255, 255, .22);
-  background: rgba(255, 255, 255, .14);
-  color: #fff; font-size: 17px;
-  transition: background .18s;
+  /* 2026-10-18：原来固定「白色半透明底 + 纯白横线」，压在亮壁纸上实测对比度只有 2.1:1
+     （WCAG 对 UI 元素要求 ≥3:1），手机端深色主题下几乎看不见。
+     改成实心浅底 + 深色横线：横线对底 ≈16:1；再给深色主题一套深底白线。 */
+  border: 1px solid rgba(15, 23, 42, .10);
+  background: rgba(255, 255, 255, .92);
+  color: #0f172a; font-size: 17px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, .18);
+  transition: background .18s, border-color .18s, color .18s;
 }
-.np-menu-btn:hover, .np-menu-btn.is-open { background: rgba(255, 255, 255, .3); }
+.np-menu-btn:hover, .np-menu-btn.is-open { background: #fff; }
+/* 深色主题下顶栏是深色玻璃：白底按钮会突兀，且浅色描边与顶栏糊在一起 —— 反过来用深底白线 */
+.np-theme-dark .np-menu-btn {
+  background: rgba(17, 22, 31, .72);
+  border-color: rgba(255, 255, 255, .34);
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .45);
+}
+.np-theme-dark .np-menu-btn:hover,
+.np-theme-dark .np-menu-btn.is-open { background: rgba(38, 47, 62, .92); }
 /* 三横线汉堡：EP 没有现成的三横线图标（i-menu 是 2×2 四宫格），自己画。
    打开时上下两根收拢转 45° 变 ×（间距 6px = gap 4 + 线高 2，正好叠到中线） */
 .np-menu-bars {
@@ -118,6 +131,47 @@ body {
 }
 .np-menu-item:hover { background: rgba(255, 255, 255, .15); }
 .np-menu-item .el-icon { font-size: 15px; opacity: .85; }
+
+/* ------------------------------------------------ 关于弹窗 */
+.np-about { display: flex; flex-direction: column; gap: 14px; }
+.np-about-hero { display: flex; align-items: center; gap: 12px; }
+.np-about-logo {
+  flex: none; width: 44px; height: 44px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; font-weight: 700; color: #fff;
+  background: linear-gradient(135deg, #3b82f6, #6366f1);
+  box-shadow: 0 6px 16px rgba(59, 130, 246, .32);
+}
+.np-about-name { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 700; }
+.np-about-ver {
+  padding: 1px 7px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; letter-spacing: .2px;
+  color: #3b82f6; background: rgba(59, 130, 246, .12);
+  font-variant-numeric: tabular-nums;
+}
+.np-about-sub { margin-top: 3px; font-size: 12px; opacity: .6; }
+.np-about-rows { display: flex; flex-direction: column; gap: 2px; border-radius: 10px; overflow: hidden; }
+.np-about-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 11px; font-size: 13px;
+  background: rgba(128, 128, 128, .08);
+}
+.np-about-row:nth-child(even) { background: rgba(128, 128, 128, .14); }
+.np-about-k { flex: none; width: 60px; opacity: .62; }
+.np-about-v { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.np-about-v code {
+  padding: 1px 6px; border-radius: 6px; font-size: 12px;
+  background: rgba(59, 130, 246, .12); color: #3b82f6;
+}
+.np-about-link { color: #3b82f6; text-decoration: none; }
+.np-about-link:hover { text-decoration: underline; }
+
+/* 窄屏把三行改成「标签在上、值在下」：390px 下地址栏可用宽只有 241px，
+   而 github.com/yuwancumian2009/NavPage 要 239px，差 2px 就会在 NavP|age 处折行 */
+@media (max-width: 480px) {
+  .np-about-row { flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; }
+  .np-about-k { width: auto; font-size: 11px; }
+}
 
 .np-netbadge {
   display: inline-flex; align-items: center; gap: 7px;
@@ -817,7 +871,8 @@ body {
    改成跟视口收缩（2026-10-15 实测 414 视口下弹窗右边缘到 680，右侧直接被切掉）。 */
 @media (max-width: 768px) {
   .np-wstat { font-size: 11px; padding: 1px 5px; }   /* 窄卡片两列时避免长值换行 */
-  .np-dlg, .np-icon-dlg { width: 94vw !important; max-width: 94vw; }
+  /* 关于弹窗也一起收进 94vw：它默认 width=420px，在 390 宽的手机上会右侧溢出、切掉关闭按钮 */
+  .np-dlg, .np-icon-dlg, .np-about-dlg { width: 94vw !important; max-width: 94vw; }
   .np-dlg .el-dialog__body, .np-icon-dlg .el-dialog__body { padding: 12px 12px 6px; }
   .np-icon-dlg .np-icon-grid { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); max-height: 46vh; }
   /* 小卡必须正方形（2026-10-16 用户反馈「手机端小卡高和宽不等，希望相等」）。

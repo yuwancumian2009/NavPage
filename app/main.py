@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 import httpx
 
-from . import db, netutil, dockerapi, icons, iconlib, widgets, registry, cron
+from . import db, netutil, dockerapi, icons, iconlib, widgets, registry, cron, version
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -285,6 +285,8 @@ def bootstrap(request: Request, mode: str = ""):
             "ok": True,
             "locked": True,
             "authed": False,
+            # 版本/项目地址等公开元信息：登录门禁页的「关于」也要显示
+            "app": version.meta(),
             "settings": db.public_settings(),
             "network": {
                 "mode": eff,
@@ -321,6 +323,7 @@ def bootstrap(request: Request, mode: str = ""):
         "ok": True,
         "locked": False,
         "authed": authed,
+        "app": version.meta(),
         "settings": db.public_settings(),
         "network": {
             "mode": eff,

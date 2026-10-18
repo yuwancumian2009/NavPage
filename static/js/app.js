@@ -541,6 +541,7 @@
           const eff = await autoModeNow();
           const r = await api.get('/api/bootstrap', { params: { mode: eff || 'auto' } });
           const d = r.data;
+          if (d.app) appMeta.value = d.app;
           if (d.settings) s.value = Object.assign({}, s.value, d.settings);
           locked.value = !!d.locked;
           if (!d.locked) {
@@ -2233,6 +2234,11 @@
          点菜单按钮/菜单项都不冒泡到 window（模板上 @click.stop），
          所以「点空白处关闭」沿用右键菜单那套全局监听即可。 */
       const menuOpen = ref(false);
+      // 「关于」弹窗 + 版本/项目元信息（后端 /api/bootstrap 的 app 字段，未登录也会下发）
+      const aboutOpen = ref(false);
+      const appMeta = ref({});
+      // 显示用：去掉 https:// 前缀，手机上才不会在数字中间折行（href 仍用完整地址）
+      const appMetaShort = computed(() => (appMeta.value.project_url || "").replace(/^https?:\/\//, ""));
 
       function toggleMenu() { menuOpen.value = !menuOpen.value; }
       function closeMenu() { if (menuOpen.value) menuOpen.value = false; }
@@ -2243,6 +2249,10 @@
       function menuAdmin() {
         closeMenu();
         openAdmin();
+      }
+      function menuAbout() {
+        closeMenu();
+        aboutOpen.value = true;
       }
       function onMenuKey(e) { if (e.key === 'Escape' || e.keyCode === 27) closeMenu(); }
 
@@ -2334,7 +2344,7 @@
         newLibUrl, newLibLabel, fmtAgo, loadIconLibs, addIconLib, delIconLib, refreshIconLib,
         ctxMenu, onCardMenu, closeCtxMenu, ctxEdit, ctxDelete,
         ctxIsContainer, ctxContainerName, ctxAllowOp, ctxBusy, ctxContainer,
-        menuOpen, toggleMenu, closeMenu, menuLayout, menuAdmin
+        menuOpen, toggleMenu, closeMenu, menuLayout, menuAdmin, menuAbout, aboutOpen, appMeta, appMetaShort
       };
     }
   });

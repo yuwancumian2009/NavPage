@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/vendor/element-plus.css?v=1">
-<link rel="stylesheet" href="/css/app.css?v=48">
+<link rel="stylesheet" href="/css/app.css?v=51">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -58,6 +58,9 @@
           </button>
           <button class="np-menu-item" @click="menuAdmin">
             <el-icon><i-setting /></el-icon><span>设置</span>
+          </button>
+          <button class="np-menu-item" @click="menuAbout">
+            <el-icon><i-info-filled /></el-icon><span>关于</span>
           </button>
         </div>
       </div>
@@ -1140,6 +1143,38 @@
     </template>
   </el-dialog>
 
+  <!-- 关于：版本 / 项目地址 / 更新日志（版本号来自后端 app/version.py，不在前端硬编码） -->
+  <el-dialog v-model="aboutOpen" title="关于" width="420px" class="np-about-dlg" append-to-body>
+    <div class="np-about">
+      <div class="np-about-hero">
+        <div class="np-about-logo">N</div>
+        <div>
+          <div class="np-about-name">NavPage<span class="np-about-ver">v{{ appMeta.version || '未知' }}</span></div>
+          <div class="np-about-sub">自托管的个人导航页</div>
+        </div>
+      </div>
+      <div class="np-about-rows">
+        <div class="np-about-row">
+          <span class="np-about-k">当前版本</span>
+          <span class="np-about-v"><code>v{{ appMeta.version || '未知' }}</code></span>
+        </div>
+        <div class="np-about-row">
+          <span class="np-about-k">项目地址</span>
+          <a class="np-about-v np-about-link" :href="appMeta.project_url || '#'" target="_blank"
+             rel="noopener">{{ appMetaShort }}</a>
+        </div>
+        <div class="np-about-row">
+          <span class="np-about-k">更新日志</span>
+          <a class="np-about-v np-about-link" :href="appMeta.changelog_url || '#'" target="_blank"
+             rel="noopener noreferrer">查看更新日志 ↗</a>
+        </div>
+      </div>
+    </div>
+    <template #footer>
+      <el-button size="small" type="primary" @click="aboutOpen = false">关闭</el-button>
+    </template>
+  </el-dialog>
+
   <!-- 卡片右键菜单（只有登录后的管理员会看到） -->
   <teleport to="body">
     <div class="np-ctx" v-if="ctxMenu.open"
@@ -1174,6 +1209,6 @@
 <script src="/vendor/element-plus.min.js"></script>
 <script src="/vendor/element-icons.min.js"></script>
 <script src="/vendor/axios.min.js"></script>
-<script src="/js/app.js?v=59"></script>
+<script src="/js/app.js?v=61"></script>
 </body>
 </html>

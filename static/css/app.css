@@ -955,7 +955,7 @@ body {
 .np-wan-tab .np-chip { margin-left: 4px; }
 .np-wan-tab .np-scheme {
   background: none; border: 0; padding: 0; margin-right: 1px; cursor: pointer;
-  font: inherit; font-size: 12px; color: #a8abb2;
+  font: inherit; font-size: 12px; color: #909399;
 }
 .np-wan-tab .np-scheme:hover { color: #409eff; }
 @media (max-width: 820px) {

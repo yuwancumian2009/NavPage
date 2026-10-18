@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 import httpx
 
-from . import db, netutil, dockerapi, icons, iconlib, widgets, registry, cron, version
+from . import db, netutil, dockerapi, icons, iconlib, widgets, registry, cron, version, wanimport
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -1920,6 +1920,101 @@ def admin_item_icon(request: Request, body: ItemIconBody, _=Depends(require_admi
     if not f:
         return _err(f"没抓到图标（{why}）：站点可能没有 favicon，或要登录才能访问")
     return {"ok": True, "icon": f, "from": base}
+
+
+# ---------------------------------------------------------------- 外网地址导入（Lucky 等）
+#
+# 背景（2026-10-19）：Lucky 的规则数据被它自己加密（v2l 通道 / .lkcf 密文），
+# 第三方读不出来。所以这里走「粘贴文本 → 容错解析 → 人工确认」的路子：
+# 用户从 Lucky 页面把域名和后端地址复制下来，这里解析并按端口/名字匹配到卡片，
+# 预览确认后再写 url_wan。解析逻辑在 wanimport.py，纯函数、可单测。
+
+class WanPreviewBody(BaseModel):
+    text: str = ""
+
+
+class WanRow(BaseModel):
+    item_id: int | None = None
+    url: str = ""
+
+
+class WanApplyBody(BaseModel):
+    rows: list[WanRow] = []
+    overwrite: bool = False
+
+
+def _match_items(row, items):
+    """一条解析结果 → 卡片。先按后端端口，再按域名首段/卡片名。"""
+    port = int(row.get("port") or 0)
+    lab = wanimport.norm_name(row.get("label") or "")
+    if port:
+        cands = [i for i in items if int(i.get("container_port") or 0) == port]
+        if len(cands) == 1:
+            return cands[0], "端口"
+        if cands and lab:
+            for i in cands:
+                if lab and lab in (wanimport.norm_name(i.get("container_name")),
+                                   wanimport.norm_name(i.get("name"))):
+                    return i, "端口+名称"
+        if cands:
+            return cands[0], "端口（多条同端口）"
+    if lab:
+        same = [i for i in items
+                if lab in (wanimport.norm_name(i.get("container_name")), wanimport.norm_name(i.get("name")))]
+        if len(same) == 1:
+            return same[0], "名称"
+        near = [i for i in items
+                if wanimport.norm_name(i.get("container_name")).startswith(lab)
+                or wanimport.norm_name(i.get("name")).startswith(lab)]
+        if len(near) == 1:
+            return near[0], "名称（前缀）"
+        if same or near:
+            return (same or near)[0], "名称（多条候选）"
+    return None, ""
+
+
+@app.post("/api/admin/wan/preview")
+def admin_wan_preview(body: WanPreviewBody, _=Depends(require_admin)):
+    """解析粘贴的规则文本 → 逐行匹配结果（不落库，给前端预览用）"""
+    items = db.list_items(include_hidden=True)
+    out = []
+    for row in wanimport.parse(body.text or ""):
+        it, how = _match_items(row, items)
+        out.append({
+            **row,
+            "url": wanimport.build_url(row["scheme"], row["domain"]),
+            "item_id": it["id"] if it else None,
+            "item_name": (it or {}).get("name") or "",
+            "current_wan": (it or {}).get("url_wan") or "",
+            "match_by": how,
+        })
+    return {
+        "ok": True,
+        "rows": out,
+        "items": [{"id": i["id"], "name": i["name"],
+                   "port": int(i.get("container_port") or 0),
+                   "url_wan": i.get("url_wan") or ""} for i in items],
+    }
+
+
+@app.post("/api/admin/wan/apply")
+def admin_wan_apply(body: WanApplyBody, _=Depends(require_admin)):
+    """把确认后的外网地址写进卡片。默认不覆盖已有值。"""
+    updated = skipped = failed = 0
+    for r in body.rows:
+        url = (r.url or "").strip()
+        if not r.item_id or not url:
+            continue
+        it = db.get_item(int(r.item_id))
+        if not it:
+            failed += 1
+            continue
+        if (it.get("url_wan") or "").strip() and not body.overwrite:
+            skipped += 1
+            continue
+        db.update_item(int(r.item_id), {"url_wan": url})
+        updated += 1
+    return {"ok": True, "updated": updated, "skipped": skipped, "failed": failed}
 
 
 # ---------------------------------------------------------------- static (must be last)

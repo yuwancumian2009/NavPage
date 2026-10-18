@@ -941,6 +941,34 @@ body {
 .np-skip { font-size: 12px; line-height: 1.6; word-break: break-all; }
 .np-empty-sm { padding: 26px 0; text-align: center; color: #909399; font-size: 13px; }
 
+/* ---- 导入外网地址：固定列宽，长域名/长卡片名不再把后两列挤飞（2026-10-19） ---- */
+.np-wan-paste { margin-top: 6px; }
+.np-wan-tab { table-layout: fixed; }
+.np-wan-tab th, .np-wan-tab td { padding: 6px 8px; vertical-align: middle; }
+.np-wan-tab .col-back { width: 172px; }
+.np-wan-tab .col-card { width: 196px; }
+.np-wan-tab .col-wan { width: 158px; }
+.np-wan-tab .np-scheme { margin-right: 0; }
+.np-wan-tab .np-slash { color: #dcdfe6; }
+.np-wan-tab td { overflow: hidden; text-overflow: ellipsis; }
+.np-wan-tab .el-select { width: 100%; }
+.np-wan-tab .np-chip { margin-left: 4px; }
+.np-wan-tab .np-scheme {
+  background: none; border: 0; padding: 0; margin-right: 1px; cursor: pointer;
+  font: inherit; font-size: 12px; color: #a8abb2;
+}
+.np-wan-tab .np-scheme:hover { color: #409eff; }
+@media (max-width: 820px) {
+  /* 手机端不挤两列：一行域名、一行下拉，卡片名完整显示（用户模板要求移动端卡片化） */
+  .np-admin .ep-table.np-wan-tab { min-width: 0; }
+  .np-wan-tab .hide-sm, .np-wan-tab thead { display: none; }
+  .np-wan-tab, .np-wan-tab tbody, .np-wan-tab tr, .np-wan-tab td { display: block; width: auto; }
+  .np-wan-tab tr { padding: 8px 0; border-bottom: 1px solid #ebeef5; }
+  .np-wan-tab tr:last-child { border-bottom: 0; }
+  .np-wan-tab td { border: 0; padding: 2px 2px; }
+  .np-wan-tab td.col-card { width: auto; margin-top: 4px; }
+}
+
 /* ---- 表单提示 ---- */
 .np-hint {
   font-size: 12px;

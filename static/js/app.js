@@ -38,6 +38,16 @@
       const autocatting = ref(false);
       const importing = ref(false);
       const selNew = ref([]);
+      // 外网地址导入（粘贴 Lucky 规则 → 解析 → 匹配卡片 → 写 url_wan）
+      const wanText = ref('');
+      const wanRows = ref([]);
+      const wanItems = ref([]);
+      const wanParsing = ref(false);
+      const wanApplying = ref(false);
+      const wanOverwrite = ref(false);
+      const wanSelectedCount = computed(function () {
+        return wanRows.value.filter(function (r) { return !!r.item_id; }).length;
+      });
       const newCat = ref('');
       const selCats = ref([]);   // 分类页勾选的分类 id
       const newPw = ref('');
@@ -1226,6 +1236,39 @@
           await reload(); await loadBootstrap(); await doScan();
         } catch (e) { apiErr(e); }
         importing.value = false;
+      }
+      /* ---------------- 外网地址导入（粘贴 Lucky 规则） ---------------- */
+      async function wanPreview() {
+        if (!wanText.value.trim()) return;
+        wanParsing.value = true;
+        try {
+          const r = await api.post('/api/admin/wan/preview', { text: wanText.value });
+          wanRows.value = (r.data.rows || []).map(function (x) {
+            return Object.assign({}, x, { scheme: x.scheme || 'https' });
+          });
+          wanItems.value = r.data.items || [];
+          if (!wanRows.value.length) ElMessage.warning('没解析出域名，检查一下粘贴的内容');
+        } catch (e) { apiErr(e); }
+        wanParsing.value = false;
+      }
+      async function wanApply() {
+        const rows = wanRows.value
+          .filter(function (r) { return !!r.item_id; })
+          .map(function (r) {
+            return { item_id: r.item_id, url: (r.scheme || 'https') + '://' + r.domain };
+          });
+        if (!rows.length) return;
+        wanApplying.value = true;
+        try {
+          const r = await api.post('/api/admin/wan/apply', { rows: rows, overwrite: wanOverwrite.value });
+          const d = r.data;
+          ElMessage.success('写入 ' + d.updated + ' 张卡片'
+            + (d.skipped ? '，跳过 ' + d.skipped + ' 张（已有外网地址）' : ''));
+          wanRows.value = [];
+          wanText.value = '';
+          await reload();
+        } catch (e) { apiErr(e); }
+        wanApplying.value = false;
       }
       async function syncAll() {
         scanning.value = true;
@@ -2426,6 +2469,7 @@
         addCat, renameCat, delCat, bulkDelCats, moveCat, catIdx,
         selCats, catAllChecked, catIndeterminate,
         onCatCheck, toggleAllCats, doScan, selectAllNew, importSelected, syncAll, autocatAll, autoSaveAt, flushAutoSave,
+        wanText, wanRows, wanItems, wanParsing, wanApplying, wanOverwrite, wanSelectedCount, wanPreview, wanApply,
         refreshIcons, saveSettings, uploadWall, pickWall, useWallUrl, clearWall,
         delWall, openAdmin,
         iconDlg, iconTab, iconList, iconLoading, iconQ, iconResults, iconSearching,

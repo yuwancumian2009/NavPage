@@ -173,6 +173,38 @@
       }
 
       /* ---------------- 视图计算 ---------------- */
+      /* 横竖屏自适应壁纸（2026-10-18）：电脑/横屏取横图，手机竖屏取竖图。
+         支持的三种写法（按顺序判断，命中即用）：
+           1. `{orientation}` 占位符 —— 任意接口通用，如 https://pic.x.com/api/anime/{orientation}
+           2. 查询参数 `?orientation=pc|mobile` 或 `?orient=`
+           3. 自托管随机图片 API 的常用形态：`/api/random` 自动换成 `/api/pc|mobile`，
+              末段已经是 pc/mobile 的自动互换
+         屏幕方向变了（手机旋转、桌面窗口拉成竖的）就重新取一张，并等新图预载完成再替换，
+         避免中间闪一下白底。 */
+      const isPortrait = ref(false);
+      if (window.matchMedia) {
+        const mq = window.matchMedia('(orientation: portrait)');
+        isPortrait.value = mq.matches;
+        const onFlip = function (e) { isPortrait.value = e.matches; };
+        if (mq.addEventListener) mq.addEventListener('change', onFlip);
+        else if (mq.addListener) mq.addListener(onFlip);   // 老 Safari
+      }
+
+      function orientWallUrl(u, portrait) {
+        const o = portrait ? 'mobile' : 'pc';
+        if (!u || u.indexOf('http') !== 0) return u;
+        if (u.indexOf('{orientation}') >= 0) return u.split('{orientation}').join(o);
+        if (/[?&](orientation|orient)=(pc|mobile)/i.test(u)) {
+          return u.replace(/([?&](?:orientation|orient)=)(pc|mobile)/i, '$1' + o);
+        }
+        if (/\/api\/random\/?(\?.*)?$/i.test(u)) {
+          return u.replace(/\/random(\/?)(\?.*)?$/i, '/' + o + '$1$2');
+        }
+        return u.replace(/\/(pc|mobile)(\/?)(\?.*)?$/i, function (m, seg, slash, qs) {
+          return seg.toLowerCase() === o ? m : '/' + o + (slash || '') + (qs || '');
+        });
+      }
+
       const wallpaperUrl = computed(function () {
         const w = s.value.wallpaper || '';
         if (!w) {
@@ -182,13 +214,26 @@
           }
           return '';
         }
-        if (w.indexOf('http') === 0) return w;
+        if (w.indexOf('http') === 0) return orientWallUrl(w, isPortrait.value);
         return '/api/wallpaper/' + encodeURIComponent(w);
       });
 
+      // 实际渲染用的地址：先预载再换，避免方向切换时闪白
+      const bgUrl = ref('');
+      watch(wallpaperUrl, function (u) {
+        if (!u) { bgUrl.value = ''; return; }
+        if (!bgUrl.value) { bgUrl.value = u; return; }   // 首屏直接上，不等预载
+        let done = false;
+        const swap = function () { if (!done) { done = true; bgUrl.value = u; } };
+        const im = new Image();
+        im.onload = swap;
+        setTimeout(swap, 4000);      // 远端慢或失败也别一直卡在旧图
+        im.src = u;
+      }, { immediate: true });
+
       const bgStyle = computed(function () {
         const st = {};
-        if (wallpaperUrl.value) st.backgroundImage = 'url("' + wallpaperUrl.value + '")';
+        if (bgUrl.value) st.backgroundImage = 'url("' + bgUrl.value + '")';
         const b = Number(s.value.wallpaper_blur || 0);
         if (b > 0) st.filter = 'blur(' + b + 'px)';
         return st;

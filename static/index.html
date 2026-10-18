@@ -466,6 +466,11 @@
               当前：<b>{{ s.wallpaper || '默认渐变' }}</b>
               <span v-if="s.wallpaper && s.wallpaper.indexOf('http') === 0">（URL，已回填到上方）</span>
             </div>
+            <div class="np-hint">
+              横竖屏自适应：填 <code>/api/pc</code> 或 <code>/api/random</code> 这类地址会自动按方向换成
+              <code>/api/pc</code> / <code>/api/mobile</code>（手机竖屏取竖图、电脑横屏取横图，旋转屏幕自动换）；
+              其它接口可在地址里写 <code>{orientation}</code> 占位符。
+            </div>
           </div>
           <div class="np-field row">
             <label>模糊</label>
@@ -1231,6 +1236,6 @@
 <script src="/vendor/element-plus.min.js"></script>
 <script src="/vendor/element-icons.min.js"></script>
 <script src="/vendor/axios.min.js"></script>
-<script src="/js/app.js?v=66"></script>
+<script src="/js/app.js?v=67"></script>
 </body>
 </html>

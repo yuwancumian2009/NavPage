@@ -70,7 +70,7 @@ DEFAULT_SETTINGS = {
     "status_dot": True,         # 容器卡片图标右下角的状态灯：绿=正常/黄=延迟高/红=访问不了
     "status_slow_ms": 1000,     # 探测延迟超过该毫秒数算「延迟高」，显示黄点
     "allow_image_update": False,  # 是否允许从面板拉取并重建容器（需 socket-proxy 放开 POST）
-    "image_check_cache": 1800,    # 镜像更新检查缓存秒数（打外网 registry）
+    "image_check_cache": 3600,    # 镜像更新检查缓存秒数（打外网 registry）；2026-10-18 用户要求默认 1 小时
     # 定时自动检查 / 自动更新（2026-10-16 用户要求）。
     # image_auto_cron 是 5 段 cron（分 时 日 月 周），只认这一种写法，解析见 app/cron.py。
     # image_auto_names 里列的是**容器名**：只有这些容器会在检查到更新时被自动更新。
@@ -400,6 +400,13 @@ def _migrate(c):
     for col in ("url_lan", "url_wan"):
         c.execute(f"UPDATE items SET {col} = '{{scheme}}://{{host}}' || {col} "
                   f"WHERE {col} LIKE ':%'")
+    # 2026-10-18：检查缓存默认值从 30 分钟(1800) 改成 1 小时(3600)。
+    # 存量库里 1800 是**旧默认值**被设置页存下来的，不是用户特意选的，一起迁到 3600；
+    # 之后用户如果想改回半小时，在设置里改完会写 1800 —— 但这行每次启动都会再迁一次，
+    # 所以用标记位保证只迁一次。
+    if not c.execute("SELECT 1 FROM settings WHERE key='migrated_cache_1h'").fetchone():
+        c.execute("UPDATE settings SET value='3600' WHERE key='image_check_cache' AND value='1800'")
+        c.execute("INSERT INTO settings(key, value) VALUES('migrated_cache_1h', '1')")
     c.commit()
 
 

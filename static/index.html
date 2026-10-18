@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/vendor/element-plus.css?v=1">
-<link rel="stylesheet" href="/css/app.css?v=51">
+<link rel="stylesheet" href="/css/app.css?v=52">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -47,10 +47,28 @@
       <!-- 顶栏最右侧的统一入口：汉堡菜单（编辑布局 / 设置）
            2026-10-15：设置齿轮从右下角悬浮按钮搬到顶栏，桌面与手机同一个入口。 -->
       <div class="np-menu-wrap" @click.stop>
+        <!-- 可更新镜像角标（2026-10-18 用户要求）：显示上次检查出的可更新数量。
+             只读服务端落盘结果，不触发检查；点它直接跳到「镜像」页。
+             图标用 SVG 而不是字符/背景块 —— 手机浏览器强制深色不会反 SVG 的 fill。 -->
+        <button class="np-upbadge" v-if="imgBadge > 0" @click="openImagesPage"
+                :title="imgBadge + ' 个镜像有更新，点击查看'">
+          <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
+            <path fill="currentColor" d="M8 1.2 15 13.4a.9.9 0 0 1-.8 1.4H1.8a.9.9 0 0 1-.8-1.4L8 1.2Zm0 4.1a.9.9 0 0 0-.9.9v2.7a.9.9 0 0 0 1.8 0V6.2a.9.9 0 0 0-.9-.9Zm0 7a1.1 1.1 0 1 0 0-2.2 1.1 1.1 0 0 0 0 2.2Z"/>
+          </svg>
+          <span>{{ imgBadge > 99 ? '99+' : imgBadge }}</span>
+        </button>
         <button class="np-menu-btn" :class="{ 'is-open': menuOpen }"
                 :title="menuOpen ? '收起菜单' : '菜单'" @click="toggleMenu">
-          <!-- 三横线汉堡（EP 的 i-menu 是 2×2 四宫格，不是汉堡），打开时变 × -->
-          <span class="np-menu-bars"><i></i><i></i><i></i></span>
+          <!-- 三横线汉堡（EP 的 i-menu 是 2×2 四宫格，不是汉堡），打开时变 ×。
+               用 SVG 而不是三个 div：手机浏览器「强制深色」会把浅色**背景块**反色，
+               但不会反 SVG 的 fill —— div 画法在华为/鸿蒙浏览器上会变成黑底黑线。 -->
+          <span class="np-menu-bars">
+            <svg width="16" height="14" viewBox="0 0 16 14" aria-hidden="true">
+              <rect x="0" y="0" width="16" height="2" rx="1" />
+              <rect x="0" y="6" width="16" height="2" rx="1" />
+              <rect x="0" y="12" width="16" height="2" rx="1" />
+            </svg>
+          </span>
         </button>
         <div class="np-menu-pop" v-if="menuOpen">
           <button class="np-menu-item" v-if="token && !layoutMode" @click="menuLayout">
@@ -676,10 +694,15 @@
                        @click="updateAllImages">更新全部 {{ imgOutdated }} 个</el-button>
             <span class="np-bar-tip" v-if="imgRows.length">
               共 {{ imgRows.length }} 个容器 · <b class="np-warn-txt">{{ imgOutdated }}</b> 个可更新
+              <span class="np-checked-at">· 上次检查：{{ imgCheckedText }}</span>
             </span>
           </div>
           <div class="np-scroll">
-            <div class="np-hint">比对本地镜像与 registry 上的最新摘要。Docker Hub 按 IP 限流匿名查询，一次扫几十个很容易整片 429（现象就是「一直显示不出来更新」），填镜像源可绕开。</div>
+            <div class="np-hint">
+              这里显示的是<b>上一次检查的结果</b>（打开页面不会自动去查，省得每次进来都等和耗 Docker Hub 配额）；
+              要看最新状态点左上「检查更新」，一次检查的结果缓存 {{ Math.round((s.image_check_cache || 3600) / 60) }} 分钟。
+              Docker Hub 按 IP 限流匿名查询，一次扫几十个很容易整片 429（现象就是「一直显示不出来更新」），填镜像源可绕开。
+            </div>
             <div class="np-sec">
               <div class="np-sec-head">更新设置</div>
               <div class="np-field">
@@ -862,7 +885,8 @@
                 <span v-if="!imgLast.success" class="np-muted">{{ imgLast.message }}</span>
               </div>
             </div>
-            <table class="ep-table" v-if="imgRows.length">
+            <!-- np-img-table：角标点进来时用它精确滚动定位（页面里有多张 ep-table） -->
+            <table class="ep-table np-img-table" v-if="imgRows.length">
               <thead>
                 <tr><th class="c-box">容器</th><th class="c-tag">镜像</th><th class="c-state">状态</th>
                     <th class="c-ver">本地 / 远程</th><th class="c-auto">自动更新</th><th class="c-act">操作</th></tr>
@@ -1209,6 +1233,6 @@
 <script src="/vendor/element-plus.min.js"></script>
 <script src="/vendor/element-icons.min.js"></script>
 <script src="/vendor/axios.min.js"></script>
-<script src="/js/app.js?v=61"></script>
+<script src="/js/app.js?v=66"></script>
 </body>
 </html>

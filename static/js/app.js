@@ -711,7 +711,9 @@
         // 网络也没断），只有定时主动探一次，判定才能自己跟上 —— 30 秒内自动切到外网链接。
         setInterval(function () { if (!document.hidden) recheckLan(true); }, PROBE_EVERY);
         await loadWallpapers();
-        if (token.value) { await reload(); }
+        // 角标先发（只是个轻量 GET），再等 reload 把卡片拉回来 —— 否则卡片多的时候
+        // 角标要等 reload 完才出现，顶栏会先空一下（2026-10-18 实测 1.2s 内还没渲染）
+        if (token.value) { loadImgBadge(); await reload(); }
       }
 
       /* ---------------- 登录 ---------------- */
@@ -728,6 +730,7 @@
           pw.value = '';
           ElMessage.success('已登录');
           await loadBootstrap();
+          loadImgBadge();       // 登录后才知道有没有可更新镜像（不等 reload，先把角标点亮）
           await reload();
           recheckLan(false);    // 登录后才知道内网地址，这次补上探测
         } catch (e) { apiErr(e); }
@@ -737,6 +740,7 @@
       function logout() {
         token.value = '';
         localStorage.removeItem(TOKEN_KEY);
+        imgBadge.value = 0;
         adminOpen.value = false;
         groups.value = [];
         wdg.value = {};
@@ -1421,8 +1425,10 @@
         });
       }
 
-      function openAdmin() {
+      function openAdmin(tabName) {
         adminOpen.value = true;
+        // 支持直接跳到某个 tab（顶栏「可更新镜像」角标点进来就是 images）
+        if (tabName) tab.value = tabName;
         nextTick(function () { initTabsScroll(); bindCellTitle(); });
         if (token.value) reload();
       }
@@ -1548,6 +1554,42 @@
       /* ---------------- 镜像更新 ---------------- */
       const imgRows = ref([]);
       const imgLoading = ref(false);
+      // 顶栏角标上的「可更新镜像数量」。和 imgOutdated 分开存：imgOutdated 是
+      // 「镜像」页里表格的统计（只在打开设置时才有值），角标要在首屏就显示。
+      const imgBadge = ref(0);
+      // 上次真正联网检查的时间（unix 秒，0 = 从没查过）。后端 /api/admin/images 下发。
+      const imgCheckedAt = ref(0);
+      const imgCheckedText = computed(function () {
+        const t = imgCheckedAt.value;
+        if (!t) return '还没检查过';
+        const d = Math.max(0, Math.floor(Date.now() / 1000 - t));
+        if (d < 60) return '刚刚';
+        if (d < 3600) return Math.floor(d / 60) + ' 分钟前';
+        if (d < 86400) return Math.floor(d / 3600) + ' 小时前';
+        return Math.floor(d / 86400) + ' 天前';
+      });
+      // 角标用轻量接口，只读服务端落盘的上次结果，不联网、不触发检查
+      async function loadImgBadge() {
+        if (!token.value) { imgBadge.value = 0; return; }
+        try {
+          const r = await api.get('/api/admin/images/badge');
+          imgBadge.value = r.data.outdated || 0;
+          if (r.data.checked_at) imgCheckedAt.value = r.data.checked_at;
+        } catch (e) { imgBadge.value = 0; }   // 未登录/无权限就当作没有
+      }
+      function openImagesPage() {
+        loadImgBadge();          // 点角标时顺手刷一下计数
+        openAdmin('images');
+        // 角标点进来是想「看哪些镜像能更新」，而结果表排在更新设置/定时任务下面，
+        // 所以进来把表滚进视野，别让人先翻两屏设置（2026-10-18）。
+        nextTick(function () {
+          setTimeout(function () {
+            const t = document.querySelector('.np-img-table');   // 别用 .ep-table：项目页也有同名表格
+            // block:'start'：54 行的表很高，用 center 会停在表格中间看不到表头
+            if (t) t.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          }, 420);
+        });
+      }
       // 是否有任何一次镜像更新正在进行（单个或批量）。用 computed 返回纯布尔：
       // 直接把 ref 写进模板的或运算里，一旦取到的是 ref 对象（真值）就会把按钮全禁掉。
       const imgAnyBusy = computed(function () {
@@ -1712,13 +1754,18 @@
         imgLoading.value = true;
         imgError.value = '';
         try {
-          // 强制全量检查要逐个问 registry，57 个镜像可能远超全局 20s 超时（被截断就白等了）
+          // 两种取数方式（2026-10-18 用户要求：打开页面先看上次结果，不自动检查）：
+          //   refresh=1 → 真去 registry 逐个查最新（慢、耗配额，只在点「检查更新」时）
+          //   cached=1  → 只回显服务端落盘的上一次结果，全程不联网（打开页面默认走这条）
+          const params = refresh ? { refresh: 1 } : { cached: 1 };
           const r = await api.get('/api/admin/images',
-                                  { params: { refresh: refresh ? 1 : 0 }, timeout: 180000 });
+                                  { params: params, timeout: 180000 });
           imgRows.value = r.data.rows || [];
           imgError.value = r.data.error || '';
           imgAllow.value = !!r.data.allow_update;
           imgLast.value = r.data.last || null;
+          imgCheckedAt.value = r.data.checked_at || 0;
+          imgBadge.value = r.data.outdated || 0;
           if (r.data.auto) imgAuto.value = r.data.auto;
         } catch (e) { apiErr(e); }
         imgLoading.value = false;
@@ -2324,6 +2371,7 @@
         imgRows, imgLoading, imgError, imgUpdating, imgUpdatingName, imgLog, imgAllow,
         imgAnyBusy, imgStep, imgPct, imgPhase, imgElapsed, imgLast, ago,
         imgOutdated, loadImages, updateImage, updateAllImages,
+        imgBadge, imgCheckedText, loadImgBadge, openImagesPage,
         imgAuto, cronPresets, cronPreset, autoNames, autoLastText, isAutoName, toggleAutoName, fmtTs, loadAuto,
         logoUrl, logoUrlInput, uploadLogo, useLogoUrl, clearLogo,
         pruneSt, pruneModes, prunePreset, keepInput, keepList, addKeep, delKeep,

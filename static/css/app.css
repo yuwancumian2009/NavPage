@@ -72,45 +72,52 @@ body {
    需求（2026-10-15）：设置齿轮从「右下角悬浮按钮」搬到顶栏最右侧，
    并把「编辑布局 / 设置」一起收进汉堡菜单 —— 桌面与手机同一个入口。
    定位：[品牌] …… [内外网徽标 + 内外网切换] [☰]（见两个媒体查询里的 order/auto margin） */
-.np-menu-wrap { position: relative; flex: none; }
+.np-menu-wrap { position: relative; flex: none; display: flex; align-items: center; gap: 8px; }
+/* 可更新镜像角标（2026-10-18）：贴在汉堡左侧，红底白字。
+   为什么用「红底 + 白色文字 + 白色 SVG 三角」：手机浏览器强制深色只会压暗浅色背景，
+   不会反文字和 SVG 的 fill，所以这个组合在任何机型上都能看清。 */
+.np-upbadge {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 24px; padding: 0 8px 0 6px;
+  border-radius: 999px; border: 1px solid rgba(255, 255, 255, .3);
+  background: #e5484d; color: #fff;
+  font-size: 12px; font-weight: 700; line-height: 1;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer; box-shadow: 0 2px 8px rgba(229, 72, 77, .35);
+}
+.np-upbadge:hover { background: #cf3a3f; }
+.np-upbadge:active { transform: scale(.96); }
+.np-upbadge svg { display: block; flex: none; }
 .np-menu-btn {
   display: inline-flex;
   align-items: center; justify-content: center;
   width: 34px; height: 34px; padding: 0;
   border-radius: 10px; cursor: pointer;
-  /* 2026-10-18：原来固定「白色半透明底 + 纯白横线」，压在亮壁纸上实测对比度只有 2.1:1
-     （WCAG 对 UI 元素要求 ≥3:1），手机端深色主题下几乎看不见。
-     改成实心浅底 + 深色横线：横线对底 ≈16:1；再给深色主题一套深底白线。 */
-  border: 1px solid rgba(15, 23, 42, .10);
-  background: rgba(255, 255, 255, .92);
-  color: #0f172a; font-size: 17px;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, .18);
+  /* 2026-10-18（第二次修）：第一次改成「白底 + 深色横线」，桌面/普通模式没问题，
+     但华为鸿蒙浏览器开着「深色模式/强制深色」时，浏览器会自动把**浅色背景块反色成深色**，
+     而横线的颜色不跟着反 → 变成「黑底 + 黑线」，用户看到的就是一个没有线的黑方块。
+     实测：背景条画法在强制深色下对比度只剩 1.05；SVG 画法 17.7。
+     所以按钮定为「品牌蓝底 + 白色 SVG 横线」：浅色块不会被自动深色盯上，图标也不会被吃掉。 */
+  border: 1px solid rgba(255, 255, 255, .26);
+  background: #2563eb;
+  color: #fff; font-size: 17px;
+  box-shadow: 0 2px 10px rgba(37, 99, 235, .38);
   transition: background .18s, border-color .18s, color .18s;
 }
-.np-menu-btn:hover, .np-menu-btn.is-open { background: #fff; }
-/* 深色主题下顶栏是深色玻璃：白底按钮会突兀，且浅色描边与顶栏糊在一起 —— 反过来用深底白线 */
-.np-theme-dark .np-menu-btn {
-  background: rgba(17, 22, 31, .72);
-  border-color: rgba(255, 255, 255, .34);
-  color: #fff;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, .45);
-}
-.np-theme-dark .np-menu-btn:hover,
-.np-theme-dark .np-menu-btn.is-open { background: rgba(38, 47, 62, .92); }
+.np-menu-btn:hover, .np-menu-btn.is-open { background: #1d4ed8; }
 /* 三横线汉堡：EP 没有现成的三横线图标（i-menu 是 2×2 四宫格），自己画。
-   打开时上下两根收拢转 45° 变 ×（间距 6px = gap 4 + 线高 2，正好叠到中线） */
-.np-menu-bars {
-  display: flex; flex-direction: column; justify-content: center; gap: 4px;
-  width: 16px; height: 14px;
-}
-.np-menu-bars i {
-  display: block; width: 100%; height: 2px; border-radius: 2px;
-  background: currentColor;
+   注意必须用 SVG rect 而不是 div 背景块 —— 见上面强制深色的说明。
+   打开时上下两根收拢转 ±45° 变 ×（中线 y=7，上下两根各平移 6px 正好叠到中线上） */
+.np-menu-bars { display: block; width: 16px; height: 14px; }
+.np-menu-bars svg { display: block; width: 16px; height: 14px; overflow: visible; }
+.np-menu-bars rect {
+  fill: currentColor;
+  transform-box: fill-box; transform-origin: center;
   transition: transform .18s, opacity .18s;
 }
-.np-menu-btn.is-open .np-menu-bars i:nth-child(1) { transform: translateY(6px) rotate(45deg); }
-.np-menu-btn.is-open .np-menu-bars i:nth-child(2) { opacity: 0; }
-.np-menu-btn.is-open .np-menu-bars i:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+.np-menu-btn.is-open .np-menu-bars rect:nth-of-type(1) { transform: translateY(6px) rotate(45deg); }
+.np-menu-btn.is-open .np-menu-bars rect:nth-of-type(2) { opacity: 0; }
+.np-menu-btn.is-open .np-menu-bars rect:nth-of-type(3) { transform: translateY(-6px) rotate(-45deg); }
 .np-menu-pop {
   position: absolute; right: 0; top: calc(100% + 8px); z-index: 40;
   min-width: 150px; padding: 6px;

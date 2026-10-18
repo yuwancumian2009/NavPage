@@ -705,10 +705,47 @@ def _img_state_save(d):
         pass
 
 
+def _img_checked_at(state=None):
+    """上次真正联网检查成功的时间戳（取各镜像 ts 的最大值），0 = 从来没查过。"""
+    st = state if state is not None else _img_state_load()
+    ts = [float(v.get("ts") or 0) for v in st.values() if isinstance(v, dict) and v.get("ts")]
+    return int(max(ts)) if ts else 0
+
+
+def _img_rows_from_state():
+    """只用落盘的「上次检查结果」拼行，**全程不联网**。
+
+    2026-10-18 用户要求：打开镜像页默认显示上一次的结果，不要自动去查最新。
+    这样点开页面是秒开的，也不会碰 Docker Hub 的匿名配额；要最新就手动点「检查更新」。
+    """
+    state = _img_state_load()
+    try:
+        cs = dockerapi.containers(all_containers=True)
+    except Exception as e:
+        return [], f"读不到容器列表：{e}"
+    rows = []
+    for c in cs:
+        img = c.get("image") or ""
+        st = state.get(img) or {}
+        status = st.get("status") or "unknown"
+        rows.append({
+            "container": c.get("name"), "id": c.get("id"), "image": img,
+            "state": c.get("state"), "project": c.get("compose_project"),
+            "status": status,
+            "local_digest": (st.get("local") or "")[:19],
+            "remote_digest": (st.get("remote") or "")[:19],
+            "has_repo_digest": bool(st.get("local")),
+            "error": "" if st else "还没有检查记录，点「检查更新」拉一次",
+        })
+    rows.sort(key=lambda r: ({"outdated": 0, "unknown": 1, "current": 2, "local": 3}.get(r["status"], 1),
+                             r.get("project") or "~", r.get("container") or ""))
+    return rows, ""
+
+
 def _image_rows(force=False):
     """比对本地镜像摘要与 registry 最新摘要。结果按 image_check_cache 秒缓存。"""
     s = db.get_settings()
-    ttl = int(s.get("image_check_cache") or 1800)
+    ttl = int(s.get("image_check_cache") or 3600)
     now = time.time()
     if not force and _img_cache["rows"] and (now - _img_cache["ts"]) < ttl:
         return _img_cache["rows"], _img_cache["err"], True
@@ -817,9 +854,14 @@ def _image_rows(force=False):
 
 
 @app.get("/api/admin/images")
-def admin_images(refresh: int = 0, _=Depends(require_admin)):
+def admin_images(refresh: int = 0, cached: int = 0, _=Depends(require_admin)):
     s = db.get_settings()
-    rows, err, cached = _image_rows(force=bool(refresh))
+    if cached and not refresh:
+        # 打开页面默认走这里：只读上次结果，不碰 registry（2026-10-18 用户要求）
+        rows, err = _img_rows_from_state()
+        is_cached = True
+    else:
+        rows, err, is_cached = _image_rows(force=bool(refresh))
     # 行是按 image_check_cache 秒（默认 1800）缓存的：这期间容器被删掉/重建，
     # 缓存里就会留一条「幽灵行」——点它的「更新」只会得到「容器不存在」，
     # 看着就像功能坏了（2026-10-15 自查时踩到）。所以每次响应都按实时容器列表过一遍。
@@ -835,12 +877,27 @@ def admin_images(refresh: int = 0, _=Depends(require_admin)):
         r["local_only"] = (not r.get("has_repo_digest", True)) or dockerapi.is_local_only(r.get("image") or "")
     n_out = sum(1 for r in rows if r["status"] == "outdated")
     hist = _hist_list()
-    return {"ok": True, "rows": rows, "error": err, "cached": cached,
+    return {"ok": True, "rows": rows, "error": err, "cached": is_cached,
+            "checked_at": _img_checked_at(),
             "outdated": n_out, "last": (hist[0] if hist else None),
             "allow_update": bool(s.get("allow_image_update")),
             "proxy": bool((s.get("image_proxy") or "").strip()),
             "mirror": (s.get("image_mirror") or "").strip(),
             "auto": _auto_status(s)}
+
+
+@app.get("/api/admin/images/badge")
+def admin_images_badge(_=Depends(require_admin)):
+    """顶部「可更新镜像」角标用的轻量接口：只读上次结果，绝不联网。
+
+    2026-10-18 用户要求：导航页顶栏汉堡菜单左边显示可更新镜像数量。
+    这里不触发检查，所以刷新页面不会打 registry；数量随「检查更新」/定时任务更新。
+    """
+    rows, _err = _img_rows_from_state()
+    return {"ok": True,
+            "outdated": sum(1 for r in rows if r.get("status") == "outdated"),
+            "total": len(rows),
+            "checked_at": _img_checked_at()}
 
 
 # ---------------------------------------------------------------- 更新历史

@@ -6,7 +6,7 @@ CI 用 tag 给 Docker Hub 镜像打版本标签（见 .github/workflows/image.ym
 两者不一致会出现「镜像叫 v1.0.0、关于里写着 1.0.1」这种对不上的情况。
 """
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 PROJECT_URL = "https://github.com/yuwancumian2009/NavPage"
 CHANGELOG_URL = PROJECT_URL + "/blob/main/CHANGELOG.md"
 

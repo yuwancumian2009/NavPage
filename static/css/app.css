@@ -73,21 +73,20 @@ body {
    并把「编辑布局 / 设置」一起收进汉堡菜单 —— 桌面与手机同一个入口。
    定位：[品牌] …… [内外网徽标 + 内外网切换] [☰]（见两个媒体查询里的 order/auto margin） */
 .np-menu-wrap { position: relative; flex: none; display: flex; align-items: center; gap: 8px; }
-/* 可更新镜像角标（2026-10-18）：贴在汉堡左侧，红底白字。
-   为什么用「红底 + 白色文字 + 白色 SVG 三角」：手机浏览器强制深色只会压暗浅色背景，
-   不会反文字和 SVG 的 fill，所以这个组合在任何机型上都能看清。 */
+/* 可更新镜像角标（2026-10-18，改绿）：绿色圆形「提醒」，不是红色三角「警示」。
+   颜色取深绿 #15803d + 白色数字（白字/绿底 5.0:1，12px 小字也过 AA） —— 手机浏览器强制深色只压暗背景、不动白色文字，
+   所以任何机型都看得清；浅色底 + 彩色数字反而会被压暗糊掉。 */
 .np-upbadge {
-  display: inline-flex; align-items: center; gap: 4px;
-  height: 24px; padding: 0 8px 0 6px;
-  border-radius: 999px; border: 1px solid rgba(255, 255, 255, .3);
-  background: #e5484d; color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 22px; padding: 0 6px;
+  border-radius: 999px; border: 1px solid rgba(255, 255, 255, .34);
+  background: #15803d; color: #fff;
   font-size: 12px; font-weight: 700; line-height: 1;
   font-variant-numeric: tabular-nums;
-  cursor: pointer; box-shadow: 0 2px 8px rgba(229, 72, 77, .35);
+  cursor: pointer; box-shadow: 0 2px 8px rgba(21, 128, 61, .32);
 }
-.np-upbadge:hover { background: #cf3a3f; }
+.np-upbadge:hover { background: #166534; }
 .np-upbadge:active { transform: scale(.96); }
-.np-upbadge svg { display: block; flex: none; }
 .np-menu-btn {
   display: inline-flex;
   align-items: center; justify-content: center;

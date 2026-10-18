@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/vendor/element-plus.css?v=1">
-<link rel="stylesheet" href="/css/app.css?v=52">
+<link rel="stylesheet" href="/css/app.css?v=53">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -49,12 +49,10 @@
       <div class="np-menu-wrap" @click.stop>
         <!-- 可更新镜像角标（2026-10-18 用户要求）：显示上次检查出的可更新数量。
              只读服务端落盘结果，不触发检查；点它直接跳到「镜像」页。
-             图标用 SVG 而不是字符/背景块 —— 手机浏览器强制深色不会反 SVG 的 fill。 -->
+             样式是「绿色圆形提醒」而不是「红色警示」（用户明确要提醒语气），
+             一位数是正圆，两位数自动拉成胶囊。 -->
         <button class="np-upbadge" v-if="imgBadge > 0" @click="openImagesPage"
-                :title="imgBadge + ' 个镜像有更新，点击查看'">
-          <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
-            <path fill="currentColor" d="M8 1.2 15 13.4a.9.9 0 0 1-.8 1.4H1.8a.9.9 0 0 1-.8-1.4L8 1.2Zm0 4.1a.9.9 0 0 0-.9.9v2.7a.9.9 0 0 0 1.8 0V6.2a.9.9 0 0 0-.9-.9Zm0 7a1.1 1.1 0 1 0 0-2.2 1.1 1.1 0 0 0 0 2.2Z"/>
-          </svg>
+                :title="imgBadge + ' 个镜像有新版本，点击查看'">
           <span>{{ imgBadge > 99 ? '99+' : imgBadge }}</span>
         </button>
         <button class="np-menu-btn" :class="{ 'is-open': menuOpen }"

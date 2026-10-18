@@ -131,13 +131,13 @@ def parse(text: str) -> list[dict]:
             continue
         domains = _domains(line)
         if not domains:
-            # 只有后端地址的行：补给上一行缺后端的规则（多行粘贴）
+            # 只有后端地址的行：补给前面缺后端的规则（Lucky v3 是一格一行粘贴）
             host, port = _pick_backend(line, [])
             if host and pending:
-                missing = [r for r in pending if not r["backend_port"]]
-                if missing:
-                    missing[-1].update(backend_host=host, backend_port=port)
-                pending = [r for r in pending if not r["backend_port"]]
+                for row in pending:
+                    if not row["backend_port"]:
+                        row.update(backend_host=host, backend_port=port, port=port)
+                pending = []
             continue
 
         scheme, front_port = _front(line, domains)

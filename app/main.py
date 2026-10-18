@@ -1945,7 +1945,7 @@ class WanApplyBody(BaseModel):
 
 def _match_items(row, items):
     """一条解析结果 → 卡片。先按后端端口，再按域名首段/卡片名。"""
-    port = int(row.get("port") or 0)
+    port = int(row.get("backend_port") or row.get("port") or 0)
     lab = wanimport.norm_name(row.get("label") or "")
     if port:
         cands = [i for i in items if int(i.get("container_port") or 0) == port]

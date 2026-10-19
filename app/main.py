@@ -24,6 +24,7 @@ from pydantic import BaseModel
 import httpx
 
 from . import db, netutil, dockerapi, icons, iconlib, widgets, registry, cron, version, wanimport
+from . import compose as compose_mod
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -735,6 +736,8 @@ def _img_rows_from_state():
             "local_digest": (st.get("local") or "")[:19],
             "remote_digest": (st.get("remote") or "")[:19],
             "has_repo_digest": bool(st.get("local")),
+            "is_local_build": bool(st.get("is_local_build")) or st.get("status") == "local",
+            "digest_missing": bool(st.get("digest_missing")),
             "error": "" if st else "还没有检查记录，点「检查更新」拉一次",
         })
     rows.sort(key=lambda r: ({"outdated": 0, "unknown": 1, "current": 2, "local": 3}.get(r["status"], 1),
@@ -787,14 +790,45 @@ def _image_rows(force=False):
         rd, err = remote.get(img, ("", "未检查"))
         row_err = err
         if not ld:
-            # 本地构建的镜像：状态单列一档，前端据此显示「本地镜像 / 重建」
-            status = "local"
-            row_err = ""
+            # RepoDigests 为空 **不等于** 本地构建：飞牛面板装的应用、离线包导入的镜像
+            # 都来自 registry，只是 daemon 没留下摘要（用户反馈 openlist 被误判成
+            # 「本地镜像」就是这个原因）。带命名空间的引用（有 "/"）去 registry 取
+            # config digest —— 它和本地镜像 ID 是同一个东西，可以直接比，不用先 pull。
+            cfg, cfg_err = "", ""
+            if "/" in img:
+                cfg, cfg_err = registry.remote_config_digest(img, proxy, mirror)
+            if cfg:
+                local_id = "sha256:" + (li.get("full_id") or "")
+                status = "current" if local_id == cfg else "outdated"
+                state[img] = {"status": status, "ts": time.time(), "local": local_id,
+                              "remote": registry.normalize(cfg), "digest_missing": True,
+                              "is_local_build": False}
+                rows.append({
+                    "container": c.get("name"), "id": c.get("id"), "image": img,
+                    "state": c.get("state"), "project": c.get("compose_project"),
+                    "status": status, "local_digest": local_id[7:26],
+                    "remote_digest": registry.normalize(cfg)[7:26],
+                    "error": "", "has_repo_digest": False, "is_local_build": False,
+                    "digest_missing": True,
+                })
+                continue
+            # 取不到：registry 明说没这个仓库 -> 真·本地构建；其它情况（网络/限流）-> 未知
+            low = (cfg_err or "").lower()
+            is_local = ("没有" in (cfg_err or "")) or ("404" in low) or ("does not exist" in low)
+            if is_local:
+                status = "local"
+                row_err = ""
+            else:
+                status = "unknown"
+                row_err = cfg_err or "取不到远程摘要"
+            if is_local:
+                state[img] = {"status": "local", "ts": time.time(), "is_local_build": True}
             rows.append({
                 "container": c.get("name"), "id": c.get("id"), "image": img,
                 "state": c.get("state"), "project": c.get("compose_project"),
                 "status": status, "local_digest": "", "remote_digest": "",
-                "error": "", "has_repo_digest": False,
+                "error": row_err, "has_repo_digest": False, "is_local_build": is_local,
+                "digest_missing": False,
             })
             continue
         if err:
@@ -829,6 +863,8 @@ def _image_rows(force=False):
             "local_digest": ld[:19],
             "remote_digest": registry.normalize(rd)[:19],
             "has_repo_digest": True,
+            "is_local_build": False,
+            "digest_missing": False,
             "error": row_err,
         })
     rows.sort(key=lambda r: ({"outdated": 0, "unknown": 1, "current": 2, "local": 3}[r["status"]],
@@ -873,8 +909,10 @@ def admin_images(refresh: int = 0, cached: int = 0, _=Depends(require_admin)):
     # local_only 每次响应都现算：它是进程内记忆（第一次拉取撞 404 才学到），
     # 塞进被缓存 30 分钟的 rows 里会长时间显示不出来。
     for r in rows:
-        # 本地构建 = 没有 RepoDigests（权威判据，第一次就准），或之前撞过 404 记住的
-        r["local_only"] = (not r.get("has_repo_digest", True)) or dockerapi.is_local_only(r.get("image") or "")
+        # 真·本地构建（registry 上没有这个仓库）才显示「本地镜像 / 重建」；
+        # 没有 RepoDigests 但 registry 上确实有的（飞牛面板装的 openlist 这类），
+        # 走 config digest 比对，按正常的「已最新 / 可更新」展示。
+        r["local_only"] = bool(r.get("is_local_build")) or dockerapi.is_local_only(r.get("image") or "")
     n_out = sum(1 for r in rows if r["status"] == "outdated")
     hist = _hist_list()
     return {"ok": True, "rows": rows, "error": err, "cached": is_cached,
@@ -898,6 +936,57 @@ def admin_images_badge(_=Depends(require_admin)):
             "outdated": sum(1 for r in rows if r.get("status") == "outdated"),
             "total": len(rows),
             "checked_at": _img_checked_at()}
+
+
+# ---------------------------------------------------------------- Compose 管理
+# 2026-10-19 用户要求：能读取飞牛上每个 compose 的 YAML，在面板里改完直接重构。
+# 文件读写走 bind mount（宿主机同路径挂载），执行走 compose CLI + socket-proxy。
+class ComposeSaveBody(BaseModel):
+    path: str
+    content: str
+    restart: bool = False
+    pull: bool = False
+
+
+class ComposeUpBody(BaseModel):
+    path: str
+    pull: bool = False
+
+
+@app.get("/api/admin/compose")
+def admin_compose_list(_=Depends(require_admin)):
+    try:
+        rows = compose_mod.projects()
+    except Exception as e:
+        return _err(f"扫描 compose 失败：{e}")
+    return {"ok": True, "root": compose_mod.COMPOSE_ROOT, "rows": rows}
+
+
+@app.get("/api/admin/compose/file")
+def admin_compose_file(path: str, _=Depends(require_admin)):
+    try:
+        return {"ok": True, **compose_mod.read_file(path)}
+    except Exception as e:
+        return _err(str(e))
+
+
+@app.post("/api/admin/compose/save")
+def admin_compose_save(body: ComposeSaveBody, _=Depends(require_admin)):
+    try:
+        res = compose_mod.save(body.path, body.content,
+                               restart=bool(body.restart), pull=bool(body.pull))
+        return dict(res, ok=bool(res.get("ok")))
+    except Exception as e:
+        return _err(str(e))
+
+
+@app.post("/api/admin/compose/up")
+def admin_compose_up(body: ComposeUpBody, _=Depends(require_admin)):
+    try:
+        ok, out, detached = compose_mod.up(body.path, pull=bool(body.pull))
+        return {"ok": ok, "message": out, "detached": detached}
+    except Exception as e:
+        return _err(str(e))
 
 
 # ---------------------------------------------------------------- 更新历史

@@ -92,9 +92,25 @@ mihomo / Clash（连接数、上下行速率、机场数）、自定义 JSON。�
 
 ### 管理台
 
-右下角齿轮进入，六个页签：**项目**（增删改卡片）、**分类**（分组与排序）、
+右下角菜单进入，七个页签：**项目**（增删改卡片）、**分类**（分组与排序）、
 **扫描导入**（扫描容器 / 全量同步 / 按服务类型归类）、**外观**（标题与壁纸）、
-**网络与安全**（密码、内网判定、反代）、**镜像**（检查更新 / 更新 / 定时任务 / 清理）。
+**网络与安全**（密码、内网判定、反代）、**镜像**（检查更新 / 更新 / 定时任务 / 清理）、
+**Compose**（改 YAML 并重构）。
+
+### Compose 管理
+
+把存放 compose 的目录挂进容器（**容器内路径必须和宿主机一致**，否则 YAML 里的
+`./data` 这类相对路径会被解析到容器里，daemon 会在宿主机建出错误的挂载点），
+就能在面板里管理所有项目：
+
+- 列表：项目名、服务数、容器与运行状态，扫描 `NAVPAGE_COMPOSE_ROOT` 下的
+  `docker-compose.yml` / `compose.yaml`（最多 3 层目录）
+- 编辑：直接改 YAML，保存前跑 `docker compose config` 校验，**校验不过不会落盘**
+- 备份：每次保存在同目录留一份 `<文件名>.bak-时间戳`，只保留最近 10 份
+- 重构：`docker compose up -d`（可选 `--pull always`）；改的是面板自己那个项目时会
+  异步执行，面板重启后回来即可
+
+需要 `POST: 1` 和 `SESSION: 1`（compose v5 会开 BuildKit session，不放开会被代理 403）。
 
 登录密码用 PBKDF2-HMAC-SHA256（12 万轮 + 随机盐）存哈希，库里不存明文；可随时改密码。
 
@@ -115,7 +131,7 @@ mihomo / Clash（连接数、上下行速率、机场数）、自定义 JSON。�
 ```yaml
 services:
   navpage:
-    image: yuwancumian2009/navpage:1.1.2
+    image: yuwancumian2009/navpage:1.1.7
     container_name: navpage
     restart: unless-stopped
     ports:
@@ -125,8 +141,12 @@ services:
       NAVPAGE_DATA: /data
       NAVPAGE_DEFAULT_PASSWORD: 改成你自己的密码
       DOCKER_HOST: tcp://navpage-socket-proxy:2375
+      # Compose 管理：要扫描的 compose 根目录（不用这个功能可以不写）
+      NAVPAGE_COMPOSE_ROOT: /vol1/1000/docker
     volumes:
       - ./data:/data
+      # Compose 管理：把 compose 目录**按宿主机同样的绝对路径**挂进来（只读改 YAML 也要 rw）
+      - /vol1/1000/docker:/vol1/1000/docker
     depends_on:
       - socket-proxy
 
@@ -142,7 +162,9 @@ services:
       INFO: 1
       IMAGES: 1
       NETWORKS: 1
-      POST: 0          # 想用「面板内更新镜像」改成 1（见安全说明）
+      VOLUMES: 1
+      SESSION: 1       # compose v5 启动时会开 BuildKit session，不放开会被 403
+      POST: 0          # 想用「面板内更新镜像 / Compose 重构」改成 1（见安全说明）
       EXEC: 0
       BUILD: 0
     volumes:
@@ -212,6 +234,7 @@ docker run -d --name navpage -p 8095:8080 \
 | `NAVPAGE_DATA` | `/data` | 数据目录（SQLite 库、壁纸、图标缓存），一般不用改 |
 | `DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker API 地址。compose 里指向 socket-proxy |
 | `NAVPAGE_DOCKER_TIMEOUT` | `10` | 调 Docker API 的超时秒数，容器多 / NAS 慢可以调大 |
+| `NAVPAGE_COMPOSE_ROOT` | `/vol1/1000/docker` | Compose 管理的扫描根目录，**要和挂载进容器的宿主机路径一致**；目录不存在时 Compose 页为空 |
 | `TZ` | `UTC` | 时区，影响定时任务与日志时间，建议 `Asia/Shanghai` |
 
 ### 2. 端口与数据
@@ -325,9 +348,12 @@ docker run -d --name navpage -p 8095:8080 \
 - 容器**不直接挂载** `/var/run/docker.sock`，而是经 `docker-socket-proxy`，只放开
   `CONTAINERS / VERSION / PING / INFO / IMAGES / NETWORKS` 等接口，`EXEC / BUILD` 关闭。
 - 仓库里**不写死任何默认密码**：镜像发布在 Docker Hub，镜像内带固定口令等于把所有部署者的初始密码一起发出去。
-- 仓库提供的 `docker-compose.yml` 为了支持「面板内更新镜像」，开了 `POST=1` +
-  `ALLOW_START/ALLOW_STOP=1`。代价是面板被攻破时攻击面更大（POST + CONTAINERS 等于能创建特权容器）。
-  不需要这个功能就把这几项改回 `0` 并重建 socket-proxy 容器——「检查更新」仍然可用，只是不能真的更新。
+- 仓库提供的 `docker-compose.yml` 为了支持「面板内更新镜像 / Compose 重构」，开了 `POST=1` +
+  `ALLOW_START/ALLOW_STOP=1`（compose 还要 `SESSION=1`）。代价是面板被攻破时攻击面更大
+  （POST + CONTAINERS 等于能创建特权容器）。不需要这些功能就把这几项改回 `0` 并重建 socket-proxy
+  容器——「检查更新」仍然可用，只是不能真的更新；Compose 页会退化成只读不了也重构不了。
+- Compose 管理会把 compose 目录以**可写**方式挂进容器，等于面板能改宿主机上所有 compose 文件；
+  只想要只读查看就别挂这个目录。
 - 登录接口没有失败锁定与限速，**不要把面板裸奔到公网**；必须公网访问时请套反代 + HTTPS + 访问控制。
 
 ---
@@ -429,7 +455,7 @@ navpage/
 生产建议钉死版本，避免 `latest` 悄悄升级：
 
 ```yaml
-image: yuwancumian2009/navpage:1.1.2
+image: yuwancumian2009/navpage:1.1.7
 ```
 
 改了哪些东西看 [CHANGELOG.md](CHANGELOG.md)。发版流程：改 `app/version.py` 的 `VERSION` →

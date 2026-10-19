@@ -17,8 +17,14 @@ services:
       NAVPAGE_DEFAULT_PASSWORD: changeme
       # 走 socket-proxy，不把裸 docker.sock 交给应用容器
       DOCKER_HOST: tcp://navpage-socket-proxy:2375
+      # Compose 管理扫描的根目录（容器内路径与宿主机一致，见下面 volumes）
+      NAVPAGE_COMPOSE_ROOT: /vol1/1000/docker
     volumes:
       - ./data:/data
+      # Compose 管理：读改 compose 文件 + 重构。
+      # 必须挂成**宿主机同样的绝对路径**，否则 YAML 里的相对路径 ./data
+      # 会被 compose 解析成容器内路径，daemon 会照此建出错误的挂载点。
+      - /vol1/1000/docker:/vol1/1000/docker
     depends_on:
       - socket-proxy
     healthcheck:
@@ -48,6 +54,10 @@ services:
       INFO: 1
       IMAGES: 1
       NETWORKS: 1
+      # compose CLI（v5）启动时会开 BuildKit session、给命名卷建卷；不放开这两个，
+      # 任何 `docker compose up` 都会被代理 403 挡掉（2026-10-19 实测）。
+      SESSION: 1
+      VOLUMES: 1
       POST: 1
       EXEC: 0
       BUILD: 0

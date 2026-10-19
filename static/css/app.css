@@ -1155,3 +1155,24 @@ body {
 .np-theme-dark .np-wpop-title { color: #e6e8eb; }
 .np-theme-dark .np-wpop-k { color: rgba(230, 232, 235, .62); }
 .np-theme-dark .np-wpop-v { color: #e6e8eb; }
+
+/* ---- Compose 管理（2026-10-19） ---- */
+.np-cmp-table td { vertical-align: top; }
+.np-cmp-table .np-mono { font-size: 10px; }
+.np-cmp-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.np-cmp-meta code { font-size: 10px; color: #909399; word-break: break-all; }
+.np-warn-txt { color: #e6a23c; }
+/* 编辑器：等宽字体 + 浅底，长 YAML 也不至于看串行 */
+.np-cmp-editor textarea {
+  font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace !important;
+  font-size: 12px !important;
+  line-height: 1.55 !important;
+  background: #fbfcfd;
+  color: #2c3038;
+  white-space: pre;
+  overflow: auto;
+}
+.np-cmp-msg {
+  margin-top: 8px; font-size: 12px; line-height: 1.6;
+  white-space: pre-wrap; word-break: break-all; max-height: 180px; overflow: auto;
+}

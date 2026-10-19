@@ -174,12 +174,16 @@
         }
       );
       function apiErr(err) {
-        let msg = err.message || '请求失败';
-        if (err.response && err.response.data) {
+        ElMessage.error(apiMsg(err));
+      }
+      // 取后端错误文案（不弹提示，给内嵌消息区用）
+      function apiMsg(err) {
+        let msg = (err && err.message) || '请求失败';
+        if (err && err.response && err.response.data) {
           const d = err.response.data;
-          msg = d.detail || d.error || msg;
+          msg = d.detail || d.error || d.message || msg;
         }
-        ElMessage.error(String(msg));
+        return String(msg);
       }
 
       /* ---------------- 视图计算 ---------------- */
@@ -1706,6 +1710,102 @@
         } catch (e) { if (e !== 'cancel') apiErr(e); }
       }
 
+      /* ---------------- Compose 管理 ---------------- */
+      // 2026-10-19 用户要求：读飞牛上每个 compose 的 YAML，在面板里改完直接重构。
+      const cmpRows = ref([]);
+      const cmpLoading = ref(false);
+      const cmpError = ref('');
+      const cmpRoot = ref('');
+      const cmpLast = ref(null);
+      const cmpDlg = ref({ open: false, path: '', project: '', content: '', original: '',
+                            busy: false, msg: '', ok: null, containers: [] });
+      const cmpDirty = computed(function () {
+        const d = cmpDlg.value;
+        return !!(d.open && !d.busy && d.content !== d.original);
+      });
+
+      async function loadCompose() {
+        cmpLoading.value = true;
+        cmpError.value = '';
+        try {
+          const r = await api.get('/api/admin/compose', { timeout: 60000 });
+          cmpRows.value = (r.data.rows || []).map(function (x) { return Object.assign({ _busy: false }, x); });
+          cmpRoot.value = r.data.root || '';
+        } catch (e) {
+          cmpError.value = apiMsg(e);
+        }
+        cmpLoading.value = false;
+      }
+
+      async function openCompose(row) {
+        cmpDlg.value = { open: true, path: row.path, project: row.project, content: '读取中…',
+                         original: '', busy: true, msg: '', ok: null, containers: [] };
+        try {
+          const r = await api.get('/api/admin/compose/file', { params: { path: row.path } });
+          const d = r.data || {};
+          cmpDlg.value = { open: true, path: d.path || row.path, project: d.project || row.project,
+                           content: d.content || '', original: d.content || '',
+                           busy: false, msg: '', ok: null, containers: d.containers || [] };
+        } catch (e) {
+          cmpDlg.value.busy = false;
+          cmpDlg.value.ok = false;
+          cmpDlg.value.msg = apiMsg(e);
+        }
+      }
+
+      async function saveCompose(restart) {
+        const d = cmpDlg.value;
+        if (!d.path || d.busy) return;
+        d.busy = true;
+        d.ok = null;
+        d.msg = restart ? '正在保存并重构…' : '正在保存…';
+        try {
+          const r = await api.post('/api/admin/compose/save',
+            { path: d.path, content: d.content, restart: !!restart, pull: false },
+            { timeout: 600000 });
+          const res = r.data || {};
+          d.ok = !!res.ok;
+          if (res.stage === 'validate') d.msg = '校验没通过，未写入：\n' + (res.message || '');
+          else if (res.ok) d.msg = (restart ? '已重构' : '已保存') + (res.backup ? '（备份 ' + res.backup.split('/').pop() + '）' : '') + (res.message && restart ? '\n' + res.message : '');
+          else d.msg = '失败：' + (res.message || '');
+          if (res.ok) {
+            d.original = d.content;
+            if (res.detached) ElMessage.warning('面板容器正在重建，几秒后自动刷新');
+            else ElMessage.success(restart ? '已重构' : '已保存');
+            loadCompose();
+          }
+        } catch (e) {
+          d.ok = false;
+          d.msg = apiMsg(e);
+        }
+        d.busy = false;
+      }
+
+      async function upCompose(row, pull) {
+        const name = row.project;
+        try {
+          await ElMessageBox.confirm(
+            '将对「' + name + '」执行 docker compose up -d' + (pull ? ' --pull always' : '') +
+            '。配置有变化的容器会被重建（服务短暂中断），继续？',
+            '重构 ' + name,
+            { type: 'warning', confirmButtonText: '重构', cancelButtonText: '取消' });
+        } catch (e) { return; }
+        row._busy = true;
+        try {
+          const r = await api.post('/api/admin/compose/up',
+                                   { path: row.path, pull: !!pull }, { timeout: 600000 });
+          const d = r.data || {};
+          cmpLast.value = { project: name, ok: !!d.ok, message: d.message || '', ts: Date.now() };
+          if (d.ok) ElMessage.success(d.detached ? '已提交，面板正在重建' : '重构完成');
+          else ElMessage.error('重构失败，看下方输出');
+        } catch (e) {
+          cmpLast.value = { project: name, ok: false, message: apiMsg(e), ts: Date.now() };
+          apiErr(e);
+        }
+        row._busy = false;
+        loadCompose();
+      }
+
       /* ---------------- 镜像更新 ---------------- */
       const imgRows = ref([]);
       const imgLoading = ref(false);
@@ -2516,6 +2616,8 @@
       // 切到「扫描导入」时自动扫一次，避免打开就是一片空白
       watch(tab, function (v) {
         if (v === 'scan' && token.value && !scanResult.value && !scanning.value) doScan();
+        // Compose 页：每次进来都重扫（宿主机上可能刚加了项目），但不阻塞切换
+        if (v === 'compose' && token.value && !cmpLoading.value) loadCompose();
         if (v === 'images' && token.value) {
           if (!imgRows.value.length && !imgLoading.value) loadImages(false);
           else restoreImgTask();   // 表已有数据：也把在跑的更新接回来
@@ -2537,6 +2639,8 @@
         showUrlFor, barW, layoutMode, layoutDirty, savingLayout, dragId, dragOverKey,
         startLayout, cancelLayout, onDragStart, onDragOverGroup, onDragOverCard, onDrop,
         onDragEnd, saveLayout, quickAddGroup,
+        cmpRows, cmpLoading, cmpError, cmpRoot, cmpLast, cmpDlg, cmpDirty,
+        loadCompose, openCompose, saveCompose, upCompose,
         imgRows, imgLoading, imgError, imgUpdating, imgUpdatingName, imgLog, imgAllow,
         imgAnyBusy, imgStep, imgPct, imgPhase, imgElapsed, imgLast, ago,
         imgOutdated, loadImages, updateImage, updateAllImages,

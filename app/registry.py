@@ -205,6 +205,97 @@ def local_digest_for(repo_digests, image):
     return ""
 
 
+def _manifest_body(host, repo, ref, proxy=None):
+    """取 manifest（ref 可以是 tag，也可以是 digest）-> (body, content_type, error)。"""
+    url = f"https://{host}/v2/{repo}/manifests/{ref}"
+    headers = {"Accept": ACCEPT}
+    kw = {"timeout": TIMEOUT, "follow_redirects": True,
+          "headers": {"User-Agent": "navpage/1.0"}}
+    if proxy:
+        kw["proxy"] = proxy
+    try:
+        with httpx.Client(**kw) as c:
+            r = c.get(url, headers=headers)
+            if r.status_code == 401:
+                tok = _get_token(c, r.headers.get("www-authenticate", ""), repo)
+                if not tok:
+                    return None, "", "registry 拒绝了匿名访问（私有仓库）"
+                headers["Authorization"] = "Bearer " + tok
+                r = c.get(url, headers=headers)
+            if r.status_code == 404:
+                return None, "", f"registry 上没有 {repo}:{ref}"
+            if r.status_code == 429:
+                return None, "", "HTTP 429（registry 限流：本机 IP 的匿名配额用完了）"
+            if r.status_code != 200:
+                return None, "", f"HTTP {r.status_code}"
+            try:
+                return (r.json() or {}), r.headers.get("content-type", ""), ""
+            except Exception:
+                return None, "", "manifest 不是 JSON"
+    except Exception as e:
+        return None, "", f"{type(e).__name__}: {e}"
+
+
+def _pick_platform_digest(body, want=("linux", "amd64")):
+    """从 manifest list 里挑出目标平台的 manifest 摘要。
+
+    跳过 buildx 的 attestation 条目（platform 是 unknown/unknown），
+    否则会拿到一个没有 config 的空壳 manifest。
+    """
+    ms = [m for m in (body.get("manifests") or []) if isinstance(m, dict)]
+    if not ms:
+        return ""
+    for m in ms:
+        p = m.get("platform") or {}
+        if (p.get("os"), p.get("architecture")) == want:
+            return m.get("digest") or ""
+    for m in ms:
+        p = m.get("platform") or {}
+        if p.get("os") == "linux" and p.get("architecture") not in ("unknown", "", None):
+            return m.get("digest") or ""
+    return ""
+
+
+def remote_config_digest(image, proxy=None, mirror=None):
+    """取 registry 上该 tag 的**镜像 config 摘要**（= 本地 `docker images` 的 IMAGE ID）。
+
+    为什么需要它：RepoDigests 为空不等于「本地构建」。飞牛面板 / 离线包导入的镜像
+    没有 RepoDigests，但确实是 registry 上的镜像（用户反馈 openlist 被误判成
+    「本地镜像」就是这个原因）。manifest 的 config.digest 和本地镜像 ID 是同一个
+    东西，可以直接比，判断「已最新 / 可更新」不需要先 pull。
+    """
+    registry, repo, tag = parse_ref(image)
+    if not registry:
+        return "", "镜像名无法解析"
+    mhost = normalize_mirror(mirror)
+    tries = []
+    if mhost and registry == "registry-1.docker.io" and mhost != registry:
+        tries.append((mhost, None))
+    tries.append((registry, None))          # 直连
+    if proxy:
+        tries.append((registry, proxy))     # 代理兜底
+    last = ""
+    for host, px in tries:
+        body, _ctype, err = _manifest_body(host, repo, tag, proxy=px)
+        if err:
+            last = err
+            continue
+        if body.get("manifests"):
+            d = _pick_platform_digest(body)
+            if not d:
+                last = "manifest list 里没有 linux/amd64"
+                continue
+            body, _ctype, err = _manifest_body(host, repo, d, proxy=px)
+            if err:
+                last = err
+                continue
+        cfg = (body.get("config") or {}).get("digest") or ""
+        if cfg:
+            return cfg, ""
+        last = "manifest 里没有 config.digest"
+    return "", last or "取不到 config digest"
+
+
 def is_available(proxy=None):
     """探测能否访问 registry（用于设置页给个即时反馈）。"""
     kw = {"timeout": 8.0, "follow_redirects": True}

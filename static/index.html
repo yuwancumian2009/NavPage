@@ -987,7 +987,8 @@
                          : (r.status === 'outdated' ? '可更新' : (r.status === 'current' ? '已最新' : '未知')) }}
                     </span>
                   </td>
-                  <td class="np-muted np-mono">
+                  <td class="np-muted np-mono"
+                      :title="r.digest_missing ? '这个镜像没有 RepoDigests（飞牛面板/离线包导入），这里比的是镜像 config digest' : ''">
                     {{ r.local_digest || '—' }}<br>
                     <span :class="{ 'np-warn-txt': r.status === 'outdated' }">{{ r.remote_digest || '—' }}</span>
                   </td>
@@ -1015,6 +1016,60 @@
           <div class="np-savebar">
             <el-button type="primary" :loading="busy" @click="saveSettings()">保存镜像设置</el-button>
             <span class="np-savebar-tip">改动即自动保存，按钮用于手动确认</span>
+          </div>
+        </el-tab-pane>
+
+        <!-- ---------------- Compose 管理（2026-10-19） ---------------- -->
+        <el-tab-pane label="Compose" name="compose">
+          <div class="np-scroll">
+            <div class="np-hint">
+              扫描 <code>{{ cmpRoot || '/vol1/1000/docker' }}</code> 下的 compose 文件，可直接改 YAML 并「保存并重构」。
+              保存前会跑 <code>docker compose config</code> 校验，写不进去的坏配置不会落盘；
+              每次保存会在同目录留一份 <code>.bak-时间戳</code>（只留最近 10 份）。
+            </div>
+            <div class="np-bar">
+              <el-button size="small" :loading="cmpLoading" @click="loadCompose()">重新扫描</el-button>
+              <span class="np-bar-tip" v-if="cmpRows.length">共 {{ cmpRows.length }} 个项目</span>
+              <span class="np-err-txt" v-if="cmpError">{{ cmpError }}</span>
+            </div>
+            <table class="ep-table np-cmp-table" v-if="cmpRows.length">
+              <thead>
+                <tr>
+                  <th style="width:190px">项目</th>
+                  <th style="width:96px">服务</th>
+                  <th>容器</th>
+                  <th style="width:190px">文件</th>
+                  <th style="width:110px">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="r in cmpRows" :key="r.path">
+                  <td>
+                    <div class="np-strong">{{ r.project }}</div>
+                    <div class="np-muted np-mono">{{ r.dir }}</div>
+                  </td>
+                  <td class="np-muted">{{ r.services.length }} 个</td>
+                  <td>
+                    <span v-if="!r.containers.length" class="np-chip">未创建</span>
+                    <span v-for="c in r.containers" :key="c.name" class="np-chip"
+                          :class="{ warn: c.state !== 'running' }">{{ c.name }}</span>
+                  </td>
+                  <td class="np-mono np-muted">{{ r.path.split('/').slice(-2).join('/') }}</td>
+                  <td>
+                    <el-button size="small" text type="primary" @click="openCompose(r)">编辑</el-button>
+                    <el-button size="small" text :loading="r._busy" @click="upCompose(r, false)">重构</el-button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="np-empty-sm" v-else-if="!cmpLoading">没有找到 compose 文件</div>
+            <div class="np-sec" v-if="cmpLast">
+              <div class="np-sec-head">
+                上次重构：{{ cmpLast.project }}
+                <b :class="cmpLast.ok ? 'np-ok-txt' : 'np-err-txt'">{{ cmpLast.ok ? '成功' : '失败' }}</b>
+              </div>
+              <div class="np-log">{{ cmpLast.message || '(没有输出)' }}</div>
+            </div>
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -1279,6 +1334,29 @@
     </template>
   </el-dialog>
 
+  <!-- Compose 编辑：改完「保存」或「保存并重构」（2026-10-19） -->
+  <el-dialog v-model="cmpDlg.open" :title="'编辑 ' + (cmpDlg.project || 'compose')" width="880px"
+             top="4vh" append-to-body class="np-cmp-dlg" :close-on-click-modal="false">
+    <div class="np-cmp-meta">
+      <code class="np-mono">{{ cmpDlg.path }}</code>
+      <span class="np-warn-txt" v-if="cmpDirty">· 有未保存的改动</span>
+      <span class="np-muted" v-if="cmpDlg.containers && cmpDlg.containers.length">
+        · {{ cmpDlg.containers.length }} 个容器
+      </span>
+    </div>
+    <el-input v-model="cmpDlg.content" type="textarea" :rows="24" spellcheck="false"
+              resize="vertical" class="np-cmp-editor" :disabled="cmpDlg.busy"></el-input>
+    <div class="np-cmp-msg" v-if="cmpDlg.msg"
+         :class="cmpDlg.ok === false ? 'np-err-txt' : (cmpDlg.ok ? 'np-ok-txt' : 'np-muted')">{{ cmpDlg.msg }}</div>
+    <template #footer>
+      <el-button size="small" :disabled="cmpDlg.busy" @click="cmpDlg.open = false">关闭</el-button>
+      <el-button size="small" :loading="cmpDlg.busy" :disabled="!cmpDirty || cmpDlg.busy"
+                 @click="saveCompose(false)">保存</el-button>
+      <el-button size="small" type="primary" :loading="cmpDlg.busy" :disabled="!cmpDirty || cmpDlg.busy"
+                 @click="saveCompose(true)">保存并重构</el-button>
+    </template>
+  </el-dialog>
+
   <!-- 卡片右键菜单（只有登录后的管理员会看到） -->
   <teleport to="body">
     <div class="np-ctx" v-if="ctxMenu.open"
@@ -1313,6 +1391,6 @@
 <script src="/vendor/element-plus.min.js"></script>
 <script src="/vendor/element-icons.min.js"></script>
 <script src="/vendor/axios.min.js"></script>
-<script src="/js/app.js?v=74"></script>
+<script src="/js/app.js?v=75"></script>
 </body>
 </html>

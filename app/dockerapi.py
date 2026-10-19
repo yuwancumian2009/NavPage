@@ -82,6 +82,9 @@ def image_digests():
         tags = [t for t in (im.get("RepoTags") or []) if t and t != "<none>:<none>"]
         info = {
             "id": (im.get("Id") or "").replace("sha256:", "")[:12],
+            # 完整 ID（= 镜像 config digest）。有些镜像没有 RepoDigests（飞牛面板/
+            # 离线包导入的），只能拿它跟 registry 的 config.digest 比。
+            "full_id": (im.get("Id") or "").replace("sha256:", ""),
             "digests": [d for d in (im.get("RepoDigests") or []) if d],
             "created": im.get("Created") or 0,
             "size": im.get("Size") or 0,

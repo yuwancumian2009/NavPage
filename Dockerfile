@@ -18,6 +18,12 @@ RUN pip install --no-cache-dir -r /app/requirements.txt \
 COPY app /app/app
 COPY static /app/static
 
+# Compose 管理要用 docker CLI + compose 插件。只拷两个静态二进制，
+# 不装 docker.io 那一坨（省 100MB+）。插件目录必须是 /usr/local/libexec/docker/cli-plugins，
+# CLI 只在这个路径下自动发现插件。
+COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker:cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
+
 RUN mkdir -p /data/wallpapers /data/icons
 
 EXPOSE 8080

@@ -2,3 +2,5 @@ fastapi==0.115.6
 uvicorn==0.34.0
 httpx==0.28.1
 python-multipart==0.0.20
+# Compose 管理要解析 YAML（没有它也能启动，只是解析退化成正则）
+pyyaml==6.0.2

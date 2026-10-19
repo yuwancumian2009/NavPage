@@ -1176,3 +1176,5 @@ body {
   margin-top: 8px; font-size: 12px; line-height: 1.6;
   white-space: pre-wrap; word-break: break-all; max-height: 180px; overflow: auto;
 }
+.np-cmp-name { margin-bottom: 8px; }
+.np-cmp-name input { font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace; font-size: 12px; }

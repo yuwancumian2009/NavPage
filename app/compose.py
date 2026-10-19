@@ -23,6 +23,13 @@ MAX_DEPTH = 3
 RUN_TIMEOUT = 600
 BACKUP_KEEP = 10
 
+# 这些目录名当项目名没有意义（应用自己生成的 compose 常放在 <应用>/iyuu/docker/ 里），
+# 取不到名字时往上一层找，别把项目显示成 "docker"。
+GENERIC_DIRS = {"docker", "compose", "composes", "docker-compose", "app", "apps", "src",
+                "data", "config", "configs", "conf", "files", "yaml", "yml", "deploy", "stack"}
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
+
+
 try:
     import yaml
 except Exception:            # 镜像里没装 PyYAML 也要能启动，只是解析退化成正则
@@ -94,8 +101,26 @@ def _clean_project(name):
     return n.strip("-_") or "default"
 
 
+def _fallback_name(path):
+    """目录名当项目名，但跳过 docker/compose/data 这类通用名（应用自己生成的 compose 常在
+    <应用>/iyuu/docker/ 下，直接用目录名会显示成 "docker"）。最多往上找 3 层。"""
+    root = os.path.realpath(COMPOSE_ROOT)
+    d = os.path.dirname(os.path.realpath(path))
+    for _ in range(3):
+        if os.path.realpath(d) == root:
+            break
+        base = os.path.basename(d)
+        if base and base.lower() not in GENERIC_DIRS:
+            return _clean_project(base)
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return _clean_project(os.path.basename(os.path.dirname(path)))
+
+
 def _project_for(path, doc, by_proj):
-    """项目名优先级：YAML 里的 name: > 容器标签反查 > 目录名。"""
+    """项目名优先级：YAML 里的 name: > 容器标签反查 > 目录名（跳过通用目录名）。"""
     explicit = (doc or {}).get("name")
     if isinstance(explicit, str) and explicit.strip():
         return _clean_project(explicit)
@@ -105,12 +130,25 @@ def _project_for(path, doc, by_proj):
             files = [f.strip() for f in (c.get("config_files") or "").split(",") if f.strip()]
             if any(os.path.realpath(f) == real for f in files):
                 return proj
-    return _clean_project(os.path.basename(os.path.dirname(path)))
+    return _fallback_name(path)
+
+
+def _containers_by_file(by_proj):
+    """{realpath(config_file): [容器]} —— 按 compose 文件精确归属，避免同名项目互相认领。"""
+    out = {}
+    for _proj, cs in by_proj.items():
+        for c in cs:
+            for f in (c.get("config_files") or "").split(","):
+                f = f.strip()
+                if f:
+                    out.setdefault(os.path.realpath(f), []).append(c)
+    return out
 
 
 def projects():
     """列出全部 compose 项目。"""
     by_proj = _containers_by_project()
+    by_file = _containers_by_file(by_proj)
     out = []
     for path in _walk(COMPOSE_ROOT):
         doc, _txt = _load_yaml(path)
@@ -118,7 +156,7 @@ def projects():
         if not isinstance(svcs, dict):
             svcs = {}
         proj = _project_for(path, doc, by_proj)
-        cs = by_proj.get(proj) or []
+        cs = list(by_file.get(os.path.realpath(path)) or [])
         try:
             st = os.stat(path)
             mtime, size = int(st.st_mtime), st.st_size
@@ -135,7 +173,35 @@ def projects():
             "mtime": mtime,
             "size": size,
             "parse_error": bool(_txt) and not svcs,
+            "dup_of": "",
         })
+    # 文件里查不到容器的（老版本 compose 记的是相对路径），按项目名兜底；
+    # 一个项目名只让一行认领，别让两个文件都显示同一批容器。
+    claimed = {r["project"] for r in out if r["containers"]}
+    for r in out:
+        if r["containers"]:
+            continue
+        cand = by_proj.get(r["project"]) or []
+        if cand and r["project"] not in claimed:
+            r["containers"] = [{"name": c["name"], "state": c["state"], "service": c["service"]} for c in cand]
+            r["running"] = sum(1 for c in cand if c["state"] == "running")
+            claimed.add(r["project"])
+    # 同一套服务 + 同一套镜像出现两次：多半是应用自己生成的旧 compose（如 iyuu/docker/），
+    # 容器少的那个标成重复，免得用户以为是两个不同项目。
+    by_key = {}
+    for r in out:
+        if not r["services"]:
+            continue
+        key = (tuple(sorted(r["services"])), tuple(sorted(r["images"])))
+        prev = by_key.get(key)
+        if prev is None:
+            by_key[key] = r
+            continue
+        if len(r["containers"]) <= len(prev["containers"]):
+            r["dup_of"] = os.path.relpath(prev["path"], COMPOSE_ROOT)
+        else:
+            prev["dup_of"] = os.path.relpath(r["path"], COMPOSE_ROOT)
+            by_key[key] = r
     out.sort(key=lambda r: (r["project"] or "~"))
     return out
 
@@ -276,5 +342,51 @@ def save(path, content, restart=False, pull=False):
     res = {"ok": True, "stage": "save", "backup": bak, "message": "已保存"}
     if restart:
         up_ok, out, detached = up(real, pull=pull)
+        res.update({"ok": up_ok, "stage": "up", "message": out, "detached": detached})
+    return res
+
+
+def create(name, content, up_after=False, pull=False):
+    """新建项目：<root>/<name>/docker-compose.yml，校验通过才落盘，可选立即 up -d。"""
+    n = (name or "").strip().lower()
+    if not NAME_RE.match(n):
+        return {"ok": False, "stage": "name",
+                "message": "项目名只能用小写字母、数字、- 和 _，以字母或数字开头，最长 63 位"}
+    if not (content or "").strip():
+        return {"ok": False, "stage": "content", "message": "YAML 内容为空"}
+    root = os.path.realpath(COMPOSE_ROOT)
+    d = os.path.join(root, n)
+    if os.path.exists(d):
+        return {"ok": False, "stage": "name", "message": f"目录已存在：{d}"}
+    try:
+        os.makedirs(d, exist_ok=False)
+    except Exception as e:
+        return {"ok": False, "stage": "mkdir", "message": f"{type(e).__name__}: {e}"}
+    path = os.path.join(d, COMPOSE_NAMES[0])
+    # 校验用的临时文件放在同一个新目录里，相对路径的解析结果才和最终一致
+    tmp = os.path.join(d, ".navpage-new-" + str(int(time.time() * 1000)) + ".yml")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(content)
+        ok, out = _run(["docker", "compose", "-f", tmp, "-p", n, "config", "-q"], timeout=60)
+    finally:
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+    if not ok:
+        try:
+            os.rmdir(d)          # 只删空目录，别动用户已有的东西
+        except Exception:
+            pass
+        return {"ok": False, "stage": "validate", "message": out}
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+    except Exception as e:
+        return {"ok": False, "stage": "write", "message": f"{type(e).__name__}: {e}"}
+    res = {"ok": True, "stage": "create", "path": path, "project": n, "message": "已创建"}
+    if up_after:
+        up_ok, out, detached = up(path, pull=pull)
         res.update({"ok": up_ok, "stage": "up", "message": out, "detached": detached})
     return res

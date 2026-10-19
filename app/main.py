@@ -953,6 +953,13 @@ class ComposeUpBody(BaseModel):
     pull: bool = False
 
 
+class ComposeNewBody(BaseModel):
+    name: str
+    content: str
+    up: bool = False
+    pull: bool = False
+
+
 @app.get("/api/admin/compose")
 def admin_compose_list(_=Depends(require_admin)):
     try:
@@ -985,6 +992,16 @@ def admin_compose_up(body: ComposeUpBody, _=Depends(require_admin)):
     try:
         ok, out, detached = compose_mod.up(body.path, pull=bool(body.pull))
         return {"ok": ok, "message": out, "detached": detached}
+    except Exception as e:
+        return _err(str(e))
+
+
+@app.post("/api/admin/compose/new")
+def admin_compose_new(body: ComposeNewBody, _=Depends(require_admin)):
+    try:
+        res = compose_mod.create(body.name, body.content,
+                                 up_after=bool(body.up), pull=bool(body.pull))
+        return dict(res, ok=bool(res.get("ok")))
     except Exception as e:
         return _err(str(e))
 

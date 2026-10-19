@@ -1781,6 +1781,79 @@
         d.busy = false;
       }
 
+      /* ---------------- 新建 Compose 项目 ---------------- */
+      function cmpTpl(name) {
+        const n = name || 'app';
+        return [
+          'services:',
+          '  ' + n + ':',
+          '    image: nginx:alpine',
+          '    container_name: ' + n,
+          '    restart: unless-stopped',
+          '    ports:',
+          '      - "8080:80"',
+          '    volumes:',
+          '      - ./data:/data',
+          ''
+        ].join('\n');
+      }
+      const cmpNew = ref({ open: false, name: '', content: '', busy: false, msg: '', ok: null });
+
+      function openComposeNew() {
+        cmpNew.value = { open: true, name: '', content: '', busy: false, msg: '', ok: null };
+      }
+
+      function fillComposeTpl() {
+        const d = cmpNew.value;
+        if (!d.content.trim()) d.content = cmpTpl((d.name || '').trim().toLowerCase());
+      }
+
+      async function createCompose(andUp) {
+        const d = cmpNew.value;
+        if (d.busy) return;
+        const name = (d.name || '').trim().toLowerCase();
+        if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(name)) {
+          d.ok = false;
+          d.msg = '项目名只能用小写字母、数字、- 和 _，以字母或数字开头';
+          return;
+        }
+        if (!d.content.trim()) {
+          d.ok = false;
+          d.msg = 'YAML 内容不能为空';
+          return;
+        }
+        d.busy = true;
+        d.ok = null;
+        d.msg = andUp ? '正在创建并构建…' : '正在创建…';
+        try {
+          const r = await api.post('/api/admin/compose/new',
+            { name: name, content: d.content, up: !!andUp, pull: false },
+            { timeout: 600000 });
+          const res = r.data || {};
+          d.ok = !!res.ok;
+          if (res.stage === 'validate') d.msg = '校验没通过，未创建：\n' + (res.message || '');
+          else if (res.ok) d.msg = (andUp ? '已创建并构建' : '已创建') + '：' + (res.path || '') +
+                                   (andUp && res.message ? '\n' + res.message : '');
+          else d.msg = '失败：' + (res.message || '');
+          if (res.ok) {
+            ElMessage.success(andUp ? '已创建并构建' : '已创建');
+            d.open = false;
+            loadCompose();
+            if (andUp && res.message) cmpLast.value = { project: name, ok: true, message: res.message, ts: Date.now() };
+          } else if (res.stage === 'up') {
+            // 文件已经建好了，只是构建失败：关掉弹窗、刷新列表，把输出留在下方日志里
+            ElMessage.error('已创建，但构建失败，看下方输出');
+            d.open = false;
+            loadCompose();
+            cmpLast.value = { project: name, ok: false, message: res.message || '', ts: Date.now() };
+          }
+        } catch (e) {
+          d.ok = false;
+          d.msg = apiMsg(e);
+        }
+        d.busy = false;
+      }
+
       async function upCompose(row, pull) {
         const name = row.project;
         try {
@@ -2640,6 +2713,7 @@
         startLayout, cancelLayout, onDragStart, onDragOverGroup, onDragOverCard, onDrop,
         onDragEnd, saveLayout, quickAddGroup,
         cmpRows, cmpLoading, cmpError, cmpRoot, cmpLast, cmpDlg, cmpDirty,
+        cmpNew, openComposeNew, fillComposeTpl, createCompose,
         loadCompose, openCompose, saveCompose, upCompose,
         imgRows, imgLoading, imgError, imgUpdating, imgUpdatingName, imgLog, imgAllow,
         imgAnyBusy, imgStep, imgPct, imgPhase, imgElapsed, imgLast, ago,

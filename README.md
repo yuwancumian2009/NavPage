@@ -9,7 +9,7 @@
 
 - 不想一条条手填服务地址？扫描一下 Docker 容器就有了。
 - 在家用内网 IP、在外面用域名，不想两头改配置？它按客户端 IP 自动切。
-- 想在导航页上直接看到下载速度、Emby 正在播什么、NAS 的 CPU 温度？卡片支持 11 种服务状态小组件。
+- 想在导航页上直接看到下载速度、Emby 正在播什么、NAS 的 CPU 温度？卡片支持 12 种服务状态小组件。
 
 ---
 
@@ -79,7 +79,10 @@
 
 直接在卡片上显示服务运行时数据，支持：qBittorrent、Transmission、MoviePilot、Emby、Jellyfin、
 Plex、Audiobookshelf、Navidrome、本机 / NAS（CPU、内存、温度、运行天数）、哪吒探针（云服务器）、
-自定义 JSON。每种要填什么见 [小组件怎么配](#5-小组件怎么配)。
+mihomo / Clash（连接数、上下行速率、机场数）、自定义 JSON。每种要填什么见 [小组件怎么配](#5-小组件怎么配)。
+
+带明细数据的小组件（mihomo、哪吒探针等）在电脑上**鼠标悬停**会弹出浮层：mihomo 会逐条列出
+每个策略组当前选中的线路和延迟，浮层可滚动，下方空间不够时自动翻到卡片上方。
 
 ### 外观与壁纸
 
@@ -269,6 +272,7 @@ docker run -d --name navpage -p 8095:8080 \
 | Audiobookshelf | 地址、API Token | 用户设置里生成 |
 | Navidrome | 地址、用户名、密码 | 填 Navidrome 登录账号，显示专辑 / 艺术家 / 歌曲 / 歌单 |
 | 本机 / NAS | 不用填 | 读容器可见的宿主 `/proc`、`/sys`：CPU、内存、温度、运行天数。SATA 盘温度需宿主先 `sudo modprobe drivetemp` |
+| mihomo / Clash | 外部控制地址、密钥（没设就留空） | 填 `external-controller` 的地址，如 `http://192.168.1.10:9090`（不是面板网页端口）；显示连接数 / ↓速率 / ↑速率 / 机场订阅数，悬停看每个策略组当前线路 + 延迟。`external-controller` 建议只监听内网，或设 secret 后填到「密钥」 |
 | 哪吒探针 | 面板地址、API 令牌、（可选）服务器名 | 面板 → 设置 → API 令牌，权限至少 `nezha:inventory:read`，要实时状态再加 `nezha:server:read`；多台时填服务器名或 id |
 | 自定义 JSON | 地址、API Key、字段路径、显示名、单位 | 给一个返回 JSON 的接口，`path` 用点号取值，如 `data.count` |
 
@@ -393,7 +397,7 @@ navpage/
 │   ├── main.py       FastAPI 路由：bootstrap / admin / 扫描 / 壁纸 / 鉴权
 │   ├── db.py         SQLite：items / categories / settings
 │   ├── dockerapi.py  只读 Docker API 客户端（容器、端口、compose 项目）
-│   ├── widgets.py    11 种服务状态小组件
+│   ├── widgets.py    12 种服务状态小组件
 │   ├── registry.py   镜像更新检查（Registry v2 / 镜像站）
 │   ├── cron.py       定时检查 / 更新 / 清理
 │   ├── netutil.py    局域网判定、客户端 IP、{host} 模板展开

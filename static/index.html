@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/vendor/element-plus.css?v=1">
-<link rel="stylesheet" href="/css/app.css?v=60">
+<link rel="stylesheet" href="/css/app.css?v=62">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -150,7 +150,8 @@
               <div class="np-card-desc" v-if="s.show_desc && it.description">{{ it.description }}</div>
               <!-- 状态小组件：homepage 风格 = 一行摘要 + 一排指标小方块 -->
               <div class="np-card-widget" v-if="it.has_widget && wdg[it.id]"
-                   :class="{ 'is-err': !wdg[it.id].ok }">
+                   :class="{ 'is-err': !wdg[it.id].ok, 'has-detail': wdg[it.id].ok && wdg[it.id].detail && wdg[it.id].detail.length }"
+                   @mouseenter="wpopShow(it, $event)" @mouseleave="wpopHide()">
                 <template v-if="wdg[it.id].ok">
                   <div class="np-wrow">
                     <span class="np-wtext">{{ wdg[it.id].text }}</span>
@@ -189,6 +190,21 @@
     </main>
 
     <footer class="np-foot" v-if="s.footer_text">{{ s.footer_text }}</footer>
+
+    <!-- 小组件悬停详情：任何返回 detail 的小组件都能用（mihomo 显示策略组线路+延迟） -->
+    <div class="np-wpop" v-if="wpop" :style="wpop.style"
+         @mouseenter="wpopHold(true)" @mouseleave="wpopHold(false)">
+      <div class="np-wpop-h">
+        <span class="np-wpop-title">{{ wpop.title }}</span>
+        <span class="np-wpop-sub" v-if="wpop.sub">{{ wpop.sub }}</span>
+      </div>
+      <div class="np-wpop-body">
+        <div class="np-wpop-row" v-for="(d, i) in wpop.rows" :key="i">
+          <span class="np-wpop-k">{{ d[0] }}</span>
+          <span class="np-wpop-v">{{ d[1] }}</span>
+        </div>
+      </div>
+    </div>
 
     <!-- 布局模式：拖动卡片换位置 / 换分组 -->
     <div class="np-layoutbar" v-if="layoutMode">
@@ -1291,6 +1307,6 @@
 <script src="/vendor/element-plus.min.js"></script>
 <script src="/vendor/element-icons.min.js"></script>
 <script src="/vendor/axios.min.js"></script>
-<script src="/js/app.js?v=69"></script>
+<script src="/js/app.js?v=72"></script>
 </body>
 </html>

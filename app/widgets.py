@@ -912,6 +912,164 @@ def nezha(cfg):
     return _rich(txt, stats, detail)
 
 
+# ---------------------------------------------------------------- mihomo / Clash
+
+# 策略组类型：这些组才有「当前选了谁」，直连/节点本身没有
+_MH_GROUP_TYPES = ("Selector", "URLTest", "Fallback", "LoadBalance", "Relay")
+# 订阅型 provider 的 vehicleType（真正的「机场」）；Compatible 是策略组伪装成的 provider
+_MH_SUB_VEHICLES = ("HTTP", "File")
+
+_mh_last = {}          # base -> (ts, down_total, up_total)，/traffic 不可用时算速率用
+
+
+def _mh_get(c, base, path, secret):
+    h = {}
+    if secret:
+        h["Authorization"] = "Bearer " + secret
+    r = c.get(base + path, headers=h)
+    if r.status_code in (401, 403):
+        raise PermissionError("mihomo 需要密钥：请在小组件里填 secret")
+    r.raise_for_status()
+    return r.json()
+
+
+def _mh_speed(c, base, secret):
+    """/traffic 是长连接逐秒吐 {"up":x,"down":y}，读第一行就断开。失败返回 None。"""
+    h = {}
+    if secret:
+        h["Authorization"] = "Bearer " + secret
+    try:
+        with c.stream("GET", base + "/traffic", headers=h, timeout=6.0) as r:
+            if r.status_code >= 400:
+                return None
+            for line in r.iter_lines():
+                line = (line or "").strip()
+                if line.startswith("{"):
+                    j = json.loads(line)
+                    return int(j.get("down") or 0), int(j.get("up") or 0)
+    except Exception:
+        return None
+    return None
+
+
+def _mh_rate(base, dl, ul):
+    now = time.time()
+    prev = _mh_last.get(base)
+    _mh_last[base] = (now, dl, ul)
+    if not prev:
+        return 0, 0
+    dt = max(0.001, now - prev[0])
+    return max(0, int((dl - prev[1]) / dt)), max(0, int((ul - prev[2]) / dt))
+
+
+def _mh_delay_of(p):
+    hist = (p or {}).get("history") or []
+    for h in reversed(hist):
+        d = h.get("delay")
+        if isinstance(d, (int, float)) and d:
+            return int(d)
+    return None
+
+
+def _mh_resolve(proxies, nodes, name):
+    """策略组可能套策略组（AI平台 → 故障转移 → 香港策略 → 香港自动 → 节点）。
+
+    节点数据不在 /proxies 里（那边只给策略组和 DIRECT/REJECT），
+    必须去 /providers/proxies 的 nodes 表里查，否则延迟永远是空的。
+
+    返回 (路径[除起点的名字...], 延迟毫秒或 None)；沿途任一层有测速结果就先用它兜底。
+    """
+    path, delay = [], None
+    cur = name
+    for _ in range(6):
+        p = proxies.get(cur) or nodes.get(cur)
+        if not p:
+            return path, delay
+        d = _mh_delay_of(p)
+        if d:
+            delay = d
+        if p.get("type") not in _MH_GROUP_TYPES:
+            return path, delay
+        nxt = p.get("now")
+        if not nxt or nxt == cur:
+            return path, delay
+        path.append(nxt)
+        cur = nxt
+    return path, delay
+
+
+def mihomo(cfg):
+    base = _base(cfg)
+    if not base:
+        return _err("未填外部控制地址（如 http://192.168.1.109:9090）")
+    secret = (cfg.get("secret") or "").strip()
+    try:
+        # 不能吃环境里的 HTTP(S)_PROXY：mihomo 自己就常被设成系统代理，
+        # 走代理再去连 9090 会自己转发自己（实测 502）
+        with _client(trust_env=False) as c:
+            ver = _mh_get(c, base, "/version", secret)
+            conn = _mh_get(c, base, "/connections", secret)
+            proxies = (_mh_get(c, base, "/proxies", secret) or {}).get("proxies") or {}
+            providers = (_mh_get(c, base, "/providers/proxies", secret) or {}).get("providers") or {}
+            live = _mh_speed(c, base, secret)
+    except PermissionError as e:
+        return _err(str(e))
+    except Exception as e:
+        return _err("连不上 mihomo：%s" % str(e)[:90])
+
+    n_conn = len(conn.get("connections") or [])
+    dl = int(conn.get("downloadTotal") or 0)
+    ul = int(conn.get("uploadTotal") or 0)
+    down, up = live if live else _mh_rate(base, dl, ul)
+
+    subs = [k for k, v in providers.items() if (v or {}).get("vehicleType") in _MH_SUB_VEHICLES]
+    n_nodes = sum(len((providers.get(k) or {}).get("proxies") or []) for k in subs)
+    n_air = len(subs)
+    if not n_air:      # 全是 Compatible（策略组伪装）时，退一步按非 Compatible 数算
+        n_air = len([1 for v in providers.values()
+                     if (v or {}).get("vehicleType") not in (None, "", "Compatible")])
+
+    stats = [
+        {"label": "连接", "value": str(n_conn)},
+        {"label": "↓", "value": fmt_speed(down), "tone": "good" if down else "muted"},
+        {"label": "↑", "value": fmt_speed(up), "tone": "good" if up else "muted"},
+        {"label": "机场", "value": str(n_air)},
+    ]
+    text = "累计 ↓%s ↑%s" % (fmt_compact(dl), fmt_compact(ul))
+
+    detail = [
+        ["累计流量", "↓%s ↑%s" % (fmt_compact(dl), fmt_compact(ul))],
+        ["机场订阅", "%d 个 · %d 节点" % (n_air, n_nodes) if n_air else "—"],
+    ]
+    if ver.get("version"):
+        detail.append(["内核", str(ver["version"])])
+
+    # 节点（含延迟）只在 /providers/proxies 里，先摊平成一张名字表
+    nodes = {}
+    for v in providers.values():
+        for it in (v.get("proxies") or []):
+            nm = (it or {}).get("name")
+            if nm:
+                nodes[nm] = it
+
+    groups = [(k, v) for k, v in proxies.items()
+              if (v or {}).get("type") in _MH_GROUP_TYPES and k != "GLOBAL"]
+    for name, g in groups[:40]:
+        now = g.get("now") or ""
+        if not now:
+            detail.append([name, "未选择"])
+            continue
+        path, delay = _mh_resolve(proxies, nodes, name)
+        chain = " → ".join(path[-2:]) if path else now      # 最多显示两跳，太长弹层放不下
+        if delay:
+            chain += " · %dms" % delay
+        detail.append([name, chain])
+    if len(groups) > 40:
+        detail.append(["……", "还有 %d 个策略组" % (len(groups) - 40)])
+
+    return _rich(text, stats, detail)
+
+
 # ---------------------------------------------------------------- 通用
 
 def generic(cfg):
@@ -1020,6 +1178,17 @@ PROVIDERS = {
         ],
         "hint": "显示云服务器的 CPU / 内存 / 上下行累计流量 / 运行时长（数据来自哪吒 v1 面板 API）。",
         "fetch": nezha,
+    },
+    "mihomo": {
+        "label": "mihomo / Clash", "icon": "🐱",
+        "fields": [
+            {"key": "url", "label": "外部控制地址", "ph": "http://192.168.1.109:9090",
+             "hint": "mihomo 的 external-controller 地址（docker 里映射的 9090 端口），不是订阅链接"},
+            {"key": "secret", "label": "密钥（没设就留空）", "ph": "config.yaml 里的 secret",
+             "hint": "外部控制密码；mihomo 没配 secret 时留空即可"},
+        ],
+        "hint": "显示连接数 / 上下行速率 / 机场订阅数；鼠标悬停卡片看每个策略组当前走的线路和延迟。",
+        "fetch": mihomo,
     },
     "generic": {
         "label": "自定义 JSON", "icon": "🔧",

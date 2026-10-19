@@ -649,6 +649,60 @@
         if (wdgTimer) { clearInterval(wdgTimer); wdgTimer = null; }
       }
 
+      /* 小组件悬停详情：把后端给的 detail 渲染成浮层（mihomo 的策略组线路/延迟就在这看）。
+         位置用 fixed + 卡片矩形算，贴着卡片下方；下面放不开就翻到上方。
+         面板自身可悬停（移鼠标进去不会立刻消失），滚页面自动收起。 */
+      const wpop = ref(null);
+      let wpopHideTimer = null;
+      let wpopScrollBound = false;
+
+      function wpopClearLater() {
+        clearTimeout(wpopHideTimer);
+        wpopHideTimer = setTimeout(function () { wpop.value = null; }, 160);
+      }
+
+      function wpopShow(it, ev) {
+        if (isMobile.value) return;                       // 触屏没有 hover，别乱弹
+        const w = wdg.value[it.id];
+        if (!w || !w.ok || !w.detail || !w.detail.length) return;
+        clearTimeout(wpopHideTimer);
+        if (!wpopScrollBound) {
+          wpopScrollBound = true;
+          // 捕获阶段能收到面板自身的滚动，那种别关（否则滚列表浮层就没了）
+          window.addEventListener('scroll', function (e) {
+            const t = e.target;
+            if (t && t.closest && t.closest('.np-wpop')) return;
+            wpop.value = null;
+          }, true);
+        }
+        const el = (ev && (ev.currentTarget || ev.target)) || null;
+        if (!el) return;
+        // 以整张卡片为锚点，浮层贴着卡片下沿，不会压住卡片自己的指标
+        const anchor = (el.closest && el.closest('.np-card')) || el;
+        const r = anchor.getBoundingClientRect();
+        const W = Math.min(330, window.innerWidth - 24);
+        const wantH = Math.min(460, 44 + w.detail.length * 22);
+        const below = window.innerHeight - r.bottom - 12;
+        const above = r.top - 12;
+        const style = { width: W + 'px', maxHeight: Math.max(150, Math.min(wantH, 460)) + 'px' };
+        if (below >= Math.min(180, wantH) || below >= above) {
+          style.top = (r.bottom + 8) + 'px';
+          style.maxHeight = Math.max(140, Math.min(wantH, below - 10)) + 'px';
+        } else {
+          style.bottom = (window.innerHeight - r.top + 8) + 'px';
+          style.maxHeight = Math.max(140, Math.min(wantH, above - 10)) + 'px';
+        }
+        style.left = Math.max(12, Math.min(r.left, window.innerWidth - W - 12)) + 'px';
+        wpop.value = { title: it.name, sub: w.text || '', rows: w.detail, style: style };
+      }
+
+      function wpopHide() { wpopClearLater(); }
+
+      function wpopHold(on) {
+        if (on) clearTimeout(wpopHideTimer);
+        else wpopClearLater();
+      }
+
       /* ---------------- 容器在线状态灯 ----------------
          只对「容器卡片」生效（container_name 非空）；网站收藏卡片没有 container_name，
          下面 containerIds() 自然就不会把它们的 id 发给后端，卡片上也不会有圆点。 */
@@ -2451,6 +2505,7 @@
         clock, dateStr, wallpaperUrl, bgStyle, cardMin, groupStyle, filteredGroups, drawerSize,
         initial, colorOf, hostOf, onIconError, onCardClick, catName, countInCat, cardTitle,
         wdg, widgetProviders, wdgFields, wdgHint, wdgTesting, wdgResult,
+        wpop, wpopShow, wpopHide, wpopHold,
         onWidgetTypeChange, testWidget, loadWidgets,
         st, dotOf, dotTip, loadStatus,
         showUrlFor, barW, layoutMode, layoutDirty, savingLayout, dragId, dragOverKey,

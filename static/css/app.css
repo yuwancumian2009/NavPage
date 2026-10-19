@@ -1119,3 +1119,39 @@ body {
   .np-sec { padding: 2px 11px 6px; }
   .np-kv { grid-template-columns: 72px minmax(0, 1fr); }
 }
+
+
+/* ---------------- 小组件悬停详情浮层 ---------------- */
+.np-card-widget.has-detail { cursor: help; }
+.np-wpop {
+  position: fixed; z-index: 4000; display: flex; flex-direction: column;
+  background: rgba(255, 255, 255, .985); border: 1px solid rgba(0, 0, 0, .07);
+  border-radius: 12px; box-shadow: 0 14px 38px rgba(0, 0, 0, .18);
+  overflow: hidden; backdrop-filter: blur(8px);
+}
+.np-wpop-h {
+  display: flex; align-items: baseline; gap: 8px; padding: 8px 11px;
+  border-bottom: 1px solid rgba(0, 0, 0, .05); background: rgba(250, 251, 252, .9);
+}
+.np-wpop-title { font-size: 13px; font-weight: 600; color: #303133; white-space: nowrap; }
+.np-wpop-sub {
+  font-size: 11px; color: #909399; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; flex: 1; text-align: right;
+}
+.np-wpop-body { overflow: auto; padding: 4px 0; overscroll-behavior: contain; }
+.np-wpop-row { display: flex; gap: 10px; padding: 3px 11px; font-size: 12px; line-height: 1.5; }
+.np-wpop-row:hover { background: rgba(64, 158, 255, .08); }
+.np-wpop-k {
+  flex: 0 0 38%; max-width: 38%; color: #606266;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.np-wpop-v {
+  flex: 1; min-width: 0; color: #303133; font-weight: 500; word-break: break-word;
+  /* 节点名里有国旗 emoji，显式带上 emoji 字体，免得落到无字体的方框 */
+  font-family: inherit, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
+}
+.np-theme-dark .np-wpop { background: rgba(20, 26, 36, .97); border-color: rgba(255, 255, 255, .1); }
+.np-theme-dark .np-wpop-h { background: rgba(26, 33, 45, .95); border-color: rgba(255, 255, 255, .08); }
+.np-theme-dark .np-wpop-title { color: #e6e8eb; }
+.np-theme-dark .np-wpop-k { color: rgba(230, 232, 235, .62); }
+.np-theme-dark .np-wpop-v { color: #e6e8eb; }

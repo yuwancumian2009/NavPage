@@ -99,10 +99,16 @@
     <section class="np-hero">
       <div class="np-clock">{{ clock }}</div>
       <div class="np-date">{{ dateStr }}</div>
-      <div class="np-searchwrap">
+      <!-- 搜索框防浏览器自动填充：autocomplete=off 对 Chrome 经常不生效，
+           真正管用的是初始 readonly（自动填充会跳过只读输入框），
+           用户按下鼠标/触摸/聚焦时再解除（见 unlockSearch）。 -->
+      <div class="np-searchwrap" @pointerdown.capture="unlockSearch" @touchstart.capture="unlockSearch">
         <el-input v-model="q" size="large" clearable class="np-search"
+                  name="np-search-kw" autocomplete="off" autocorrect="off" autocapitalize="off"
+                  spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other"
+                  :readonly="searchLocked"
                   placeholder="搜索应用或网址，回车用搜索引擎搜索"
-                  @keyup.enter="onEnter">
+                  @keyup.enter="onEnter" @focus="unlockSearch">
           <template #prefix><i-search></i-search></template>
         </el-input>
         <div class="np-engines">
@@ -1307,6 +1313,6 @@
 <script src="/vendor/element-plus.min.js"></script>
 <script src="/vendor/element-icons.min.js"></script>
 <script src="/vendor/axios.min.js"></script>
-<script src="/js/app.js?v=72"></script>
+<script src="/js/app.js?v=74"></script>
 </body>
 </html>

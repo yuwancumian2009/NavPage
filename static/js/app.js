@@ -1009,6 +1009,19 @@
       window.addEventListener('focus', function () { recheckLan(true); });
 
       /* ---------------- 搜索 ---------------- */
+      /* 搜索框防浏览器自动填充（2026-10-19 用户反馈：Chrome 把上次搜的词填进来了）。
+         autocomplete=off 对 Chrome 的「表单历史」经常无效，真正管用的是初始 readonly：
+         自动填充会跳过只读输入框。用户一碰（pointerdown/touchstart/focus）就解除。 */
+      const searchLocked = ref(true);
+      let searchTouched = false;
+      function unlockSearch() {
+        searchTouched = true;
+        searchLocked.value = false;
+        // 同时立刻摘掉 DOM 属性：iOS 上要赶在 focus 之前解除，否则不弹键盘
+        const el = document.querySelector('.np-search input, .np-search textarea');
+        if (el && el.hasAttribute('readonly')) el.removeAttribute('readonly');
+      }
+
       function onEnter() {
         const kw = (q.value || '').trim();
         if (!kw) return;
@@ -2446,6 +2459,19 @@
       function onMenuKey(e) { if (e.key === 'Escape' || e.keyCode === 27) closeMenu(); }
 
       onMounted(boot);
+      // 兜底：有的浏览器会在加载后 / 刷新还原时把值塞回来（甚至不走 input 事件，
+      // 只改 DOM），用户没碰过就清掉，Vue 状态和 DOM 一起清。
+      onMounted(function () {
+        const clearIfUntouched = function () {
+          if (searchTouched) return;
+          q.value = '';
+          const el = document.querySelector('.np-search input');
+          if (el && el.value) el.value = '';
+        };
+        setTimeout(clearIfUntouched, 60);
+        setTimeout(clearIfUntouched, 400);
+        window.addEventListener('pageshow', clearIfUntouched);
+      });
 
       // 量 .np-main 的宽度并持续跟踪（窗口缩放 / 抽屉开合都会变）。
       // 它自己宽度由父容器拉伸决定、与内容无关，所以观察它不会形成回路。
@@ -2530,7 +2556,7 @@
         iconDlg, iconTab, iconList, iconLoading, iconQ, iconResults, iconSearching,
         iconLibErr, iconLibAt, iconBusy, iconPreview, iconPreviewName, iconPreviewSrc,
         iconFetching, fetchItemIcon,
-        openIconPicker, loadLocalIcons, searchIconLib, pickLibIcon, uploadIcon,
+        openIconPicker, loadLocalIcons, searchIconLib, pickLibIcon, uploadIcon, unlockSearch, searchLocked,
         delLocalIcon, libIconError, useIcon,
         iconLibs, iconLibFilter, iconLibBusy, iconTotal, iconOffset,
         newLibUrl, newLibLabel, fmtAgo, loadIconLibs, addIconLib, delIconLib, refreshIconLib,

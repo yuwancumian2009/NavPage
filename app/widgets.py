@@ -934,7 +934,11 @@ def _mh_get(c, base, path, secret):
 
 
 def _mh_speed(c, base, secret):
-    """/traffic 是长连接逐秒吐 {"up":x,"down":y}，读第一行就断开。失败返回 None。"""
+    """/traffic 是长连接逐秒吐 {"up":x,"down":y}，读几行就断开。
+
+    单秒采样会突然掉到 0（实测同一时刻第 3 个采样就是 0），
+    只取第一行卡片会经常显示 0 B/s，所以取最多 3 个采样的峰值。失败返回 None。
+    """
     h = {}
     if secret:
         h["Authorization"] = "Bearer " + secret
@@ -942,11 +946,21 @@ def _mh_speed(c, base, secret):
         with c.stream("GET", base + "/traffic", headers=h, timeout=6.0) as r:
             if r.status_code >= 400:
                 return None
+            down = up = 0
+            n = 0
             for line in r.iter_lines():
                 line = (line or "").strip()
-                if line.startswith("{"):
-                    j = json.loads(line)
-                    return int(j.get("down") or 0), int(j.get("up") or 0)
+                if not line.startswith("{"):
+                    continue
+                j = json.loads(line)
+                down = max(down, int(j.get("down") or 0))
+                up = max(up, int(j.get("up") or 0))
+                n += 1
+                # 已经采到像样的流量就不用再等下一秒（空载时才多采一两行）
+                if n >= 3 or down + up >= 2048:
+                    break
+            if n:
+                return down, up
     except Exception:
         return None
     return None

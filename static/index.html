@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/vendor/element-plus.css?v=1">
-<link rel="stylesheet" href="/css/app.css?v=62">
+<link rel="stylesheet" href="/css/app.css?v=64">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -783,8 +783,15 @@
               要看最新状态点左上「检查更新」，一次检查的结果缓存 {{ Math.round((s.image_check_cache || 3600) / 60) }} 分钟。
               Docker Hub 按 IP 限流匿名查询，一次扫几十个很容易整片 429（现象就是「一直显示不出来更新」），填镜像源可绕开。
             </div>
-            <div class="np-sec">
-              <div class="np-sec-head">更新设置</div>
+            <div class="np-sec foldable" :class="{ folded: imgSec.upd }">
+              <div class="np-sec-head" @click="toggleImgSec('upd')">
+                <span class="np-sec-title-txt">更新设置</span>
+                <span class="np-sec-sum">
+                  镜像源 <b>{{ s.image_mirror ? '已配置' : '直连' }}</b> · 缓存 {{ Math.round((s.image_check_cache || 3600) / 60) }} 分钟
+                </span>
+                <i class="np-sec-caret">▾</i>
+              </div>
+              <div class="np-sec-body" v-show="!imgSec.upd">
               <div class="np-field">
                 <label>镜像源</label>
                 <el-input v-model="s.image_mirror" size="small"
@@ -813,9 +820,19 @@
                   只开①会报 403。②等于把宿主机 root 能力交给面板，请自行权衡；不开也能用「检查更新」手动更新。
                 </div>
               </div>
+              </div>
             </div>
-            <div class="np-sec">
-              <div class="np-sec-head">定时自动检查 <span>到点自动比对更新，可只更新勾选过的镜像</span></div>
+            <div class="np-sec foldable" :class="{ folded: imgSec.chk }">
+              <div class="np-sec-head" @click="toggleImgSec('chk')">
+                <span class="np-sec-title-txt">定时自动检查</span>
+                <span class="np-sec-sum" v-if="s.image_auto_check">
+                  到点检查 <b>{{ (imgAuto && imgAuto.desc) || s.image_auto_cron }}</b>
+                  <template v-if="s.image_auto_update"> · 自动更新</template>
+                </span>
+                <span class="np-sec-sum" v-else>已关闭</span>
+                <i class="np-sec-caret">▾</i>
+              </div>
+              <div class="np-sec-body" v-show="!imgSec.chk">
               <div class="np-field row">
                 <label>定时检查</label>
                 <div class="np-ctlrow">
@@ -861,11 +878,21 @@
               <div class="np-hint" v-if="imgAuto && imgAuto.last">
                 上次运行（{{ fmtTs(imgAuto.last.ts) }}）：{{ autoLastText }}
               </div>
+              </div>
             </div>
             <!-- ---------------- 定时清理未使用镜像（2026-10-16 用户要求） ----------------
                  和上面的「定时自动检查」并列，但开关/cron 完全独立（后端也是两个独立任务）。 -->
-            <div class="np-sec">
-              <div class="np-sec-head">定时清理未使用镜像 <span>到点自动删掉没被容器使用的镜像，释放磁盘</span></div>
+            <div class="np-sec foldable" :class="{ folded: imgSec.prune }">
+              <div class="np-sec-head" @click="toggleImgSec('prune')">
+                <span class="np-sec-title-txt">定时清理未使用镜像</span>
+                <span class="np-sec-sum" v-if="s.image_auto_prune">
+                  清理 <b>{{ (pruneSt && pruneSt.desc) || s.image_auto_prune_cron }}</b>
+                  · {{ s.image_prune_mode === 'dangling' ? '悬空镜像' : '未被使用' }}
+                </span>
+                <span class="np-sec-sum" v-else>已关闭</span>
+                <i class="np-sec-caret">▾</i>
+              </div>
+              <div class="np-sec-body" v-show="!imgSec.prune">
               <div class="np-field row">
                 <label>定时清理</label>
                 <div class="np-ctlrow">
@@ -934,6 +961,7 @@
               </div>
               <div class="np-hint" v-else-if="pruneSt && pruneSt.last">
                 上次清理（{{ fmtTs(pruneSt.last.ts) }}）：{{ pruneLastText }}
+              </div>
               </div>
             </div>
             <div class="np-docker" v-if="imgError" :class="'bad'">{{ imgError }}</div>
@@ -1422,6 +1450,6 @@
 <script src="/vendor/element-plus.min.js"></script>
 <script src="/vendor/element-icons.min.js"></script>
 <script src="/vendor/axios.min.js"></script>
-<script src="/js/app.js?v=76"></script>
+<script src="/js/app.js?v=77"></script>
 </body>
 </html>

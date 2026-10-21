@@ -1950,6 +1950,23 @@
         return imgRows.value.filter(function (r) { return r.status === 'outdated'; }).length;
       });
 
+      /* ---- 镜像页卡片的收起状态（记在 localStorage，刷新后保持） ---- */
+      const IMG_SEC_KEY = 'navpage_img_sec';
+      function readImgSec() {
+        const base = { upd: false, chk: false, prune: false };
+        try {
+          const raw = JSON.parse(localStorage.getItem(IMG_SEC_KEY) || '{}') || {};
+          Object.keys(base).forEach(function (k) { if (raw[k] === true) base[k] = true; });
+        } catch (e) { /* 忽略坏值 */ }
+        return base;
+      }
+      const imgSec = ref(readImgSec());
+      function toggleImgSec(k) {
+        if (!(k in imgSec.value)) return;
+        imgSec.value[k] = !imgSec.value[k];
+        try { localStorage.setItem(IMG_SEC_KEY, JSON.stringify(imgSec.value)); } catch (e) { /* 隐私模式忽略 */ }
+      }
+
       /* ---- 定时自动检查 / 自动更新（2026-10-16 用户要求）----
          cron 解析和「下次运行」都在服务端算（app/cron.py），前端只负责显示和改设置。 */
       const imgAuto = ref(null);
@@ -2721,7 +2738,7 @@
         imgBadge, imgCheckedText, loadImgBadge, openImagesPage,
         imgAuto, cronPresets, cronPreset, autoNames, autoLastText, isAutoName, toggleAutoName, fmtTs, loadAuto,
         logoUrl, logoUrlInput, uploadLogo, useLogoUrl, clearLogo,
-        pruneSt, pruneModes, prunePreset, keepInput, keepList, addKeep, delKeep,
+        pruneSt, pruneModes, prunePreset, keepInput, keepList, addKeep, delKeep, imgSec, toggleImgSec,
         pruneBusy, prunePrev, pruneNames, pruneLastText, previewPrune, runPrune,
         loadBootstrap, loadWallpapers, reload, boot, doLogin, logout, changePw,
         setMode, onEnter, openItem, saveItem, delItem, delItemById, setExcluded,

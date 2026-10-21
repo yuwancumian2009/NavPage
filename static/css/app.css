@@ -774,6 +774,26 @@ body {
 }
 .np-sec-head span { font-size: 12px; font-weight: 400; color: #a0a4ab; }
 
+/* 可收起的卡片头（镜像页的更新设置 / 定时检查 / 定时清理） */
+.np-sec.foldable > .np-sec-head { cursor: pointer; user-select: none; align-items: center; }
+.np-sec.foldable > .np-sec-head:hover { color: #1a6fe8; }
+.np-sec.foldable > .np-sec-head .np-sec-title-txt {
+  font-size: 13.5px; font-weight: 600; color: inherit;
+}
+.np-sec.foldable > .np-sec-head .np-sec-sum {
+  margin-left: auto; font-size: 12px; font-weight: 400; color: #8f949c;
+  max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.np-sec.foldable > .np-sec-head .np-sec-sum b { font-weight: 500; color: #5c6b7a; }
+.np-sec-caret {
+  flex: none; width: 14px; text-align: center; color: #b6bcc4;
+  transition: transform .18s ease; transform: rotate(0deg);
+}
+.np-sec.folded > .np-sec-head .np-sec-caret { transform: rotate(-90deg); }
+.np-sec.folded > .np-sec-head { border-bottom-color: transparent; margin-bottom: 0; padding-bottom: 10px; }
+.np-sec.folded { padding-bottom: 2px; }
+.np-sec-body { transition: opacity .16s ease; }
+
 /* 键值行（「当前判定」这类只读信息）：比一坨 <br> 拼起来好读 */
 .np-kv { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 6px 12px; padding: 10px 0 4px; font-size: 12px; }
 .np-kv > span { color: #8f949c; }

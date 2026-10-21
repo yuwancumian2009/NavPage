@@ -647,7 +647,9 @@
       function startWidgetTimer() {
         stopWidgetTimer();
         const iv = Math.max(10, Number(s.value.widget_interval || 60)) * 1000;
-        wdgTimer = setInterval(function () { loadWidgets(); }, iv);
+        // 页面在后台时跳过这一轮：小组件每一轮都要面板去外网点 qb/emby/哪吒，白烧请求
+        //（状态灯探测早就这么干了，小组件之前漏了）。回到前台由 visibilitychange 补一轮。
+        wdgTimer = setInterval(function () { if (!document.hidden) loadWidgets(); }, iv);
       }
       function stopWidgetTimer() {
         if (wdgTimer) { clearInterval(wdgTimer); wdgTimer = null; }
@@ -1006,7 +1008,9 @@
       // 从后台回到前台 / 网络恢复 / iOS 从 bfcache 恢复时**强制**复检（防抖 3 秒兜底）：
       // 这些场景下用户就是要马上看到当前网络的对错，不能吃 20 秒缓存。
       document.addEventListener('visibilitychange', function () {
-        if (!document.hidden) recheckLan(true);
+        if (document.hidden) return;
+        recheckLan(true);
+        loadWidgets();          // 后台期间小组件跳过刷新，回前台补一轮
       });
       window.addEventListener('online', function () { recheckLan(true); });
       window.addEventListener('pageshow', function () { recheckLan(true); });

@@ -19,6 +19,7 @@ warnings.filterwarnings("ignore")
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Depends
 from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 
 import httpx
@@ -30,6 +31,11 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 app = FastAPI(title="NavPage", docs_url=None, redoc_url=None)
+
+# 静态资源打包后 1.5MB（element-plus 一个就 936KB），不压缩的话外网/frp 首屏很慢。
+# 实测 gzip 后 1585KB → 473KB（-70%），CPU 开销可忽略（服务端只压一次就进浏览器缓存）。
+# minimum_size 取 512：小 JSON 接口压了反而更大。
+app.add_middleware(GZipMiddleware, minimum_size=512)
 
 
 # ---------------------------------------------------------------- helpers
@@ -2129,12 +2135,18 @@ if os.path.isdir(STATIC_DIR):
     # index.html 自身没有版本号：被浏览器缓存会导致「服务端已更新、用户看到的还是旧界面」
     # （2026-10-16 实际踩到）。html 一律 no-store，app.js/app.css 靠 ?v=N 区分，不禁。
     @app.middleware("http")
-    async def _no_cache_html(request, call_next):
+    async def _cache_headers(request, call_next):
         resp = await call_next(request)
         p = request.url.path
         if p.endswith(".html") or p in ("", "/"):
             resp.headers["Cache-Control"] = "no-store, must-revalidate"
             resp.headers["Pragma"] = "no-cache"
+        elif p.startswith(("/vendor/", "/js/", "/css/", "/icons/")) or p.endswith(
+                (".js", ".css", ".woff2", ".ico", ".webmanifest")):
+            # 静态资源固定 7 天强缓存：之前一个 Cache-Control 都没有，每次打开都要拿 etag
+            # 回源重验证（14 个请求全变 304，外网隧道下白等一圈）。
+            # app.js / app.css 带 ?v=N，升级时 URL 变了，不会被这份 7 天缓存挡住。
+            resp.headers["Cache-Control"] = "public, max-age=604800"
         return resp
 
     app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

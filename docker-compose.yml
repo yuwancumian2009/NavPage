@@ -6,6 +6,12 @@ services:
     image: yuwancumian2009/navpage:latest
     container_name: navpage
     restart: unless-stopped
+    # 日志别无限长：默认 json-file 不设上限，面板跑几个月能把 /vol1 吃掉几个 G。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "8095:8080"
     environment:
@@ -47,6 +53,11 @@ services:
     image: ccr.ccs.tencentyun.com/bestnav/docker-socket-proxy:latest
     container_name: navpage-socket-proxy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       CONTAINERS: 1
       VERSION: 1

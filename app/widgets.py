@@ -962,7 +962,7 @@ def nezha(cfg):
     else:
         txt = name
 
-    detail = [["服务器", "%s（在线）" % name]]
+    detail = [["服务器", "%s · 在线" % name]]
     if len(servers) > 1:
         # 别让人以为「2 台」是本卡片的数量：写明这是面板总览，并把其它机器列出来
         detail.append(["面板共 %d 台" % len(servers), "在线 %d 台" % len(online)])

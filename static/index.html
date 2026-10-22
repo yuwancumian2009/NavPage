@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/vendor/element-plus.css?v=1">
-<link rel="stylesheet" href="/css/app.css?v=64">
+<link rel="stylesheet" href="/css/app.css?v=66">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -162,7 +162,8 @@
                   <div class="np-wrow">
                     <span class="np-wtext">{{ wdg[it.id].text }}</span>
                   </div>
-                  <div class="np-wstats" v-if="wdg[it.id].stats && wdg[it.id].stats.length">
+                  <div class="np-wstats" :class="{ 'is-dense': wdg[it.id].dense }"
+                       v-if="wdg[it.id].stats && wdg[it.id].stats.length">
                     <span class="np-wstat" v-for="(st, si) in wdg[it.id].stats" :key="si"
                           :class="'tone-' + (st.tone || 'default')">
                       <i>{{ st.label }}</i><b>{{ st.value }}</b>

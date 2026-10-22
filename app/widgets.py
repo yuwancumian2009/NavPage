@@ -74,7 +74,7 @@ def _auth_err():
     return {"ok": False, "error": "认证失败，请检查用户名/密码或 API Key"}
 
 
-def _rich(text, stats, detail=None, progress=None):
+def _rich(text, stats, detail=None, progress=None, dense=False):
     """homepage 风格输出：text 是单行兜底，stats 是多指标小方块，progress 是进度条。
 
     stats: [{"label": "订阅", "value": "43", "tone": "good|warn|bad|muted"}]
@@ -85,6 +85,10 @@ def _rich(text, stats, detail=None, progress=None):
         out["detail"] = detail
     if progress:
         out["progress"] = progress
+    # dense：指标格改成「标签上、数值下」。4 个指标在 92px 宽里横排会被迫折行
+    # （实测每格 41px 高、整块 86px），把卡片底部的地址行顶出可视区（用户 2026-10-22 报裁切）。
+    if dense:
+        out["dense"] = True
     return out
 
 
@@ -1122,6 +1126,190 @@ def generic(cfg):
                  [[label, f"{val}{unit}"]])
 
 
+# ---------------------------------------------------------------- wb-proxy（workbuddy2api-hub）
+
+_WB_TOKEN = {}          # base -> (token, at)，面板会话 token 进程内缓存
+_WB_TOKEN_TTL = 1800
+
+
+def _wb_num(v):
+    try:
+        return float(v)
+    except Exception:
+        return 0.0
+
+
+def _wb_credit(v):
+    """积分格式化：指标格只有 92px 宽，上万带千分位、小额留 1 位小数。"""
+    v = _wb_num(v)
+    if abs(v) >= 10000:
+        return "{:,.0f}".format(v)
+    if abs(v) >= 100:
+        return "%.0f" % v
+    return ("%.2f" % v).rstrip("0").rstrip(".") or "0"
+
+
+def _wb_token(c, base, password):
+    """面板密码换 X-Panel-Token。
+
+    /accounts 与 /usage/* 被面板密码硬闸门挡住（`do_GET` 里
+    `_is_panel_route(path) and not _panel_ok()` 直接 401），传 API Key 也没用，
+    所以小组件只能拿面板登录密码换会话 token，缓存在进程里 30 分钟。
+    """
+    ck = base + "|" + hashlib.sha256(password.encode("utf-8")).hexdigest()[:12]
+    hit = _WB_TOKEN.get(ck)
+    if hit and time.time() - hit[1] < _WB_TOKEN_TTL:
+        return hit[0]
+    r = c.post(base + "/panel/login", json={"password": password})
+    if r.status_code in (401, 403):
+        raise PermissionError("面板密码不对")
+    if r.status_code == 429:
+        raise PermissionError("密码错太多次，面板锁了登录，等一分钟再试")
+    r.raise_for_status()
+    tok = str((r.json() or {}).get("token") or "")
+    if not tok:
+        raise PermissionError("面板登录没返回 token，面板版本可能不匹配")
+    _WB_TOKEN[ck] = (tok, time.time())
+    return tok
+
+
+def wbproxy(cfg):
+    """wb-proxy（workbuddy2api-hub）：账号积分总览。
+
+    数据全部来自面板自己的接口，不读容器内文件：
+      GET /accounts?realm=cn   → accounts[].credits{remain,size,used,packages[],earliest_expiring}
+      GET /usage/analytics?realm=cn&range=today → summary.window{credit,requests}
+    `range=today` 是面板按本地零点算的「今天」，和我们想显示的「今日消耗」一致。
+    """
+    base = _base(cfg)
+    if not base:
+        return _err("没填面板地址，例如 http://192.168.1.109:8788")
+    password = (cfg.get("password") or "").strip()
+    if not password:
+        return _err("没填面板密码：wb-proxy 的 /accounts 只认面板登录密码，API Key 进不去")
+    realm = (cfg.get("realm") or "cn").strip() or "cn"
+    try:
+        warn_days = float(cfg.get("days") or 7)
+    except Exception:
+        warn_days = 7.0
+
+    accts, pool_usable, analytics = [], None, {}
+    try:
+        with _client() as c:
+            h = {"X-Panel-Token": _wb_token(c, base, password)}
+            r = c.get(base + "/accounts", params={"realm": realm}, headers=h)
+            if r.status_code in (401, 403):
+                _WB_TOKEN.clear()          # 密码改过或会话过期：清掉，下次重新登录
+                raise PermissionError("面板密码不对")
+            r.raise_for_status()
+            j = r.json() or {}
+            accts = j.get("accounts") or []
+            pool_usable = j.get("usable")
+            # 今日消耗拿不到就不显示 0 假装拿到了：失败时留 None，指标格显示「—」
+            try:
+                ra = c.get(base + "/usage/analytics",
+                           params={"realm": realm, "range": "today"}, headers=h)
+                if ra.status_code == 200:
+                    analytics = ra.json() or {}
+            except Exception:
+                analytics = {}
+    except PermissionError as e:
+        return _err("%s：填的是 wb-proxy 面板的登录密码（不是 API Key）" % e)
+    except Exception as e:
+        return _err("连不上 wb-proxy：%s" % str(e)[:80])
+
+    now = time.time()
+    tot_size = tot_remain = 0.0
+    avail = 0
+    exp_remain = 0.0
+    exp_n = 0
+    next_exp = None
+    have_credit = False
+    for a in accts:
+        cr = a.get("credits") or {}
+        if cr:
+            have_credit = True
+        size = _wb_num(cr.get("size"))
+        remain = _wb_num(cr.get("remain"))
+        tot_size += size or remain
+        tot_remain += remain
+        exp = _wb_num(a.get("expiresAt"))
+        if (a.get("enabled") and not a.get("inCooldown") and not a.get("reserveBlocked")
+                and (not exp or exp > now)):
+            avail += 1
+        pkgs = cr.get("packages") or []
+        if not pkgs and cr.get("earliest_expiring"):
+            pkgs = [cr.get("earliest_expiring")]
+        for p in pkgs:
+            if not isinstance(p, dict) or p.get("no_expiry") or p.get("is_expired"):
+                continue
+            dl = p.get("days_left")
+            if dl is None:
+                continue
+            dl = _wb_num(dl)
+            rem = _wb_num(p.get("remain"))
+            if next_exp is None or dl < next_exp[0]:
+                next_exp = (dl, p)
+            if 0 <= dl <= warn_days and rem > 0:
+                exp_remain += rem
+                exp_n += 1
+
+    summary = (analytics.get("summary") or {})
+    win = summary.get("window") or {}
+    today_credit = win.get("credit")
+    today_req = win.get("requests")
+
+    if not accts:
+        return _err("面板能连上，但 %s 区没有账号（realm=%s）" % (realm, realm))
+
+    stats = [
+        {"label": "总积分", "value": _wb_credit(tot_size) if have_credit else "—"},
+        {"label": "今日消耗", "value": _wb_credit(today_credit) if today_credit is not None else "—",
+         "tone": "warn" if _wb_num(today_credit) > 0 else ""},
+        {"label": "可用账号", "value": "%d/%d" % (avail, len(accts)),
+         "tone": "good" if avail == len(accts) else ("bad" if avail == 0 else "warn")},
+        {"label": "临期积分", "value": _wb_credit(exp_remain) if exp_n else "0",
+         "tone": "warn" if exp_n else "good"},
+    ]
+    if not have_credit:
+        txt = "还没取过积分"
+    elif exp_n:
+        txt = "有积分即将到期"
+    elif avail < len(accts):
+        txt = "有账号不可用"
+    else:
+        txt = "账号池正常"
+
+    detail = [["区域", "%s（国内）" % realm if realm == "cn" else realm],
+              ["账号数", "%d 个（可用 %d）" % (len(accts), avail)]]
+    if have_credit:
+        detail.append(["总积分 / 剩余", "%s / %s" % (_wb_credit(tot_size), _wb_credit(tot_remain))])
+    if today_credit is not None:
+        detail.append(["今日消耗", "%s 积分%s" % (_wb_credit(today_credit),
+                                              "（%d 次请求）" % today_req if today_req else "")])
+    if exp_n:
+        detail.append(["临期积分", "%s 积分 / %d 个积分包在 %g 天内到期"
+                       % (_wb_credit(exp_remain), exp_n, warn_days)])
+    if next_exp:
+        dl, p = next_exp
+        detail.append(["最近到期", "%s · 剩 %s 积分 · %g 天后（%s）"
+                       % (p.get("name") or "积分包", _wb_credit(p.get("remain")), dl,
+                          str(p.get("cycle_end_time") or p.get("expire_time") or "")[:10])])
+    for a in accts[:6]:
+        cr = a.get("credits") or {}
+        detail.append([str(a.get("nickname") or a.get("uid") or "?")[:12],
+                       "剩 %s / 共 %s%s" % (_wb_credit(cr.get("remain")), _wb_credit(cr.get("size")),
+                                          "" if a.get("enabled") else "（已停用）")])
+    if pool_usable is not None:
+        detail.append(["面板可用池", "%s 个" % pool_usable])
+
+    progress = None
+    if tot_size > 0:
+        progress = {"value": max(0.0, min(1.0, tot_remain / tot_size)),
+                    "label": "剩余 %.0f%%" % (tot_remain / tot_size * 100)}
+    return _rich(txt, stats, detail, progress, dense=True)
+
+
 PROVIDERS = {
     "qbittorrent": {
         "label": "qBittorrent", "icon": "⚡",
@@ -1203,6 +1391,20 @@ PROVIDERS = {
         ],
         "hint": "显示连接数 / 上下行速率 / 机场订阅数；鼠标悬停卡片看每个策略组当前走的线路和延迟。",
         "fetch": mihomo,
+    },
+    "wbproxy": {
+        "label": "wb-proxy / 积分", "icon": "🪙",
+        "fields": [
+            {"key": "url", "label": "面板地址", "ph": "http://192.168.1.109:8788",
+             "hint": "wb-proxy（workbuddy2api-hub）面板地址，不是 OpenAI 接口地址"},
+            {"key": "password", "label": "面板密码", "ph": "面板登录密码", "pw": True,
+             "hint": "面板 → 登录用的密码。/accounts、/usage 只认面板会话，API Key 进不去"},
+            {"key": "realm", "label": "区域", "ph": "cn", "hint": "cn = 国内（默认），intl = 国际"},
+            {"key": "days", "label": "临期天数", "ph": "7",
+             "hint": "多少天内到期的积分算「临期」，默认 7 天"},
+        ],
+        "hint": "显示账号总积分 / 今日消耗积分 / 可用账号数 / 临期积分（数据来自 wb-proxy 面板 API）。",
+        "fetch": wbproxy,
     },
     "generic": {
         "label": "自定义 JSON", "icon": "🔧",

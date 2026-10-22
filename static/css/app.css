@@ -483,6 +483,16 @@ body {
 /* 报错态没有 .np-wrow 包裹，横排一行居中 */
 .np-card-widget.is-err { flex-direction: row; justify-content: center; }
 
+/* 4 个指标在 190px 卡片里横排会被迫折行（实测每格 41px、整块 86px），把卡片底部地址行
+   顶出可视区。带 dense 的小组件改成「标签上、数值下」的等宽 2×2，每格 34px 稳定不折行。 */
+/* 固定 2×2：手机卡片只有 155px 宽，auto-fit 会退化成 1 列 4 行（实测卡片被撑到 258px） */
+.np-wstats.is-dense { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.np-wstats.is-dense .np-wstat {
+  flex-direction: column; flex-wrap: nowrap; gap: 0;
+  min-height: 34px; padding: 1px 4px; line-height: 1.15;
+}
+.np-wstats.is-dense .np-wstat i { font-size: 10.5px; }
+.np-wstats.is-dense .np-wstat b { font-size: 13px; line-height: 1.25; }
 .np-wstat i { font-style: normal; opacity: .7; }
 .np-wstat b { font-weight: 600; }
 .np-wstat.tone-good b { color: #8ce99a; }

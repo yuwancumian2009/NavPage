@@ -139,7 +139,7 @@
              :target="it.url ? '_blank' : '_self'" rel="noopener"
              :class="{is_disabled: !it.url, is_missing: it.missing, is_widget: it.has_widget, is_xs: sizeOf(it, g) === 'xs', 'is-dragging': dragId === it.id, 'is-layout': layoutMode}"
              :style="cardStyle(it, g)"
-             :title="layoutMode ? '拖动我调整位置或换分组' : cardTitle(it)"
+             :title="layoutMode ? '拖动我调整位置或换分组' : ''"
              :draggable="layoutMode ? 'true' : 'false'"
              @dragstart="onDragStart($event, it, g)"
              @dragover="onDragOverCard($event)"

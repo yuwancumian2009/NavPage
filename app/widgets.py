@@ -1182,8 +1182,38 @@ def openwrt(cfg):
     ]
     txt = "↓%s ↑%s" % (fmt_speed(down), fmt_speed(up))
 
-    # 2026-10-22 用户要求：卡片下方四格已经够了，悬停浮层和卡片重复 → OpenWrt 不返回 detail
-    return _rich(txt, stats, [])
+    detail = []
+    hostname = str(board.get("hostname") or "")
+    if hostname:
+        detail.append(["设备", hostname])
+    if board.get("system"):
+        detail.append(["硬件", str(board.get("system"))])
+    rel = board.get("release") or {}
+    fw = " ".join(str(x) for x in (rel.get("distribution"), rel.get("version")) if x).strip()
+    if fw:
+        if rel.get("target"):
+            fw += " · " + str(rel.get("target"))
+        if board.get("kernel"):
+            fw += " · Linux " + str(board.get("kernel"))
+        detail.append(["固件", fw])
+    if rel.get("revision"):
+        detail.append(["修订", str(rel.get("revision"))])
+    if mrx or mtx:
+        detail.append(["本月流量", "↓%s ↑%s%s" % (fmt_compact(mrx), fmt_compact(mtx),
+                                               ("（自 %s）" % since) if since else "")])
+    if rx2 is not None and (abs(rx2 - mrx) > 1024 * 1024 or abs(tx2 - mtx) > 1024 * 1024):
+        detail.append(["接口累计", "↓%s ↑%s（%s，自开机）" % (fmt_compact(rx2), fmt_compact(tx2), _OW_IFACE)])
+    detail.append(["在线设备", "%d 台（DHCP 租约 %d）" % (n_clients, n_lease)])
+    if uptime:
+        detail.append(["运行时长", "%s（%.1f 天）" % (fmt_dur(uptime), float(uptime) / 86400.0)])
+    if load1 is not None:
+        ls = " / ".join("%.2f" % x for x in loads[:3])
+        detail.append(["系统负载", "%s%s" % (ls, ("（%d 核）" % cores) if cores else "")])
+    total, avail = mem.get("total"), mem.get("available")
+    if total and avail is not None:
+        detail.append(["内存", "%s / %s（%.0f%%）" % (fmt_bytes(total - avail), fmt_bytes(total),
+                                                 (total - avail) * 100.0 / total)])
+    return _rich(txt, stats, detail)
 
 
 # ---------------------------------------------------------------- mihomo / Clash

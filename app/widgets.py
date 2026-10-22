@@ -13,6 +13,7 @@
 import base64
 import hashlib
 import json
+import re
 import threading
 import time
 
@@ -776,11 +777,22 @@ def host(cfg):
 # ---------------------------------------------------------------- 哪吒探针 (Nezha v1)
 
 def _nz_get(base, path, token):
+    """哪吒 v1 的 API 令牌（PAT）形如 `nzp_<secret>`，请求头必须是 `Bearer nzp_...`。
+
+    2026-10-22 在面板上实测过三种写法：整串 sha256 存库 + Bearer nzp_xxx 才是 200；
+    只填 secret、或用别的前缀都会回 401 invalid api token——所以这里把面板的原始错误透出来，
+    免得用户以为是权限没勾。
+    """
     with _client() as c:
         r = c.get(base.rstrip("/") + path,
                   headers={"Authorization": "Bearer " + token, "Accept": "application/json"})
     if r.status_code in (401, 403):
-        raise PermissionError("令牌被拒（HTTP %d）" % r.status_code)
+        why = ""
+        try:
+            why = str((r.json() or {}).get("error") or "")[:90]
+        except Exception:
+            why = (r.text or "")[:90]
+        raise PermissionError("令牌被拒（HTTP %d）%s" % (r.status_code, ("：" + why) if why else ""))
     r.raise_for_status()
     return r.json()
 
@@ -812,10 +824,7 @@ def _nz_pick(st, *keys):
 
 
 def fmt_compact(n):
-    """流量用的紧凑写法：1.2T / 340G / 950K（指标格只有 92px 宽，放不下 "340.0 GB"）。
-
-    ≥100 时不带小数（340G 而不是 340.0G），因为摘要行要跟 qb/tr 的 "↓x ↑y" 一样压在一行。
-    """
+    """流量用的紧凑写法：1.2T / 340G / 950K（指标格只有 92px 宽，放不下 "340.0 GB"）。"""
     try:
         n = float(n or 0)
     except Exception:
@@ -829,23 +838,53 @@ def fmt_compact(n):
     return "%.1fT" % (n / 1024.0)
 
 
+def _nz_cores(hostinfo):
+    """host.cpu 是型号字符串列表，核数藏在字符串里（"i3-N305 8 Physical Core"），
+    不是列表长度——按列表长度算会把 8 核的 NAS 当 1 核，负载阈值全错。"""
+    cpus = hostinfo.get("cpu") or []
+    txt = " ".join(str(x) for x in cpus)
+    m = re.search(r"(\d+)\s*(?:Physical|Logical)\s*Core", txt, re.I)
+    if m:
+        return int(m.group(1))
+    if len(cpus) > 1:
+        return len(cpus)
+    return None
+
+
+def _nz_pct(used, total):
+    try:
+        if used is None or not total:
+            return None
+        return float(used) / float(total) * 100.0
+    except Exception:
+        return None
+
+
+def _nz_tone(pct, warn=80, bad=90):
+    if pct is None:
+        return "good"
+    return "bad" if pct >= bad else ("warn" if pct >= warn else "good")
+
+
 def nezha(cfg):
-    base = (cfg.get("url") or "http://192.168.1.10:8008").strip()
+    base = (cfg.get("url") or "http://192.168.1.109:8008").strip()
     token = (cfg.get("token") or "").strip()
     if not token:
-        return {"ok": False, "error": "没填 API 令牌：哪吒面板 → 设置 → API 令牌，"
-                                     "权限至少要 nezha:inventory:read"}
+        return _err("没填 API 令牌：面板 → 设置 → API 令牌 → 新建，"
+                    "勾选 nezha:inventory:read 与 nezha:server:read，复制 nzp_ 开头那整串")
+    if not token.startswith("nzp_"):
+        return _err("令牌前缀不对：哪吒 v1 的 PAT 必须是 nzp_ 开头。"
+                    "面板 → 设置 → API 令牌 里复制完整的一整串（不是只复制 secret）")
     want = (cfg.get("server") or "").strip()
 
-    # 实时状态只在 /api/v1/server-group 的 server.state 里（/api/v1/server 只回元数据，
-    # state 恒为 {}）；/api/v1/server/{id}/metrics 走 TSDB，本机 TSDB 是关的，取不到。
-    # 字段名取自面板自身前端 bundle 的权威定义（2026-10-16 实测核对）：
-    #   state.cpu(百分数) / state.mem_used / state.swap_used / state.disk_used
-    #   state.net_in_speed / net_out_speed(字节/秒) / net_in_transfer / net_out_transfer(累计字节)
-    #   state.uptime(秒) / state.load_1 / state.process_count
-    #   host.mem_total / host.disk_total / host.platform / host.version
+    # 实时状态在 /api/v1/server 的 state 里（agent 在线时才有值；agent 没上报时是 {}）。
+    # 字段口径（2026-10-22 用真实 agent 核对）：
+    #   state.cpu(%) / mem_used / swap_used / disk_used / tcp_conn_count / udp_conn_count
+    #   state.net_in_speed / net_out_speed(字节/秒) / net_in_transfer / net_out_transfer(累计)
+    #   state.uptime(秒) / load_1 / load_5 / load_15 / process_count
+    #   host.mem_total / host.disk_total / host.swap_total / host.platform / host.version
     servers, err = [], None
-    for path in ("/api/v1/server-group", "/api/v1/server"):
+    for path in ("/api/v1/server", "/api/v1/server-group"):
         try:
             j = _nz_get(base, path, token)
         except PermissionError as e:
@@ -860,48 +899,62 @@ def nezha(cfg):
 
     if not servers:
         if err:
-            return _err("%s。令牌需要同时勾选 nezha:inventory:read（服务器列表）"
-                        "和 nezha:server:read（实时状态）" % err)
+            # 401/403 才提权限；网络不通时再提「勾权限」是误导
+            tail = ("。令牌要同时勾选 nezha:inventory:read（服务器列表）"
+                    "和 nezha:server:read（实时状态）" if "令牌被拒" in err else "")
+            return _err(err + tail)
         return _err("令牌能连上面板，但读不到服务器：请确认令牌同时勾了 "
                     "nezha:inventory:read 与 nezha:server:read")
 
-    cur = servers[0]
+    online = [s for s in servers if s.get("state")]
+    cur = None
     if want:
         for s in servers:
             if want in (str(s.get("id")), str(s.get("name"))):
                 cur = s
                 break
+    if cur is None:
+        cur = online[0] if online else servers[0]
 
     st = cur.get("state") or {}
     hostinfo = cur.get("host") or {}
     name = str(cur.get("name") or "云服务器")
     if not st:
-        return _err("服务器「%s」没有实时数据：哪吒面板认为它未上报（agent 没连上面板）。"
-                    "先在面板确认这台机器在线，再回来刷新。" % name)
+        return _err("服务器「%s」没有实时数据：面板认为它未上报（agent 没连上面板）。"
+                    "在面板的「服务器」页确认它变成绿色在线，再回来刷新。" % name)
 
     cpu = st.get("cpu")
     mu, mt = st.get("mem_used"), hostinfo.get("mem_total")
+    du, dt = st.get("disk_used"), hostinfo.get("disk_total")
     ni, no = st.get("net_in_transfer"), st.get("net_out_transfer")
     si, so = st.get("net_in_speed"), st.get("net_out_speed")
     up = st.get("uptime")
+    load1 = _nz_pick(st, "load_1", "load1")
+    load5 = _nz_pick(st, "load_5", "load5")
+    load15 = _nz_pick(st, "load_15", "load15")
 
-    mem_pct = None
-    try:
-        if mu is not None and mt:
-            mem_pct = float(mu) / float(mt) * 100
-    except Exception:
-        mem_pct = None
+    mem_pct = _nz_pct(mu, mt)
+    disk_pct = _nz_pct(du, dt)
+    cores = _nz_cores(hostinfo)
 
-    # 四项口径与别的小组件一致：三个指标格 + 摘要行一条
+    load_tone = "good"
+    if load1 is not None:
+        rel = float(load1) / (cores or 1)
+        load_tone = "bad" if rel >= 1.5 else ("warn" if rel >= 1.0 else "good")
+
+    # 四格：CPU / 内存 / 磁盘 / 负载。运行时长、网速、连接数放详情浮层（跟其他卡片一样 4 格）
     stats = [
         {"label": "CPU", "value": ("%.0f%%" % float(cpu)) if cpu is not None else "—",
-         "tone": "bad" if (cpu or 0) >= 90 else ("warn" if (cpu or 0) >= 75 else "good")},
+         "tone": _nz_tone(cpu, 75, 90)},
         {"label": "内存", "value": ("%.0f%%" % mem_pct) if mem_pct is not None else "—",
-         "tone": "bad" if (mem_pct or 0) >= 90 else ("warn" if (mem_pct or 0) >= 80 else "good")},
-        {"label": "负载", "value": ("%.2f" % float(st["load_1"])) if st.get("load_1") is not None else "—"},
-        {"label": "运行", "value": fmt_dur(up) if up else "—"},
+         "tone": _nz_tone(mem_pct, 80, 90)},
+        {"label": "磁盘", "value": ("%.0f%%" % disk_pct) if disk_pct is not None else "—",
+         "tone": _nz_tone(disk_pct, 85, 92)},
+        {"label": "负载", "value": ("%.2f" % float(load1)) if load1 is not None else "—",
+         "tone": load_tone},
     ]
-    # 摘要行放上下行累计流量（沿用 qb/tr 的 "↓x ↑y" 写法，保持观感统一）
+
+    # 摘要行：上下行累计流量（跟 qb/tr 的 "↓x ↑y" 同款）；没有流量数据时退回运行时长
     if ni is not None or no is not None:
         txt = "↓%s ↑%s" % (fmt_compact(ni or 0), fmt_compact(no or 0))
     elif up:
@@ -909,21 +962,38 @@ def nezha(cfg):
     else:
         txt = name
 
-    detail = []
+    detail = [["服务器", "%s（在线）" % name]]
+    if len(servers) > 1:
+        detail.append(["面板服务器", "%d 台，在线 %d" % (len(servers), len(online))])
     if si is not None or so is not None:
         detail.append(["实时速率", "↓%s ↑%s" % (fmt_speed(si or 0), fmt_speed(so or 0))])
     if ni is not None or no is not None:
         detail.append(["累计流量", "↓%s ↑%s" % (fmt_compact(ni or 0), fmt_compact(no or 0))])
     if mem_pct is not None:
         detail.append(["内存", "%s / %s（%.0f%%）" % (fmt_bytes(mu), fmt_bytes(mt), mem_pct)])
+    if disk_pct is not None:
+        detail.append(["磁盘", "%s / %s（%.0f%%）" % (fmt_bytes(du), fmt_bytes(dt), disk_pct)])
+    swap_u, swap_t = st.get("swap_used"), hostinfo.get("swap_total")
+    if swap_u:
+        detail.append(["交换分区", "%s / %s" % (fmt_bytes(swap_u), fmt_bytes(swap_t or 0))])
     if up:
         detail.append(["运行时长", "%s（%.1f 天）" % (fmt_dur(up), up / 86400.0)])
-    if st.get("load_1") is not None:
-        detail.append(["系统负载", "%.2f" % float(st["load_1"])])
-    if hostinfo.get("platform"):
-        detail.append(["系统", str(hostinfo["platform"])])
+    if load1 is not None:
+        loads = " / ".join("%.2f" % float(x) for x in (load1, load5, load15) if x is not None)
+        detail.append(["系统负载", "%s（%d 核）" % (loads, cores or 0) if cores else loads])
+    if st.get("tcp_conn_count") is not None or st.get("udp_conn_count") is not None:
+        detail.append(["连接数", "TCP %s · UDP %s" % (st.get("tcp_conn_count", 0), st.get("udp_conn_count", 0))])
     if st.get("process_count") is not None:
         detail.append(["进程数", str(st["process_count"])])
+    if hostinfo.get("platform"):
+        sysname = str(hostinfo["platform"])
+        if hostinfo.get("platform_version"):
+            sysname += " " + str(hostinfo["platform_version"])
+        if hostinfo.get("arch"):
+            sysname += " · " + str(hostinfo["arch"])
+        detail.append(["系统", sysname])
+    if hostinfo.get("version"):
+        detail.append(["agent 版本", str(hostinfo["version"])])
     return _rich(txt, stats, detail)
 
 
@@ -1486,14 +1556,16 @@ PROVIDERS = {
     "nezha": {
         "label": "哪吒探针 / 云服务器", "icon": "🌐",
         "fields": [
-            {"key": "url", "label": "面板地址", "ph": "http://192.168.1.10:8008",
-             "hint": "哪吒 v1 面板地址（8008 是面板，5555 是 agent 端口，别填错）"},
-            {"key": "token", "label": "API 令牌", "ph": "nzp_xxx",
-             "hint": "面板 → 设置 → API 令牌，权限至少 nezha:inventory:read"},
-            {"key": "server", "label": "服务器（可选）", "ph": "留空 = 第一台",
-             "hint": "填服务器名或 id，多台时指定显示哪台"},
+            {"key": "url", "label": "面板地址", "ph": "http://192.168.1.109:8008",
+             "hint": "哪吒 v1 面板地址，默认 8008（5555 是老版本 agent 口，别填错）"},
+            {"key": "token", "label": "API 令牌", "ph": "nzp_...",
+             "hint": "面板 → 设置 → API 令牌 → 新建，勾选 nezha:inventory:read 与 "
+                     "nezha:server:read，复制 nzp_ 开头的整串"},
+            {"key": "server", "label": "服务器（可选）", "ph": "留空 = 自动挑在线那台",
+             "hint": "填服务器名或 id；留空时有在线机器就优先显示在线的那台"},
         ],
-        "hint": "显示云服务器的 CPU / 内存 / 上下行累计流量 / 运行时长（数据来自哪吒 v1 面板 API）。",
+        "hint": "显示云服务器 / NAS 的 CPU、内存、磁盘、负载，摘要行是上下行累计流量；"
+                "点开还有实时速率、连接数、进程数、系统与 agent 版本。数据来自哪吒 v1 面板 API。",
         "fetch": nezha,
     },
     "mihomo": {

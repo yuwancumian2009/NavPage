@@ -1003,6 +1003,219 @@ def nezha(cfg):
     return _rich(txt, stats, detail)
 
 
+# ---------------------------------------------------------------- OpenWrt / 软路由
+
+# ubus 会话（session.login 的结果）缓存 10 分钟：每次取数都登录会白花 100~200ms，
+# 但 sid 过期时要能自己重登，见 _ow_call。
+_OW_SID = {}
+_OW_LOCK = threading.Lock()
+_OW_IFACE = "br-lan"
+
+
+def _ow_rpc(c, base, sid, obj, method, args=None):
+    body = {"jsonrpc": "2.0", "id": 1, "method": "call",
+            "params": [sid, obj, method, args or {}]}
+    r = c.post(base + "/ubus", json=body)
+    if r.status_code in (401, 403):
+        raise PermissionError("OpenWrt 拒绝访问（HTTP %d）：检查用户名 / 密码" % r.status_code)
+    r.raise_for_status()
+    j = r.json()
+    if "error" in j:
+        raise RuntimeError(str((j.get("error") or {}).get("message"))[:80])
+    res = j.get("result") or []
+    if len(res) > 1:
+        code = res[0]
+        if code != 0:
+            # 1=invalid argument 4=not found 6=permission denied：都是 ACL 没放行
+            raise RuntimeError("ubus 调用 %s 被拒（错误码 %s）：检查路由端 rpcd 的 ACL" % (method, code))
+        return res[1]
+    return res
+
+
+def _ow_login(c, base, user, pwd):
+    now = time.time()
+    with _OW_LOCK:
+        hit = _OW_SID.get(base)
+        if hit and now - hit[1] < 600:
+            return hit[0]
+    r = _ow_rpc(c, base, "0" * 32, "session", "login", {"username": user, "password": pwd})
+    sid = (r or {}).get("ubus_rpc_session")
+    if not sid:
+        raise PermissionError("OpenWrt 登录失败：用户名或密码不对")
+    with _OW_LOCK:
+        _OW_SID[base] = (sid, now)
+    return sid
+
+
+def _ow_call(c, base, user, pwd, obj, method, args=None):
+    """登录 + 调用；sid 过期（错误码非 0）时清缓存重登重试一次。"""
+    last = None
+    for attempt in (1, 2):
+        sid = _ow_login(c, base, user, pwd)
+        try:
+            return _ow_rpc(c, base, sid, obj, method, args)
+        except RuntimeError as e:
+            last = e
+            if attempt == 2:
+                raise
+            with _OW_LOCK:
+                _OW_SID.pop(base, None)
+    raise last
+
+
+def _ow_file(c, base, user, pwd, path, default=""):
+    """file.read 只对 ACL 白名单里的路径可用；读不到就当没有这项数据。"""
+    try:
+        r = _ow_call(c, base, user, pwd, "file", "read", {"path": path})
+        return ((r or {}).get("data")) or default
+    except Exception:
+        return default
+
+
+def _ow_iface(txt, iface=None):
+    """/proc/net/dev 里一行：iface: rx_bytes ... tx_bytes（第 1 和第 9 个数字）。"""
+    iface = iface or _OW_IFACE
+    for line in (txt or "").splitlines():
+        line = line.strip()
+        if line.startswith(iface + ":"):
+            f = line.split(":", 1)[1].split()
+            if len(f) >= 9:
+                try:
+                    return int(f[0]), int(f[8])
+                except ValueError:
+                    return None, None
+    return None, None
+
+
+def _ow_kv(txt):
+    d = {}
+    for line in (txt or "").splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            d[k.strip()] = v.strip()
+    return d
+
+
+def _ow_clients(leases, arp):
+    """在线设备 = DHCP 租约 ∪ ARP 表有效条目（两者都可能有漏，取并集按 IP 去重）。"""
+    ips = set()
+    for line in (leases or "").splitlines():
+        f = line.split()
+        if len(f) >= 3 and f[2].count(".") == 3:
+            ips.add(f[2])
+    for line in (arp or "").splitlines()[1:]:
+        f = line.split()
+        if len(f) >= 4 and f[3] != "00:00:00:00:00:00" and f[0].count(".") == 3:
+            ips.add(f[0])
+    return ips
+
+
+def _ow_cores(cpuinfo):
+    n = len(re.findall(r"^processor\s*:", cpuinfo or "", re.M))
+    return n or None
+
+
+def openwrt(cfg):
+    base = (cfg.get("url") or "").strip().rstrip("/")
+    if not base:
+        return _err("没填 OpenWrt 地址：填 LuCI 的地址，如 http://192.168.1.10")
+    if "://" not in base:
+        base = "http://" + base
+    user = (cfg.get("username") or "root").strip() or "root"
+    pwd = cfg.get("password") or ""
+    if not pwd:
+        return _err("没填 OpenWrt 密码：字段填 LuCI 的登录账号（默认 root / 你的密码）")
+
+    try:
+        with _client() as c:
+            t0 = time.time()
+            dev1 = _ow_file(c, base, user, pwd, "/proc/net/dev")
+            rx1, tx1 = _ow_iface(dev1)
+            if rx1 is None:
+                return _err("读不到网口 %s 的计数：在路由上确认接口名（ip link 里的 br-lan/eth0），"
+                            "或检查 rpcd 的 file.read ACL 是否放行了 /proc/net/dev" % _OW_IFACE)
+            sysinfo = _ow_call(c, base, user, pwd, "system", "info") or {}
+            board = _ow_call(c, base, user, pwd, "system", "board") or {}
+            leases = _ow_file(c, base, user, pwd, "/tmp/dhcp.leases")
+            arp = _ow_file(c, base, user, pwd, "/proc/net/arp")
+            state = _ow_kv(_ow_file(c, base, user, pwd, "/etc/navpage_traffic.state"))
+            cores = _ow_cores(_ow_file(c, base, user, pwd, "/proc/cpuinfo"))
+            # 第二次采样前补到 1 秒，1 秒窗口 ≈ 瞬时速率
+            rest = 1.0 - (time.time() - t0)
+            if rest > 0:
+                time.sleep(rest)
+            dev2 = _ow_file(c, base, user, pwd, "/proc/net/dev")
+            dt = max(0.3, time.time() - t0)
+    except PermissionError as e:
+        return _err(str(e))
+    except Exception as e:
+        return _err("连不上 OpenWrt：%s" % str(e)[:70])
+
+    rx2, tx2 = _ow_iface(dev2)
+    down = ((rx2 - rx1) / dt) if (rx2 is not None and rx2 >= rx1) else 0.0
+    up = ((tx2 - tx1) / dt) if (tx2 is not None and tx2 >= tx1) else 0.0
+
+    mrx = int(state.get("mrx") or 0)
+    mtx = int(state.get("mtx") or 0)
+    since = state.get("since") or ""
+
+    ips = _ow_clients(leases, arp)
+    n_clients = len(ips)
+    n_lease = len([l for l in (leases or "").splitlines() if len(l.split()) >= 3])
+
+    uptime = sysinfo.get("uptime")
+    # ubus 的 load 是 16.16 定点数（256 == 0.0039），不除 65536 会显示成 320.00
+    loads = [float(x) / 65536.0 for x in (sysinfo.get("load") or [])]
+    mem = sysinfo.get("memory") or {}
+    load1 = loads[0] if loads else None
+    load_tone = "good"
+    if load1 is not None and cores:
+        rel_load = float(load1) / cores
+        load_tone = "bad" if rel_load >= 1.5 else ("warn" if rel_load >= 1.0 else "good")
+
+    stats = [
+        {"label": "用户", "value": str(n_clients), "tone": "good" if n_clients else "muted"},
+        {"label": "本月↓", "value": fmt_compact(mrx), "tone": "good"},
+        {"label": "本月↑", "value": fmt_compact(mtx), "tone": "good"},
+        {"label": "负载", "value": ("%.2f" % float(load1)) if load1 is not None else "-",
+         "tone": load_tone},
+    ]
+    txt = "↓%s ↑%s" % (fmt_speed(down), fmt_speed(up))
+
+    detail = []
+    hostname = str(board.get("hostname") or "")
+    if hostname:
+        detail.append(["设备", hostname])
+    if board.get("system"):
+        detail.append(["硬件", str(board.get("system"))])
+    rel = board.get("release") or {}
+    fw = " ".join(str(x) for x in (rel.get("distribution"), rel.get("version")) if x).strip()
+    if fw:
+        if rel.get("target"):
+            fw += " · " + str(rel.get("target"))
+        if board.get("kernel"):
+            fw += " · Linux " + str(board.get("kernel"))
+        detail.append(["固件", fw])
+    if rel.get("revision"):
+        detail.append(["修订", str(rel.get("revision"))])
+    if mrx or mtx:
+        detail.append(["本月流量", "↓%s ↑%s%s" % (fmt_compact(mrx), fmt_compact(mtx),
+                                               ("（自 %s）" % since) if since else "")])
+    if rx2 is not None and (abs(rx2 - mrx) > 1024 * 1024 or abs(tx2 - mtx) > 1024 * 1024):
+        detail.append(["接口累计", "↓%s ↑%s（%s，自开机）" % (fmt_compact(rx2), fmt_compact(tx2), _OW_IFACE)])
+    detail.append(["在线设备", "%d 台（DHCP 租约 %d）" % (n_clients, n_lease)])
+    if uptime:
+        detail.append(["运行时长", "%s（%.1f 天）" % (fmt_dur(uptime), float(uptime) / 86400.0)])
+    if load1 is not None:
+        ls = " / ".join("%.2f" % x for x in loads[:3])
+        detail.append(["系统负载", "%s%s" % (ls, ("（%d 核）" % cores) if cores else "")])
+    total, avail = mem.get("total"), mem.get("available")
+    if total and avail is not None:
+        detail.append(["内存", "%s / %s（%.0f%%）" % (fmt_bytes(total - avail), fmt_bytes(total),
+                                                 (total - avail) * 100.0 / total)])
+    return _rich(txt, stats, detail)
+
+
 # ---------------------------------------------------------------- mihomo / Clash
 
 # 策略组类型：这些组才有「当前选了谁」，直连/节点本身没有
@@ -1558,6 +1771,20 @@ PROVIDERS = {
                 "数据直接读容器内可见的宿主 /proc 与 /sys，不用填任何东西。"
                 "SATA 盘温度需要宿主先 `modprobe drivetemp`（NVMe 与 CPU 温度本来就有）。",
         "fetch": host,
+    },
+    "openwrt": {
+        "label": "OpenWrt / 软路由", "icon": "📶",
+        "fields": [
+            {"key": "url", "label": "地址", "ph": "http://192.168.1.10",
+             "hint": "OpenWrt 的 LuCI 地址（ubus 就是同端口的 /ubus），不要加 /cgi-bin/luci"},
+            {"key": "username", "label": "用户名", "ph": "root",
+             "hint": "LuCI 登录账号，默认 root"},
+            {"key": "password", "label": "密码", "ph": "LuCI 登录密码", "pw": True,
+             "hint": "LuCI 登录密码。路由端要装 rpcd-mod-file 并放行 file.read 的 ACL，否则读不到 /proc"},
+        ],
+        "hint": "显示实时上下行速率、在线设备数、当月上下行流量；点开还有固件、运行时长、负载、内存、"
+                "接口自开机累计。数据走 ubus 的 JSON-RPC 直读 /proc 与路由端统计文件，不依赖面板插件。",
+        "fetch": openwrt,
     },
     "nezha": {
         "label": "哪吒探针 / 云服务器", "icon": "🌐",

@@ -74,19 +74,24 @@ def _auth_err():
     return {"ok": False, "error": "认证失败，请检查用户名/密码或 API Key"}
 
 
-def _rich(text, stats, detail=None, progress=None, dense=False):
+def _rich(text, stats, detail=None, progress=None, dense=True):
     """homepage 风格输出：text 是单行兜底，stats 是多指标小方块，progress 是进度条。
 
     stats: [{"label": "订阅", "value": "43", "tone": "good|warn|bad|muted"}]
     progress: {"value": 0.62, "label": "平均进度 62%"}
+
+    dense 默认开启（2026-10-22 用户要求：所有小组件跟 wb-proxy / MT Photos 两张对齐）。
+    统一版式 = 摘要行一行 + 指标格「标签上、数值下」固定 2 列；横向「标签 数值」排法在
+    92px 格子里主次不分、四格错落，已被淘汰。指标数不足 4 个时靠 CSS 让最后一格占满整行，
+    不要为了凑数硬造指标。
     """
     out = {"ok": True, "text": text, "stats": stats}
     if detail:
         out["detail"] = detail
     if progress:
         out["progress"] = progress
-    # dense：指标格改成「标签上、数值下」。4 个指标在 92px 宽里横排会被迫折行
-    # （实测每格 41px 高、整块 86px），把卡片底部的地址行顶出可视区（用户 2026-10-22 报裁切）。
+    # dense：指标格改成「标签上、数值下」。横向排法在 92px 宽里会被迫折行
+    # （实测每格 41px 高、整块 86px），把卡片底部的地址行顶出可视区（2026-10-22 报裁切）。
     if dense:
         out["dense"] = True
     return out
@@ -284,10 +289,10 @@ def _emby_like(cfg, prefix):
     tv = counts.get("SeriesCount", 0)
     ep = counts.get("EpisodeCount", 0)
     txt = f"{len(playing)} 个会话正在播放" if playing else "当前无播放"
-    stats = [{"label": "电影", "value": str(mv)}, {"label": "剧集", "value": str(tv)},
+    # 固定 4 格（播放中 / 电影 / 剧集 / 单集）：3 格时 2×2 会空一格，版式跟别的小组件对不齐
+    stats = [{"label": "播放中", "value": str(len(playing)), "tone": "good" if playing else "muted"},
+             {"label": "电影", "value": str(mv)}, {"label": "剧集", "value": str(tv)},
              {"label": "单集", "value": str(ep)}]
-    if playing:
-        stats.insert(0, {"label": "播放中", "value": str(len(playing)), "tone": "good"})
     return _rich(txt, stats,
                  [["正在播放", "、".join(playing) if playing else "无"],
                   ["电影", str(mv)], ["剧集", str(tv)], ["单集", str(ep)],
@@ -324,8 +329,13 @@ def plex(cfg):
                 playing = 0
     except Exception as e:
         return _err(f"{type(e).__name__}: {e}")
+    n_movie = sum(1 for x in secs if (x.get("type") or "") == "movie")
+    n_show = sum(1 for x in secs if (x.get("type") or "") == "show")
     return _rich(f"{playing} 个会话正在播放" if playing else "当前无播放",
-                 [{"label": "媒体库", "value": str(len(secs))}],
+                 [{"label": "媒体库", "value": str(len(secs))},
+                  {"label": "播放中", "value": str(playing), "tone": "good" if playing else "muted"},
+                  {"label": "电影库", "value": str(n_movie)},
+                  {"label": "剧集库", "value": str(n_show)}],
                  [["正在播放", str(playing)], ["媒体库", str(len(secs))],
                   ["库名", "、".join([s.get("title", "") for s in secs[:6]])]])
 
@@ -582,12 +592,12 @@ def moviepilot(cfg):
     else:
         text = "暂无追更中的订阅"
 
+    # 固定 4 格（订阅 / 追更中 / 待更新 / 暂停）：原来按有无缺集动态增减，卡片高度和
+    # 格子数会跟着数据变，跟别的小组件对不齐（2026-10-22 统一版式）
     stats = [{"label": "订阅", "value": str(total)},
-             {"label": "追更中", "value": str(running), "tone": "good" if running else "muted"}]
-    if lack_n:
-        stats.append({"label": "待更新", "value": str(lack_n), "tone": "warn"})
-    if paused:
-        stats.append({"label": "暂停", "value": str(paused), "tone": "muted"})
+             {"label": "追更中", "value": str(running), "tone": "good" if running else "muted"},
+             {"label": "待更新", "value": str(lack_n), "tone": "warn" if lack_n else "muted"},
+             {"label": "暂停", "value": str(paused), "tone": "muted" if paused else "default"}]
 
     detail = [["订阅总数", str(total)], ["订阅中", str(running)], ["暂停", str(paused)]]
     for st, n in sorted(by_state.items(), key=lambda x: -x[1]):
@@ -888,6 +898,7 @@ def nezha(cfg):
          "tone": "bad" if (cpu or 0) >= 90 else ("warn" if (cpu or 0) >= 75 else "good")},
         {"label": "内存", "value": ("%.0f%%" % mem_pct) if mem_pct is not None else "—",
          "tone": "bad" if (mem_pct or 0) >= 90 else ("warn" if (mem_pct or 0) >= 80 else "good")},
+        {"label": "负载", "value": ("%.2f" % float(st["load_1"])) if st.get("load_1") is not None else "—"},
         {"label": "运行", "value": fmt_dur(up) if up else "—"},
     ]
     # 摘要行放上下行累计流量（沿用 qb/tr 的 "↓x ↑y" 写法，保持观感统一）
@@ -1047,10 +1058,11 @@ def mihomo(cfg):
         n_air = len([1 for v in providers.values()
                      if (v or {}).get("vehicleType") not in (None, "", "Compatible")])
 
+    # 标签用中文（对齐其它小组件）：符号 ↓/↑ 单独当标签时，2×2 里跟「连接/机场」不成套
     stats = [
         {"label": "连接", "value": str(n_conn)},
-        {"label": "↓", "value": fmt_speed(down), "tone": "good" if down else "muted"},
-        {"label": "↑", "value": fmt_speed(up), "tone": "good" if up else "muted"},
+        {"label": "下载", "value": fmt_speed(down), "tone": "good" if down else "muted"},
+        {"label": "上传", "value": fmt_speed(up), "tone": "good" if up else "muted"},
         {"label": "机场", "value": str(n_air)},
     ]
     text = "累计 ↓%s ↑%s" % (fmt_compact(dl), fmt_compact(ul))

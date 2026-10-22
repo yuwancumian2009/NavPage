@@ -491,14 +491,18 @@ body {
   flex-direction: column; flex-wrap: nowrap; gap: 0;
   min-height: 30px; padding: 0 4px; line-height: 1.12;
 }
-/* dense 小组件比普通小组件多一行摘要，桌面内容预算死卡 136px（超了会把网格行撑高、
-   同排普通卡片被拉长）。实测 4 指标+摘要+地址行 = 148px，超 12px、地址行靠吃掉底部
-   padding 才露出来，摘要一换行就被裁。这里按实测把行距/地址行一起收紧到 135px。 */
+/* 小组件内容预算死卡 136px（超了会把网格行撑高、同排普通卡片被拉长）。
+   实测 4 指标+摘要+地址行 = 148px，超 12px、地址行靠吃掉底部 padding 才露出来，
+   摘要一换行就被裁。这里按实测把行距/地址行一起收紧到 135px。
+   2026-10-22 起 dense 是全局默认，这条 :has 对每张小组件卡都生效。 */
 .np-card.is_widget:has(.np-wstats.is-dense) { row-gap: 1px; }
 .np-card.is_widget:has(.np-wstats.is-dense) .np-card-widget { gap: 3px; line-height: 1.25; }
 .np-card.is_widget:has(.np-wstats.is-dense) .np-card-host { margin-top: 0; line-height: 15px; }
 .np-wstats.is-dense .np-wstat i { font-size: 10.5px; }
 .np-wstats.is-dense .np-wstat b { font-size: 13px; line-height: 1.25; }
+/* 指标数不是偶数时（自定义 JSON 只有 1 格、探针 3 格、Plex 老配置等），最后一格占满整行，
+   否则右下角空一个 92×30 的洞，卡片看起来像没加载完。 */
+.np-wstats.is-dense > .np-wstat:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .np-wstat i { font-style: normal; opacity: .7; }
 .np-wstat b { font-weight: 600; }
 .np-wstat.tone-good b { color: #8ce99a; }

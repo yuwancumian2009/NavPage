@@ -751,6 +751,17 @@ def _img_rows_from_state():
     return rows, ""
 
 
+_TRANSIENT_ERR = ("ConnectError", "ConnectTimeout", "ReadTimeout", "WriteTimeout", "PoolTimeout",
+                  "RemoteProtocolError", "ServerDisconnected", "Network is unreachable",
+                  "timed out", "502", "503", "504")
+
+
+def _transient_err(err):
+    """registry 查询失败的文案是否属于「等会儿再试可能就好了」这类。"""
+    s = str(err or "")
+    return any(k in s for k in _TRANSIENT_ERR)
+
+
 def _image_rows(force=False):
     """比对本地镜像摘要与 registry 最新摘要。结果按 image_check_cache 秒缓存。"""
     s = db.get_settings()
@@ -764,7 +775,7 @@ def _image_rows(force=False):
     mirror = (s.get("image_mirror") or "").strip() or None
     state = _img_state_load()
     try:
-        local = dockerapi.image_digests()
+        local, local_by_id = dockerapi.image_index()
     except Exception as e:
         return [], f"读不到本地镜像列表：{e}", False
 
@@ -782,7 +793,16 @@ def _image_rows(force=False):
     need = [img for img in images if (local.get(img) or {}).get("digests")]
 
     def _one(img):
-        return img, registry.remote_digest(img, proxy, mirror)
+        rd, e = registry.remote_digest(img, proxy, mirror)
+        # 镜像源/代理偶发抽风（连接失败、5xx、超时）会把「其实可更新」的镜像判成「未知」，
+        # 而未知状态的镜像永远不会被自动更新 —— 用户观感就是「勾了自动更新但它不动」。
+        # 只对可判定的瞬时错误补一次重试，401/404 这类确定性失败不浪费配额。
+        if not rd and _transient_err(e):
+            time.sleep(1.0)
+            rd2, e2 = registry.remote_digest(img, proxy, mirror)
+            if rd2:
+                return img, (rd2, "")
+        return img, (rd, e)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as ex:
         for img, res in ex.map(_one, need):
@@ -791,10 +811,23 @@ def _image_rows(force=False):
     rows = []
     for c in cs:
         img = c.get("image") or ""
-        li = local.get(img) or {}
+        li = local_by_id.get(c.get("image_id") or "") or local.get(img) or {}
         ld = registry.local_digest_for(li.get("digests"), img)
         rd, err = remote.get(img, ("", "未检查"))
         row_err = err
+        if img.startswith("sha256:") and li.get("digests"):
+            # tag 被别的容器/一次 pull 挪到新镜像后，Docker 会把这个字段降级成裸镜像 ID。
+            # 原 tag 已经查不到了，硬猜（比如当成 :latest）可能把别的 tag 的容器更新错，
+            # 所以只如实说明，交给用户重新创建容器。
+            rows.append({
+                "container": c.get("name"), "id": c.get("id"), "image": img,
+                "state": c.get("state"), "project": c.get("compose_project"),
+                "status": "unknown", "local_digest": "", "remote_digest": "",
+                "error": "容器的镜像 tag 已被其他镜像占用（被别的容器或一次 pull 挪走了），无法比对远端；重新创建该容器即可恢复",
+                "has_repo_digest": bool(li.get("digests")), "is_local_build": False,
+                "digest_missing": False,
+            })
+            continue
         if not ld:
             # RepoDigests 为空 **不等于** 本地构建：飞牛面板装的应用、离线包导入的镜像
             # 都来自 registry，只是 daemon 没留下摘要（用户反馈 openlist 被误判成
@@ -896,7 +929,7 @@ def _image_rows(force=False):
 
 
 @app.get("/api/admin/images")
-def admin_images(refresh: int = 0, cached: int = 0, _=Depends(require_admin)):
+def admin_images(refresh: int = 0, cached: int = 0, auto_apply: int = 0, _=Depends(require_admin)):
     s = db.get_settings()
     if cached and not refresh:
         # 打开页面默认走这里：只读上次结果，不碰 registry（2026-10-18 用户要求）
@@ -920,8 +953,14 @@ def admin_images(refresh: int = 0, cached: int = 0, _=Depends(require_admin)):
         # 走 config digest 比对，按正常的「已最新 / 可更新」展示。
         r["local_only"] = bool(r.get("is_local_build")) or dockerapi.is_local_only(r.get("image") or "")
     n_out = sum(1 for r in rows if r["status"] == "outdated")
+    # 点「检查更新」时顺手执行自动更新（2026-10-22 用户反馈：勾了自动更新，
+    # 检查到有更新却不动 —— 以前只有 cron 到点才更新，手动检查纯看不做）。
+    applied = []
+    if refresh and auto_apply:
+        applied = _apply_updates(_auto_targets(rows, s), "手动检查")
     hist = _hist_list()
     return {"ok": True, "rows": rows, "error": err, "cached": is_cached,
+            "auto_applied": applied,
             "checked_at": _img_checked_at(),
             "outdated": n_out, "last": (hist[0] if hist else None),
             "allow_update": bool(s.get("allow_image_update")),
@@ -1283,6 +1322,37 @@ def admin_images_prune(body: PruneBody, _=Depends(require_admin)):
 def admin_images_auto(_=Depends(require_admin)):
     """定时检查的状态：开关 / cron / 下次运行 / 上次结果（设置页显示用）。"""
     return {"ok": True, "auto": _auto_status()}
+
+
+class AutoApplyBody(BaseModel):
+    names: list = []          # 空 = 全部勾选的；传了就只处理这几个（勾选框点了立刻生效用）
+
+
+@app.post("/api/admin/images/auto/apply")
+def admin_images_auto_apply(body: AutoApplyBody, _=Depends(require_admin)):
+    """立刻执行一次「检查 + 自动更新」（勾选自动更新后马上生效）。
+
+    2026-10-22 用户反馈：勾了「自动更新」的镜像，检查到有更新却不动。
+    根因是自动更新只在 cron 到点时跑，手动检查/勾选都不会触发；这里补上第三个入口。
+    """
+    s = db.get_settings()
+    if not s.get("allow_image_update"):
+        return _err("面板的「允许从面板更新镜像」没打开（需要 socket-proxy 放开 POST）")
+    if not s.get("image_auto_update"):
+        return _err("还没打开「检查到更新就自动更新」开关")
+    rows, err, _cached = _image_rows(force=True)
+    want = {str(x) for x in (body.names or [])}
+    targets = [r for r in _auto_targets(rows, s) if not want or r.get("container") in want]
+    if not targets:
+        why = "勾选的镜像当前都是最新的（没有需要更新的）"
+        if want:
+            st = {r.get("container"): r.get("status") for r in rows if r.get("container") in want}
+            bad = [k for k, v in st.items() if v != "outdated"]
+            if bad:
+                why = "、".join(bad) + " 当前不需要更新（或取不到远端摘要）"
+        return {"ok": True, "targets": [], "reason": why}
+    started = _apply_updates(targets, "勾选自动更新")
+    return {"ok": True, "targets": started, "reason": ""}
 
 
 @app.get("/api/admin/images/history")
@@ -1860,14 +1930,66 @@ def _auto_summary(rec):
     return "；".join(parts)
 
 
+def _self_container():
+    """面板自身容器的名字。更新它会把本进程连同调度线程一起杀掉。"""
+    return (os.environ.get("NAVPAGE_SELF_NAME") or "navpage").strip()
+
+
+def _auto_targets(rows, s=None):
+    """从检查结果里挑「勾了自动更新 ∩ 状态 outdated ∩ 不是本地构建」的容器，自身排最后。
+
+    为什么自身必须排最后（2026-10-22 用户反馈「勾选了自动更新却没更新」的真凶之一）：
+    navpage 更新自身时容器被重建，跑循环的这个进程直接消失 —— 排在前面的话，
+    同一批里后面的目标一个都不会更新，用户看到的就是「只更新了一个/一个都没更新」。
+    """
+    s = s or db.get_settings()
+    names = {str(x) for x in (s.get("image_auto_names") or [])}
+    out = [r for r in rows
+           if r.get("status") == "outdated"
+           and r.get("container") in names
+           and not r.get("local_only") and not r.get("is_local_build")]
+    me = _self_container()
+    out.sort(key=lambda r: 1 if r.get("container") == me else 0)
+    return out
+
+
+def _apply_updates(targets, source):
+    """后台串行更新一批容器（一次一个，等上一个跑完），每个结果都落更新历史。
+
+    抽出来是因为三个入口共用：定时检查、手动「检查更新」、勾选「自动更新」。
+    之前只有定时检查会真的更新 —— 手动点「检查更新」看到「可更新」却什么都不发生，
+    就成了「勾了自动更新，检查到更新也不更新」（2026-10-22 用户反馈）。
+    """
+    if not targets:
+        return []
+
+    def _worker():
+        for r in targets:
+            name = r.get("container")
+            ok, t = _spawn_update(name, pull=True)
+            if not ok:
+                _hist_add({"ts": int(time.time()), "container": name,
+                           "image": r.get("image") or "", "success": False,
+                           "elapsed": None, "local_only": False,
+                           "message": "%s：没能发起更新（%s）" % (source, t), "log": []})
+                continue
+            # 等这一个跑完再动下一个：同时更新多个容器会一起停服务，日志也糊成一团
+            deadline = time.time() + 1800
+            while t.running and time.time() < deadline:
+                time.sleep(1)
+
+    threading.Thread(target=_worker, name="navpage-auto-apply", daemon=True).start()
+    # 立刻返回「这一批要更新谁」：真实结果看更新历史（更新自身时进程会重启，收尾写不进来）
+    return [r.get("container") for r in targets]
+
+
 def _auto_run():
     """到点了：查一遍更新；该自动更新的按顺序更新（一次一个容器）。"""
     s = db.get_settings()
     names = [str(x) for x in (s.get("image_auto_names") or [])]
     rows, err, _cached = _image_rows(force=True)
     outdated = [r for r in rows if r.get("status") == "outdated"]
-    targets = [r for r in outdated
-               if r.get("container") in names and not r.get("local_only")]
+    targets = _auto_targets(rows, s)
     rec = {"ts": int(time.time()), "checked": len(rows),
            "outdated": [r.get("container") for r in outdated],
            "updated": [], "failed": [], "skipped": "", "error": err or ""}

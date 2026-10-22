@@ -71,13 +71,17 @@ def image_inspect(image):
     return _get(f"/images/{image}/json")
 
 
-def image_digests():
-    """一次性拿全部本地镜像的摘要映射，避免逐个 inspect。
+def image_index():
+    """一次 /images/json 同时建两个索引：(按 tag, 按镜像 ID)。
 
-    返回 {镜像名: {"id":..., "digests": [...], "created": ...}}
+    返回 ({tag: info}, {镜像完整ID: info})。
+
+    by_id 里包含**没有 tag 的镜像** —— 容器跑的可能就是这种：tag 已经被别的容器
+    或一次 pull 挪到新镜像上了，只按 tag 比对会把「还在跑旧镜像」的容器误判成
+    「最新」或「未知」，用户勾了自动更新也永远等不到更新。
     """
     raw = _get("/images/json?all=false")
-    out = {}
+    by_tag, by_id = {}, {}
     for im in raw or []:
         tags = [t for t in (im.get("RepoTags") or []) if t and t != "<none>:<none>"]
         info = {
@@ -89,9 +93,16 @@ def image_digests():
             "created": im.get("Created") or 0,
             "size": im.get("Size") or 0,
         }
+        if info["full_id"]:
+            by_id[info["full_id"]] = info
         for t in tags:
-            out[t] = info
-    return out
+            by_tag[t] = info
+    return by_tag, by_id
+
+
+def image_digests():
+    """向后兼容：只要 {镜像名: 摘要信息}。"""
+    return image_index()[0]
 
 
 # socket-proxy 拒绝非 GET 时返回的是 nginx 风格的 403，跟 Docker 自己的 403 不一样，
@@ -767,6 +778,9 @@ def containers(all_containers=False):
             "id": (c.get("Id") or "")[:12],
             "name": name,
             "image": c.get("Image") or "",
+            # 容器真正跑的那个镜像 ID：tag 可能已经被别的容器/一次 pull 挪到新镜像上了，
+            # 只按 tag 比对会把「还在跑旧镜像」的容器误判成「最新」（2026-10-22 修）。
+            "image_id": (c.get("ImageID") or "").replace("sha256:", ""),
             "state": c.get("State") or "",
             "status": c.get("Status") or "",
             "labels": labels,

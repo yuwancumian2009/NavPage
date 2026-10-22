@@ -767,7 +767,7 @@
         <!-- ---------------- 镜像更新 ---------------- -->
         <el-tab-pane label="镜像" name="images">
           <div class="np-bar">
-            <el-button type="primary" size="small" :loading="imgLoading" @click="loadImages(true)">
+            <el-button type="primary" size="small" :loading="imgLoading" @click="loadImages(true, true)">
               检查更新
             </el-button>
             <el-button size="small" :disabled="!imgOutdated || imgAllow === false" :loading="imgUpdating"
@@ -1450,6 +1450,6 @@
 <script src="/vendor/element-plus.min.js"></script>
 <script src="/vendor/element-icons.min.js"></script>
 <script src="/vendor/axios.min.js"></script>
-<script src="/js/app.js?v=78"></script>
+<script src="/js/app.js?v=79"></script>
 </body>
 </html>

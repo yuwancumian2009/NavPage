@@ -1997,7 +1997,30 @@
           await api.put('/api/admin/settings', { patch: { image_auto_names: arr } });
           lastSavedJson = JSON.stringify(s.value || {});
         } catch (e) { apiErr(e); }
+        // 勾上就立刻检查这个镜像：有更新马上更，不等下一次定时检查
+        //（2026-10-22 用户反馈：勾了自动更新，检查到更新却不动）
+        if (on) await applyAutoNow([name]);
         loadAuto();
+      }
+      async function applyAutoNow(names) {
+        const arr = names || [];
+        if (!arr.length) return [];
+        try {
+          const r = await api.post('/api/admin/images/auto/apply', { names: arr }, { timeout: 180000 });
+          const started = (r.data && r.data.targets) || [];
+          if (started.length) {
+            ElMessage.success('检测到更新，已开始自动更新：' + started.join('、'));
+            await loadImages(false);      // 回显状态，进度由 restoreImgTask 接着跟
+          } else if (r.data && r.data.reason) {
+            ElMessage.info(r.data.reason);
+          }
+          return started;
+        } catch (e) {
+          // 开关没开这类业务提示用 warning，别用大红报错
+          const msg = apiMsg(e);
+          if (msg) ElMessage.warning(msg);
+          return [];
+        }
       }
       /* ---- 定时清理未使用镜像（2026-10-16 用户要求）----
          状态跟在 /api/admin/images/auto 的 prune 字段里（一次请求拿全，不额外开接口）。 */
@@ -2099,14 +2122,14 @@
         } catch (e) { /* 显示不出来不影响其它功能 */ }
       }
 
-      async function loadImages(refresh) {
+      async function loadImages(refresh, autoApply) {
         imgLoading.value = true;
         imgError.value = '';
         try {
           // 两种取数方式（2026-10-18 用户要求：打开页面先看上次结果，不自动检查）：
           //   refresh=1 → 真去 registry 逐个查最新（慢、耗配额，只在点「检查更新」时）
           //   cached=1  → 只回显服务端落盘的上一次结果，全程不联网（打开页面默认走这条）
-          const params = refresh ? { refresh: 1 } : { cached: 1 };
+          const params = refresh ? { refresh: 1, auto_apply: autoApply ? 1 : 0 } : { cached: 1 };
           const r = await api.get('/api/admin/images',
                                   { params: params, timeout: 180000 });
           imgRows.value = r.data.rows || [];
@@ -2116,6 +2139,10 @@
           imgCheckedAt.value = r.data.checked_at || 0;
           imgBadge.value = r.data.outdated || 0;
           if (r.data.auto) imgAuto.value = r.data.auto;
+          // 检查到更新且开了自动更新：服务端已经动手了，这里明确告诉用户
+          if ((r.data.auto_applied || []).length) {
+            ElMessage.success('已自动更新：' + r.data.auto_applied.join('、'));
+          }
         } catch (e) { apiErr(e); }
         imgLoading.value = false;
         restoreImgTask();   // 刷新页面后把还在跑的更新接回来

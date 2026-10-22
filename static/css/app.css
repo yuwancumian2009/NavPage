@@ -486,11 +486,17 @@ body {
 /* 4 个指标在 190px 卡片里横排会被迫折行（实测每格 41px、整块 86px），把卡片底部地址行
    顶出可视区。带 dense 的小组件改成「标签上、数值下」的等宽 2×2，每格 34px 稳定不折行。 */
 /* 固定 2×2：手机卡片只有 155px 宽，auto-fit 会退化成 1 列 4 行（实测卡片被撑到 258px） */
-.np-wstats.is-dense { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.np-wstats.is-dense { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 5px; }
 .np-wstats.is-dense .np-wstat {
   flex-direction: column; flex-wrap: nowrap; gap: 0;
-  min-height: 34px; padding: 1px 4px; line-height: 1.15;
+  min-height: 30px; padding: 0 4px; line-height: 1.12;
 }
+/* dense 小组件比普通小组件多一行摘要，桌面内容预算死卡 136px（超了会把网格行撑高、
+   同排普通卡片被拉长）。实测 4 指标+摘要+地址行 = 148px，超 12px、地址行靠吃掉底部
+   padding 才露出来，摘要一换行就被裁。这里按实测把行距/地址行一起收紧到 135px。 */
+.np-card.is_widget:has(.np-wstats.is-dense) { row-gap: 1px; }
+.np-card.is_widget:has(.np-wstats.is-dense) .np-card-widget { gap: 3px; line-height: 1.25; }
+.np-card.is_widget:has(.np-wstats.is-dense) .np-card-host { margin-top: 0; line-height: 15px; }
 .np-wstats.is-dense .np-wstat i { font-size: 10.5px; }
 .np-wstats.is-dense .np-wstat b { font-size: 13px; line-height: 1.25; }
 .np-wstat i { font-style: normal; opacity: .7; }
@@ -498,6 +504,12 @@ body {
 .np-wstat.tone-good b { color: #8ce99a; }
 .np-wstat.tone-warn b { color: #ffc46b; }
 .np-wstat.tone-bad b { color: #ff9a9a; }
+/* 浅色（solid）主题是白底卡片：上面这几个亮色在白底上对比度只有 ~1.3:1，指标值基本看不见；
+   chip 的 rgba(255,255,255,.16) 底色在白底上也等于没有。浅色主题单独给一套深色值。 */
+.np-theme-solid .np-wstat { background: rgba(0, 0, 0, .05); }
+.np-theme-solid .np-wstat.tone-good b { color: #2f9e44; }
+.np-theme-solid .np-wstat.tone-warn b { color: #b25e09; }
+.np-theme-solid .np-wstat.tone-bad b { color: #c92a2a; }
 .np-wstat.tone-muted { opacity: .68; }
 
 /* 卡片底边的进度条（下载进度 / 剧集完成度） */

@@ -1310,6 +1310,109 @@ def wbproxy(cfg):
     return _rich(txt, stats, detail, progress, dense=True)
 
 
+# ---------------------------------------------------------------- MT Photos（相册）
+
+def _mt_size(n):
+    """字节 → 1.24 TB 这种短格式（摘要行只有 ~190px）。"""
+    v = _wb_num(n)
+    for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+        if v < 1024 or unit == "PB":
+            if unit in ("B", "KB"):
+                return "{:,.0f} {}".format(v, unit)
+            return "{:.2f} {}".format(v, unit)
+        v /= 1024.0
+
+
+def _mt_count(v):
+    """计数格式：≥1000 带千分位，小数字原样（同一张卡里格式必须一致）。"""
+    n = int(_wb_num(v))
+    return "{:,}".format(n) if n >= 1000 else str(n)
+
+
+def mtphotos(cfg):
+    """MT Photos：用户数 / 照片数 / 相册数 / 视频数（容量、图库明细进 detail）。
+
+    认证是 x-api-key（网页端右上角用户名 → API密钥 → 创建），不是登录 Cookie。
+    计数走 /gallery/stat/all（一次给 photo/video/totalSize），相册走 /api-album。
+    """
+    base = _base(cfg)
+    if not base:
+        return _err("没填地址，例如 http://192.168.1.109:8063")
+    key = (cfg.get("key") or "").strip()
+    if not key:
+        return _err("没填 API 密钥：网页端右上角用户名 → API密钥 → 创建API密钥")
+
+    def _get(c, path):
+        r = c.get(base + path, headers={"x-api-key": key})
+        if r.status_code in (401, 403):
+            raise PermissionError(path)
+        r.raise_for_status()
+        return r.json()
+
+    with _client() as c:
+        try:
+            stat = _get(c, "/gallery/stat/all") or {}
+            albums = _get(c, "/api-album") or []
+            gals = _get(c, "/gateway/myGalleryList") or []
+            try:
+                users = _get(c, "/users") or []
+            except Exception:
+                users = None          # 非管理员密钥拿不到用户列表
+            try:
+                info = _get(c, "/api-info") or {}
+            except Exception:
+                info = {}
+        except PermissionError:
+            return _err("API 密钥无效或没权限：到 网页端 → 用户名 → API密钥 重新建一个")
+        except Exception as e:
+            return _err("连不上 MT Photos：%s" % str(e)[:80])
+
+    photos = int(_wb_num(stat.get("photo")))
+    videos = int(_wb_num(stat.get("video")))
+    size_txt = _mt_size(stat.get("totalSize"))
+    n_album = len(albums) if isinstance(albums, list) else 0
+    n_user = len(users) if isinstance(users, list) else None
+    gal_names = [str(g.get("name") or "图库") for g in gals if isinstance(g, dict)]
+
+    stats = [
+        {"label": "照片", "value": _mt_count(photos), "tone": "good"},
+        {"label": "视频", "value": _mt_count(videos)},
+        {"label": "相册", "value": _mt_count(n_album)},
+        {"label": "用户", "value": _mt_count(n_user) if n_user is not None else "—",
+         "tone": "good" if n_user else "warn"},
+    ]
+
+    if n_user is None:
+        text = "密钥看不到用户数"
+        tone = "warn"
+    elif photos + videos == 0:
+        text = "图库还没文件"
+        tone = "warn"
+    else:
+        text = "%s · %d 个图库" % (size_txt, len(gal_names))
+        tone = ""
+
+    album_files = 0
+    for a in (albums if isinstance(albums, list) else []):
+        if isinstance(a, dict):
+            album_files += int(_wb_num(a.get("count")))
+
+    detail = [
+        ["总容量", size_txt],
+        ["文件合计", "%s 个（照片 + 视频）" % _mt_count(photos + videos)],
+        ["相册", "%s 个 · 收录 %s 个文件" % (_mt_count(n_album), _mt_count(album_files))],
+        ["图库", "%d 个：%s" % (len(gal_names), "、".join(gal_names[:3]) +
+                               ("…" if len(gal_names) > 3 else "")) if gal_names else "没读到图库列表"],
+    ]
+    if isinstance(users, list) and users:
+        names = [str(u.get("username") or u.get("name") or "") for u in users if isinstance(u, dict)]
+        detail.append(["用户", "%d 个：%s" % (len(names), "、".join([x for x in names if x][:3]))])
+    if info.get("version"):
+        detail.append(["服务端", "MT Photos %s（%s）" % (info.get("version"), info.get("arch") or "-")])
+
+    return _rich(text, stats, detail, dense=True)
+
+
 PROVIDERS = {
     "qbittorrent": {
         "label": "qBittorrent", "icon": "⚡",
@@ -1406,7 +1509,18 @@ PROVIDERS = {
         "hint": "显示账号总积分 / 今日消耗积分 / 可用账号数 / 临期积分（数据来自 wb-proxy 面板 API）。",
         "fetch": wbproxy,
     },
-    "generic": {
+    "mtphotos": {
+        "label": "MT Photos / 相册", "icon": "🖼️",
+        "fields": [
+            {"key": "url", "label": "面板地址", "ph": "http://192.168.1.109:8063",
+             "hint": "MT Photos 网页端地址"},
+            {"key": "key", "label": "API 密钥", "ph": "网页端 → 用户名 → API密钥 → 创建", "pw": True,
+             "hint": "右上角用户名 → API密钥 → 创建API密钥；填到 x-api-key。密钥等于该账号全部权限"},
+        ],
+        "hint": "显示用户数 / 照片数 / 相册数 / 视频数（摘要行给总容量和图库数）。",
+        "fetch": mtphotos,
+    },
+"generic": {
         "label": "自定义 JSON", "icon": "🔧",
         "fields": ["url", "apikey", "path", "label", "unit"],
         "hint": "给一个返回 JSON 的地址，path 用点号取字段，如 data.count",

@@ -687,7 +687,9 @@
         const anchor = (el.closest && el.closest('.np-card')) || el;
         const r = anchor.getBoundingClientRect();
         const W = Math.min(330, window.innerWidth - 24);
-        const wantH = Math.min(460, 44 + w.detail.length * 22);
+        // 每行按 28px 估：明细里长值（如「12,511 个（照片 11,433 / 视频 1,078）」）会折成两行，
+        // 按 22px 估会少算，浮层 maxHeight 卡死后最后一行掉进滚动区，用户以为明细缺了。
+        const wantH = Math.min(560, 46 + w.detail.length * 28);
         const below = window.innerHeight - r.bottom - 12;
         const above = r.top - 12;
         const style = { width: W + 'px', maxHeight: Math.max(150, Math.min(wantH, 460)) + 'px' };

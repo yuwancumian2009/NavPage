@@ -964,7 +964,13 @@ def nezha(cfg):
 
     detail = [["服务器", "%s（在线）" % name]]
     if len(servers) > 1:
-        detail.append(["面板服务器", "%d 台，在线 %d" % (len(servers), len(online))])
+        # 别让人以为「2 台」是本卡片的数量：写明这是面板总览，并把其它机器列出来
+        detail.append(["面板共 %d 台" % len(servers), "在线 %d 台" % len(online)])
+        others = [s for s in servers if str(s.get("name")) != name]
+        if others:
+            detail.append(["其它服务器", "、".join(
+                "%s（%s）" % (str(s.get("name")), "在线" if s.get("state") else "离线")
+                for s in others[:3])])
     if si is not None or so is not None:
         detail.append(["实时速率", "↓%s ↑%s" % (fmt_speed(si or 0), fmt_speed(so or 0))])
     if ni is not None or no is not None:

@@ -139,8 +139,8 @@ CREATE TABLE IF NOT EXISTS items (
   created_at INTEGER DEFAULT 0,
   updated_at INTEGER DEFAULT 0
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_items_container_host
-  ON items(docker_host, container_name) WHERE container_name <> '';
+-- 唯一索引 idx_items_container_host 在 _migrate() 里建：
+-- 老库必须先补 docker_host 列，否则 executescript 直接报 no such column。
 CREATE TABLE IF NOT EXISTS docker_sources (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -426,12 +426,9 @@ def _migrate(c):
         c.execute("INSERT INTO settings(key, value) VALUES('migrated_cache_1h', '1')")
     # 2026-10-22：多采集源（本机 + 远端 agent）后，容器名会在不同主机重复，
     # 唯一索引必须从 container_name 单列换成 (docker_host, container_name)。
-    try:
-        c.execute("DROP INDEX IF EXISTS idx_items_container")
-        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_items_container_host "
-                  "ON items(docker_host, container_name) WHERE container_name <> ''")
-    except Exception:
-        pass
+    c.execute("DROP INDEX IF EXISTS idx_items_container")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_items_container_host "
+              "ON items(docker_host, container_name) WHERE container_name <> ''")
     c.commit()
 
 

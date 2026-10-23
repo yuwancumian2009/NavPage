@@ -105,7 +105,7 @@ docker.sock、每 5 分钟把容器清单 POST 给面板（**纯出站，对端�
 
 ```bash
 # 面板里点「+ 添加远端主机」会直接给出带令牌的完整命令
-docker run -d --name navpage-agent --restart unless-stopped \
+docker run -d --name navpage-agent --restart unless-stopped --no-healthcheck \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   -e PANEL_URL=http://<面板地址> -e AGENT_TOKEN=npk_xxx \
   -e INTERVAL=300 yuwancumian2009/navpage:latest python -m app.agent

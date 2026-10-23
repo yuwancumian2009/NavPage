@@ -1388,7 +1388,7 @@
       function cmdFor(token) {
         // 用数组拼，避免 JS 字符串里写续行反斜杠（很容易多写一个变成 \\）
         return [
-          'docker run -d --name navpage-agent --restart unless-stopped \\',
+          'docker run -d --name navpage-agent --restart unless-stopped --no-healthcheck \\',
           '  -v /var/run/docker.sock:/var/run/docker.sock:ro \\',
           '  -e PANEL_URL=' + location.origin + ' \\',
           '  -e AGENT_TOKEN=' + token + ' \\',

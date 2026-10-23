@@ -150,13 +150,18 @@ def build_payload(docker_host):
     except Exception as e:
         ver = {"_error": f"{type(e).__name__}: {e}"}
     raw = _get_json(docker_host, "/containers/json?all=true")
+    cs = normalize(raw)
+    # 不报自己：agent 容器出现在导航页里没意义，还会被「认领」成导航页卡片
+    self_prefix = (os.environ.get("AGENT_NAME") or "navpage-agent").strip()
+    if self_prefix:
+        cs = [c for c in cs if not (c.get("name") or "").startswith(self_prefix)]
     return {
         "host_id": _agent_id(),
         "host_name": os.environ.get("HOST_NAME") or socket.gethostname(),
         "sent_at": int(time.time()),
         "docker": {"version": ver.get("Version") or "", "api": ver.get("ApiVersion") or "",
                    "ok": not ver.get("_error"), "error": ver.get("_error") or ""},
-        "containers": normalize(raw),
+        "containers": cs,
     }
 
 

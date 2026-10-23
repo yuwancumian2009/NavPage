@@ -1784,8 +1784,9 @@ def _find_similar_item(cand):
             for f in ("url_lan", "url_wan"):
                 if _url_netloc(it.get(f)) in hosts:
                     return it
+        # 名字只做「完全相同」匹配：包含关系会把 navpage 认成 navpage-agent-once
         ik = _name_key(it.get("name"))
-        if nk and ik and len(nk) >= 4 and len(ik) >= 4 and (nk in ik or ik in nk):
+        if nk and ik and nk == ik:
             best = best or it
     return best
 

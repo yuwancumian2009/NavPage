@@ -979,7 +979,7 @@ body {
   background: #f0f9eb; color: #529b2e; word-break: break-all; flex: none;
 }
 .np-docker.bad { background: #fef0f0; color: #c45656; }
-.np-scan-sec { margin-bottom: 18px; }
+.np-scan-sec { margin-bottom: 18px; overflow-x: auto; }   /* 窄屏（手机）表格可横向滑动，别把操作列裁没 */
 .np-scan-head {
   display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
   font-size: 13px; color: #303133; flex-wrap: wrap;

@@ -1798,10 +1798,14 @@ def _adopt(it, cand, host, c):
         patch["container_image"] = c["image"]
     if c.get("primary_port"):
         patch["container_port"] = int(c["primary_port"])
-    if cand.get("url_wan") and not (it.get("url_wan") or "").strip():
-        patch["url_wan"] = cand["url_wan"]
-    if cand.get("url_lan") and not (it.get("url_lan") or "").strip():
-        patch["url_lan"] = cand["url_lan"]
+    # 只在卡片完全没有地址时才补：已有地址（哪怕只是 {scheme}://{host} 模板）
+    # 就说明用户自己安排过，别把「常用」里的卡片也改成域名，那样会和
+    # 「甲骨文」分组里的同名卡片在首页撞成两张一样的链接。
+    if not (it.get("url_lan") or "").strip() and not (it.get("url_wan") or "").strip():
+        if cand.get("url_wan"):
+            patch["url_wan"] = cand["url_wan"]
+        if cand.get("url_lan"):
+            patch["url_lan"] = cand["url_lan"]
     db.update_item(it["id"], patch)
     return it["id"]
 

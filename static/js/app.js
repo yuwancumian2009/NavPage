@@ -1311,6 +1311,16 @@
         scanning.value = false;
       }
       function keyOf(c) { return (c.docker_host || '') + '|' + c.container_name; }
+      /* 新发现里不想要的容器直接排除：写 scan_exclude，重扫不再出现 */
+      async function excludeCand(c) {
+        try {
+          await ElMessageBox.confirm('把「' + c.name + '」加入排除名单？以后扫描不会再显示它。',
+                                     '排除容器', { type: 'warning' });
+          await api.post('/api/admin/scan/exclude', { names: [c.container_name], excluded: true });
+          ElMessage.success('已排除「' + c.name + '」');
+          await doScan();
+        } catch (e) { if (e !== 'cancel') apiErr(e); }
+      }
       function selectAllNew() {
         selNew.value = (scanResult.value ? scanResult.value.new : []).map(keyOf);
       }
@@ -2914,7 +2924,7 @@
         setMode, onEnter, openItem, saveItem, delItem, delItemById, setExcluded,
         addCat, renameCat, delCat, bulkDelCats, moveCat, catIdx,
         selCats, catAllChecked, catIndeterminate,
-        onCatCheck, toggleAllCats, doScan, selectAllNew, importSelected, syncAll, autocatAll, autoSaveAt, flushAutoSave,
+        onCatCheck, toggleAllCats, doScan, selectAllNew, importSelected, excludeCand, syncAll, autocatAll, autoSaveAt, flushAutoSave,
         wanText, wanRows, wanItems, wanParsing, wanApplying, wanOverwrite, wanSelectedCount, wanPreview, wanApply,
         refreshIcons, saveSettings, uploadWall, pickWall, useWallUrl, clearWall,
         delWall, openAdmin,

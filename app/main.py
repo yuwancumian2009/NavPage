@@ -2050,6 +2050,31 @@ def scan(_=Depends(require_admin)):
             "errors": errors, "sources": views}
 
 
+class ExcludeBody(BaseModel):
+    names: list = []
+    excluded: bool = True
+
+
+@app.post("/api/admin/scan/exclude")
+def scan_exclude(body: ExcludeBody, _=Depends(require_admin)):
+    """把「新发现」里的候选直接排除掉（写 scan_exclude，重扫也不再冒出来）。
+
+    候选还没建卡片，没法走 items 的排除接口，所以这里按容器名写设置。
+    """
+    s = db.get_settings()
+    cur = [x.strip() for x in (s.get("scan_exclude") or "").split(",") if x.strip()]
+    for n in body.names:
+        n = (n or "").strip()
+        if not n:
+            continue
+        if body.excluded and n not in cur:
+            cur.append(n)
+        if not body.excluded and n in cur:
+            cur.remove(n)
+    db.update_settings({"scan_exclude": ",".join(cur)})
+    return {"ok": True, "scan_exclude": ",".join(cur)}
+
+
 class ImportBody(BaseModel):
     names: list = []
     items: list = []

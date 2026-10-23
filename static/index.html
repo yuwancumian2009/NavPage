@@ -420,7 +420,7 @@
                 </el-button>
               </div>
               <table class="ep-table" v-if="scanResult.new.length">
-                <thead><tr><th class="c-chk"></th><th class="c-name-m">名称</th><th class="c-box">容器</th><th class="c-src">来源</th><th class="c-port">端口</th><th class="c-lan">内网地址</th></tr></thead>
+                <thead><tr><th class="c-chk"></th><th class="c-name-m">名称</th><th class="c-box">容器</th><th class="c-src">来源</th><th class="c-port">端口</th><th class="c-lan">内网地址</th><th class="c-state">操作</th></tr></thead>
                 <tbody>
                   <tr v-for="c in scanResult.new" :key="(c.docker_host || '') + '|' + c.container_name">
                     <td><input type="checkbox" v-model="selNew" :value="(c.docker_host || '') + '|' + c.container_name"></td>
@@ -434,6 +434,10 @@
                     <td class="np-url">
                       <span v-if="!c.url_lan" class="np-muted">导入后在「项目」里手填</span>
                       <template v-else>{{ c.url_lan }}</template>
+                    </td>
+                    <td>
+                      <a href="javascript:void(0)" title="不用这个容器：写进排除名单，重扫也不再出现"
+                         @click="excludeCand(c)">排除</a>
                     </td>
                   </tr>
                 </tbody>

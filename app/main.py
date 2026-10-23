@@ -437,11 +437,11 @@ def wallpaper_relay(u: str):
                 try:
                     from PIL import Image
                     im = Image.open(tmp)
-                    if max(im.size) > 2560:
-                        im.thumbnail((2560, 2560), Image.LANCZOS)
+                    if max(im.size) > 1920:
+                        im.thumbnail((1920, 1920), Image.LANCZOS)
                     im = im.convert("RGB")
                     wt = os.path.join(d, "tmpw_" + key)
-                    im.save(wt, "WEBP", quality=84, method=4)
+                    im.save(wt, "WEBP", quality=80, method=4)
                     if os.path.getsize(wt) < os.path.getsize(tmp):
                         os.unlink(tmp)
                         tmp2, ext = wt, "webp"
@@ -469,6 +469,41 @@ def wallpaper_relay(u: str):
             if not path:
                 raise HTTPException(502, "壁纸源取不到")
     return FileResponse(path, headers={"Cache-Control": "public, max-age=1800"})
+
+
+_WP_WARMED = {"t": 0.0}
+
+
+def _wallpaper_warmer():
+    """后台每 20 分钟把远端壁纸提前拉进本地缓存。
+
+    远端壁纸源（pic.o.hhxin.top）单张要给 4~5 秒，缓存 30 分钟过期后第一个打开
+    导航页的人就得干等。这里趁没人用的时候先拉好，用户打开时永远是本地直出。
+    """
+    first = True
+    while True:
+        try:
+            time.sleep(45 if first else 1200)
+            first = False
+            s = db.get_settings() or {}
+            u = (s.get("wallpaper") or "").strip()
+            if not u.lower().startswith(("http://", "https://")):
+                continue
+            urls = [u]
+            if "/random" in u:
+                urls += [u.replace("/random", "/pc"), u.replace("/random", "/mobile")]
+            for c in urls:
+                try:
+                    wallpaper_relay(c)
+                except Exception:
+                    pass
+        except Exception:
+            time.sleep(60)
+
+
+@app.on_event("startup")
+def _start_wallpaper_warmer():
+    threading.Thread(target=_wallpaper_warmer, daemon=True).start()
 
 
 @app.get("/api/logo/{name}")

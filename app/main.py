@@ -554,6 +554,7 @@ class ItemBody(BaseModel):
     widget: dict | None = None
     url_visible: int | None = None
     card_size: str | None = None
+    auto_created: bool | None = None
 
 
 @app.post("/api/admin/items")

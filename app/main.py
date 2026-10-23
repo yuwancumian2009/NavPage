@@ -2009,8 +2009,12 @@ def scan(_=Depends(require_admin)):
     ok, info = dockerapi.available()
     ok_hosts = set()
     pairs, errors = _collect(s, ok_hosts)
+    _items = db.list_items()
     known = {(str(i.get("docker_host") or ""), i.get("container_name") or "")
-             for i in db.list_items() if i.get("container_name")}
+             for i in _items if i.get("container_name")}
+    # 名字兜底：采集源删掉后卡片会只剩 container_name（docker_host 清空），
+    # 这些容器不该再算「新发现」，否则重扫一遍还是整排冒出来。
+    known_names = {i["container_name"] for i in _items if i.get("container_name")}
     live, new, existing, skipped = set(), [], [], []
     for src, c in pairs:
         key = (str(src.get("id") or ""), c.get("name") or "")
@@ -2025,7 +2029,7 @@ def scan(_=Depends(require_admin)):
                      "status": c.get("status", ""), "public_ports": c.get("public_ports") or [],
                      "project": c.get("compose_project", ""),
                      "no_port": not c.get("primary_port"), "state": c.get("state", "")})
-        (existing if key in known else new).append(cand)
+        (existing if (key in known or key[1] in known_names) else new).append(cand)
 
     missing = []
     for i in db.list_items():
@@ -2037,9 +2041,13 @@ def scan(_=Depends(require_admin)):
                             "id": i["id"], "docker_host": host,
                             "source_name": (_source_by_id(host) or {}).get("name") or "本机"})
 
+    views = [_source_view(x) for x in _sources()]
+    for v in views:                      # 本机没有上报数，用实时扫到的容器数补上，别显示 0
+        if (v.get("kind") or "local") == "local":
+            v["container_count"] = sum(1 for k in live if k[0] == str(v.get("id") or ""))
     return {"ok": True, "docker": info, "new": new, "existing": existing,
             "missing": missing, "skipped": skipped, "total": len(live),
-            "errors": errors, "sources": [_source_view(x) for x in _sources()]}
+            "errors": errors, "sources": views}
 
 
 class ImportBody(BaseModel):

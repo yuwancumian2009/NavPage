@@ -487,11 +487,19 @@ def get_item(iid):
 
 
 def find_item_by_container(name, host=""):
-    """按 (采集源, 容器名) 找卡片。host='' 是本机，远端采集源传 str(source_id)。"""
+    """按 (采集源, 容器名) 找卡片。host='' 是本机，远端采集源传 str(source_id)。
+
+    精确匹配不到时，退一步按容器名找「已经解除绑定」的卡片（docker_host=''）。
+    删采集源会把卡片解绑但保留 container_name —— 重扫/全量同步要是认不出来，
+    就会给同一个容器再建一张重复卡片，或者在「新发现」里一直冒出来。
+    """
     c = conn()
     with _lock:
         r = c.execute("SELECT * FROM items WHERE container_name=? AND COALESCE(docker_host,'')=?",
                       (name, str(host or ""))).fetchone()
+        if not r:
+            r = c.execute("SELECT * FROM items WHERE container_name=? AND COALESCE(docker_host,'')=''"
+                          " ORDER BY (source='manual') DESC, id LIMIT 1", (name,)).fetchone()
     return _row_to_item(r) if r else None
 
 
@@ -755,8 +763,10 @@ def delete_source(sid, keep_manual=False):
                 c.execute("DELETE FROM items WHERE id=?", (r["id"],))
                 removed += 1
             else:
-                c.execute("UPDATE items SET source='manual', missing=0, docker_host='',"
-                          " container_name='' WHERE id=?", (r["id"],))
+                # 只清 docker_host，container_name 必须留着：扫描/同步靠它认出
+                # 「这个容器已经有卡片了」，清掉的话重扫会把它当成新发现再建一张。
+                c.execute("UPDATE items SET source='manual', missing=0, docker_host=''"
+                          " WHERE id=?", (r["id"],))
                 released += 1
         c.execute("DELETE FROM docker_sources WHERE id=?", (sid,))
         c.commit()

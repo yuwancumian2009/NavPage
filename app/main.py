@@ -1681,7 +1681,9 @@ def _candidate(c, s, src=None):
         lan = c.get("nav_url_lan") or ""
         if not lan and prefix and port:
             lan = (prefix if prefix.endswith(":") else prefix.rstrip("/") + ":") + str(port)
-        wan = c.get("nav_url_wan") or ""
+        # 远端主机（云主机 / 另一网段）通常内网外网同一个地址，外网缺省跟随内网，
+        # 否则切到「外网」模式时这些卡片会变成没有地址。
+        wan = c.get("nav_url_wan") or lan
     else:
         lan = c["nav_url_lan"] or netutil.template_url(c["primary_port"], "http")
         wan = c["nav_url_wan"]

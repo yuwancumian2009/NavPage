@@ -1492,6 +1492,9 @@
       令牌只显示一次：换机器或重装时点「轮换令牌」重新生成。
     </div>
     <pre class="np-cmd">{{ agentCmd }}</pre>
+    <div class="np-muted" style="margin-top:8px">
+      面板和对端不在同一台机器、命令里又要填 127.0.0.1 时，给 docker run 加 <code>--network host</code>。
+    </div>
     <template #footer>
       <el-button size="small" @click="tokenDlg = false">关闭</el-button>
       <el-button size="small" @click="copyAgentCmd">复制命令</el-button>

@@ -10,6 +10,7 @@ import urllib.parse
 import time
 import json
 import hashlib
+import secrets
 import warnings
 import concurrent.futures
 from urllib.parse import quote
@@ -1665,70 +1666,298 @@ def auto_category(cand):
     return ""
 
 
-def _candidate(c, s):
+def _candidate(c, s, src=None):
     """生成候选条目。
 
-    内网地址写成 `{scheme}://{host}:{port}` 模板：容器里拿不到 NAS 的局域网 IP，
-    模板在请求时按浏览器实际访问的 Host 头展开，内网/公网访问各自得到正确链接。
-
-    没有端口映射的容器拿不到端口，模板为空 —— 卡片会显示「未设置地址」，
-    用户在面板里手填即可（硬凑一个不带端口的地址只会指向导航页本身，更误导）。
+    本机（Docker socket）继续用 `{scheme}://{host}:{port}` 模板：容器里拿不到
+    局域网 IP，模板在请求时按浏览器 Host 头展开。
+    远端采集源不适用这个前提（端口开在另一台机器上），改用该源配置的地址前缀
+    拼绝对地址；容器自带 nav.url.lan 标签时以标签为准。
     """
-    lan = c["nav_url_lan"] or netutil.template_url(c["primary_port"], "http")
-    wan = c["nav_url_wan"]
-    # 没端口时不要用 host_wan 硬拼，否则会得到 https://<域名>（指向导航页本身）
-    if not wan and s.get("host_wan") and c["primary_port"]:
-        wan = netutil.build_url(s["host_wan"], c["primary_port"], s.get("wan_scheme") or "https")
+    src = src or LOCAL_SOURCE
+    if (src.get("kind") or "local") == "agent":
+        prefix = (src.get("prefix") or "").strip()
+        port = c.get("primary_port")
+        lan = c.get("nav_url_lan") or ""
+        if not lan and prefix and port:
+            lan = (prefix if prefix.endswith(":") else prefix.rstrip("/") + ":") + str(port)
+        wan = c.get("nav_url_wan") or ""
+    else:
+        lan = c["nav_url_lan"] or netutil.template_url(c["primary_port"], "http")
+        wan = c["nav_url_wan"]
+        # 没端口时不要用 host_wan 硬拼，否则会得到 https://<域名>（指向导航页本身）
+        if not wan and s.get("host_wan") and c["primary_port"]:
+            wan = netutil.build_url(s["host_wan"], c["primary_port"], s.get("wan_scheme") or "https")
     return {
-        "name": c["nav_name"] or c["name"],
+        "name": c.get("nav_name") or c["name"],
         "url_lan": lan,
         "url_wan": wan,
-        "icon": c["nav_icon"],
-        "category": c["nav_category"] or "",
-        "auto_category": c["nav_category"] or auto_category({
-            "name": c["nav_name"] or c["name"], "container_name": c["name"],
-            "container_image": c["image"]}),
+        "icon": c.get("nav_icon") or "",
+        "category": c.get("nav_category") or "",
+        "auto_category": c.get("nav_category") or auto_category({
+            "name": c.get("nav_name") or c["name"], "container_name": c["name"],
+            "container_image": c.get("image") or ""}),
         "container_name": c["name"],
-        "container_image": c["image"],
-        "container_port": c["primary_port"],
+        "container_image": c.get("image") or "",
+        "container_port": c.get("primary_port"),
+        "docker_host": str(src.get("id") or ""),
+        "source_name": src.get("name") or "本机",
     }
 
 
+# ---------------------------------------------------------------- 采集源
+# 本机（Docker socket）是隐式的：items.docker_host='' 即代表本机。
+# 远端主机跑一个 agent 容器，每 5 分钟把容器清单 POST 到 /api/agent/inventory。
+LOCAL_SOURCE = {"id": "", "name": "本机", "kind": "local", "prefix": "", "enabled": True,
+                "auto_import": False, "last_seen": 0, "last_error": "", "host_name": ""}
+
+
+def _source_by_id(sid):
+    sid = str(sid or "")
+    if sid == "":
+        return dict(LOCAL_SOURCE)
+    return db.get_source(sid)
+
+
+def _sources():
+    return [dict(LOCAL_SOURCE)] + db.list_sources(only_enabled=False)
+
+
+def _source_view(src, now=None):
+    """给前端看的采集源（永远不含令牌哈希），带在线状态和「多久前上报」。"""
+    now = now or int(time.time())
+    d = {k: v for k, v in src.items() if k not in ("token_hash", "containers", "token")}
+    d["container_count"] = len(src.get("containers") or []) if src.get("kind") == "agent" else 0
+    d["id"] = "" if src.get("kind") == "local" else str(src.get("id") or "")
+    last = int(src.get("last_seen") or 0)
+    # 5 分钟一次上报，给到 15 分钟容差；本机永远算在线（读不到 Docker 会单独报错）
+    d["online"] = (src.get("kind") == "local") or bool(last and now - last < 900)
+    d["ago"] = (now - last) if last else None
+    return d
+
+
+def _collect(s=None, ok_hosts=None):
+    """把所有采集源的容器摊平成 [(source, container)]。
+
+    本机实时读 Docker；远端用最近一次上报的快照（离线也能看历史清单）。
+    ok_hosts 用来判断「这次谁真的报了数据」，避免把离线源的卡片误标成已消失。
+    """
+    s = s or db.get_settings()
+    out, errors = [], []
+    local_ok = False
+    try:
+        ok, info = dockerapi.available()
+        if ok:
+            local_ok = True
+            for c in dockerapi.containers():
+                out.append((dict(LOCAL_SOURCE), c))
+        else:
+            errors.append({"source": "本机", "error": info.get("error") or "Docker 不可用"})
+    except Exception as e:
+        errors.append({"source": "本机", "error": f"{type(e).__name__}: {e}"})
+    if ok_hosts is not None and local_ok:
+        ok_hosts.add("")
+    for src in db.list_sources(only_enabled=True):
+        for c in (src.get("containers") or []):
+            out.append((src, c))
+        if ok_hosts is not None:
+            ok_hosts.add(str(src["id"]))
+    return out, errors
+
+
+def _create_from_candidate(cand, host, cat_name=None):
+    return db.create_item({
+        "name": cand["name"], "url_lan": cand["url_lan"], "url_wan": cand["url_wan"],
+        "icon": cand["icon"], "source": "docker",
+        "category_id": db.get_or_create_category(cat_name) if cat_name else None,
+        "container_name": cand["container_name"], "container_image": cand["container_image"],
+        "container_port": cand["container_port"], "docker_host": host,
+    })
+
+
+# ---------------------------------------------------------------- Agent 上报
+_AGENT_HITS = {}
+_AGENT_LOCK = threading.Lock()
+AGENT_MAX_BODY = 512 * 1024
+AGENT_RATE = (30, 60)  # 每令牌每 60 秒最多 30 次
+
+
+def _agent_rate_ok(sid):
+    now = time.time()
+    with _AGENT_LOCK:
+        q = [t for t in _AGENT_HITS.get(sid, []) if now - t < AGENT_RATE[1]]
+        if len(q) >= AGENT_RATE[0]:
+            _AGENT_HITS[sid] = q
+            return False
+        q.append(now)
+        _AGENT_HITS[sid] = q
+        return True
+
+
+def _agent_auto_import(src, s):
+    """把上报的容器写进卡片表：新容器自动建卡，已存在的刷新镜像/端口并清 missing。"""
+    host = str(src["id"])
+    imported = updated = 0
+    live = set()
+    for c in (src.get("containers") or []):
+        name = (c.get("name") or "").strip()
+        if not name:
+            continue
+        live.add(name)
+        if not _eligible(c, s):
+            continue
+        cand = _candidate(c, s, src)
+        old = db.find_item_by_container(name, host)
+        if old:
+            patch = {"missing": False}
+            if c.get("image") and c["image"] != old.get("container_image"):
+                patch["container_image"] = c["image"]
+            if c.get("primary_port") and int(c["primary_port"]) != int(old.get("container_port") or 0):
+                patch["container_port"] = int(c["primary_port"])
+            # 地址还是空/模板的，顺手补成该源的绝对地址
+            old_lan = old.get("url_lan") or ""
+            if cand["url_lan"] and (not old_lan or "{host}" in old_lan):
+                patch["url_lan"] = cand["url_lan"]
+            db.update_item(old["id"], patch)
+            updated += 1
+            continue
+        if not src.get("auto_import"):
+            continue
+        _create_from_candidate(cand, host, cand["auto_category"])
+        imported += 1
+    missing = db.mark_missing(live, host)
+    return {"imported": imported, "updated": updated, "missing": missing, "live": len(live)}
+
+
+@app.post("/api/agent/inventory")
+async def agent_inventory(request: Request):
+    raw = await request.body()
+    if len(raw) > AGENT_MAX_BODY:
+        return _err("上报内容过大（>512KB）", 413)
+    token = (request.headers.get("x-agent-token") or "").strip()
+    if not token:
+        auth = request.headers.get("authorization") or ""
+        if auth.lower().startswith("bearer "):
+            token = auth[7:].strip()
+    if not token:
+        return _err("缺少令牌", 401)
+    src = db.source_by_token_hash(hashlib.sha256(token.encode()).hexdigest())
+    if not src:
+        return _err("令牌无效或采集源已停用", 401)
+    if not _agent_rate_ok(src["id"]):
+        return _err("上报太频繁，请稍后重试", 429)
+    try:
+        payload = json.loads(raw or b"{}")
+    except Exception:
+        return _err("JSON 解析失败")
+    cs = payload.get("containers")
+    if not isinstance(cs, list):
+        return _err("containers 必须是数组")
+    cs = [c for c in cs if isinstance(c, dict) and c.get("name")][:500]
+    db.record_inventory(src["id"], cs, str(payload.get("host_name") or "")[:64])
+    src = db.get_source(src["id"]) or src
+    try:
+        res = _agent_auto_import(src, db.get_settings())
+    except Exception as e:
+        db.set_source_error(src["id"], f"{type(e).__name__}: {e}")
+        res = {"imported": 0, "updated": 0, "missing": 0, "live": 0}
+    return {"ok": True, "server_time": int(time.time()), **res}
+
+
+# ---------------------------------------------------------------- 采集源管理
+@app.get("/api/admin/sources")
+def sources_list(_=Depends(require_admin)):
+    now = int(time.time())
+    return {"ok": True, "sources": [_source_view(x, now) for x in _sources()]}
+
+
+class SourceBody(BaseModel):
+    name: str = ""
+    prefix: str = ""
+    auto_import: bool = True
+    enabled: bool = True
+
+
+@app.post("/api/admin/sources")
+def sources_create(body: SourceBody, _=Depends(require_admin)):
+    name = (body.name or "").strip()
+    if not name:
+        return _err("名称不能为空")
+    sid = db.create_source(name, body.prefix, body.auto_import)
+    token = "npk_" + secrets.token_hex(16)
+    db.set_source_token(sid, hashlib.sha256(token.encode()).hexdigest(), token[-6:])
+    return {"ok": True, "id": sid, "token": token}
+
+
+@app.patch("/api/admin/sources/{sid}")
+def sources_update(sid: str, body: SourceBody, _=Depends(require_admin)):
+    if not db.get_source(sid):
+        return _err("采集源不存在", 404)
+    db.update_source(sid, body.dict(exclude_unset=True))
+    return {"ok": True}
+
+
+@app.post("/api/admin/sources/{sid}/rotate")
+def sources_rotate(sid: str, _=Depends(require_admin)):
+    if not db.get_source(sid):
+        return _err("采集源不存在", 404)
+    token = "npk_" + secrets.token_hex(16)
+    db.set_source_token(sid, hashlib.sha256(token.encode()).hexdigest(), token[-6:])
+    return {"ok": True, "token": token}
+
+
+@app.delete("/api/admin/sources/{sid}")
+def sources_delete(sid: str, _=Depends(require_admin)):
+    if not db.get_source(sid):
+        return _err("采集源不存在", 404)
+    db.delete_source(sid)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- 扫描 / 导入
 @app.get("/api/admin/scan")
 def scan(_=Depends(require_admin)):
     s = db.get_settings()
     ok, info = dockerapi.available()
-    if not ok:
-        return {"ok": False, "error": "Docker 不可用", "docker": info, "new": [], "existing": [], "missing": []}
-    try:
-        cs = dockerapi.containers()
-    except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}", "new": [], "existing": [], "missing": []}
-
-    known = {i["container_name"] for i in db.list_items() if i.get("container_name")}
-    new, existing, skipped = [], [], []
-    for c in cs:
+    ok_hosts = set()
+    pairs, errors = _collect(s, ok_hosts)
+    known = {(str(i.get("docker_host") or ""), i.get("container_name") or "")
+             for i in db.list_items() if i.get("container_name")}
+    live, new, existing, skipped = set(), [], [], []
+    for src, c in pairs:
+        key = (str(src.get("id") or ""), c.get("name") or "")
+        live.add(key)
         if not _eligible(c, s):
-            skipped.append({"name": c["name"], "reason": _skip_reason(c, s)})
+            skipped.append({"name": c.get("name"), "container_name": key[1],
+                            "source_name": src.get("name") or "本机",
+                            "reason": _skip_reason(c, s)})
             continue
-        cand = _candidate(c, s)
-        cand.update({"id": c["id"], "image": c["image"], "status": c["status"],
-                     "public_ports": c["public_ports"], "project": c["compose_project"],
-                     "no_port": not c["primary_port"]})
-        (existing if c["name"] in known else new).append(cand)
+        cand = _candidate(c, s, src)
+        cand.update({"id": c.get("id", ""), "image": c.get("image", ""),
+                     "status": c.get("status", ""), "public_ports": c.get("public_ports") or [],
+                     "project": c.get("compose_project", ""),
+                     "no_port": not c.get("primary_port"), "state": c.get("state", "")})
+        (existing if key in known else new).append(cand)
 
     missing = []
     for i in db.list_items():
-        if i.get("source") == "docker" and i.get("container_name") and \
-                i["container_name"] not in {c["name"] for c in cs}:
-            missing.append({"name": i["name"], "container_name": i["container_name"], "id": i["id"]})
+        if i.get("source") != "docker" or not i.get("container_name"):
+            continue
+        host = str(i.get("docker_host") or "")
+        if host in ok_hosts and (host, i["container_name"]) not in live:
+            missing.append({"name": i["name"], "container_name": i["container_name"],
+                            "id": i["id"], "docker_host": host,
+                            "source_name": (_source_by_id(host) or {}).get("name") or "本机"})
 
     return {"ok": True, "docker": info, "new": new, "existing": existing,
-            "missing": missing, "skipped": skipped, "total": len(cs)}
+            "missing": missing, "skipped": skipped, "total": len(live),
+            "errors": errors, "sources": [_source_view(x) for x in _sources()]}
 
 
 class ImportBody(BaseModel):
-    names: list
+    names: list = []
+    items: list = []
+    host: str = ""
     category_from_project: bool = True
 
 
@@ -1736,22 +1965,28 @@ class ImportBody(BaseModel):
 def scan_import(request: Request, body: ImportBody, _=Depends(require_admin)):
     s = db.get_settings()
     ctx = netutil.host_context(request, s)
-    try:
-        cs = {c["name"]: c for c in dockerapi.containers()}
-    except Exception as e:
-        return _err(f"扫描失败: {e}", 502)
+    pairs, _errors = _collect(s)
+    idx = {(str(src.get("id") or ""), c.get("name") or ""): (src, c) for src, c in pairs}
+    wanted = []
+    for it in (body.items or []):
+        if isinstance(it, dict) and it.get("name"):
+            wanted.append((str(it.get("host") or ""), it["name"]))
+    if not wanted:
+        wanted = [(str(body.host or ""), n) for n in (body.names or [])]
     added, updated = 0, 0
-    for name in body.names or []:
-        c = cs.get(name)
-        if not c or not _eligible(c, s):
+    for host, name in wanted:
+        pair = idx.get((host, name))
+        if not pair:
             continue
-        cand = _candidate(c, s)
+        src, c = pair
+        if not _eligible(c, s):
+            continue
+        cand = _candidate(c, s, src)
         cat_name = cand["auto_category"] if body.category_from_project else cand["category"]
-        old = db.find_item_by_container(name)
+        old = db.find_item_by_container(name, host)
         if old:
             # 模板地址可以随端口变化刷新；用户手填的绝对地址不动
             patch = {"missing": False}
-            # 用户自己分过的类不动；从没分过类的（早期导入的老卡片）按服务类型补一次
             if cat_name and not old.get("category_id"):
                 patch["category_id"] = db.get_or_create_category(cat_name)
             if cand["url_lan"] and (not old.get("url_lan") or "{host}" in (old.get("url_lan") or "")):
@@ -1762,22 +1997,13 @@ def scan_import(request: Request, body: ImportBody, _=Depends(require_admin)):
             updated += 1
         else:
             icon = cand["icon"] or ""
-            if not icon:
+            # 远端主机取不到 favicon（网络不一定通），只在图标标签缺失时给本机试
+            if not icon and host == "":
                 f, _why = icons.fetch_favicon(_fetchable_url(cand["url_lan"], ctx))
                 icon = f or ""
-            db.create_item({
-                "name": cand["name"], "url_lan": cand["url_lan"], "url_wan": cand["url_wan"],
-                "icon": icon, "source": "docker",
-                "category_id": db.get_or_create_category(cat_name) if cat_name else None,
-                "container_name": cand["container_name"], "container_image": cand["container_image"],
-                "container_port": cand["container_port"],
-            })
+            cand["icon"] = icon
+            _create_from_candidate(cand, host, cat_name)
             added += 1
-    try:
-        dockerapi_names = list(cs.keys())
-        db.mark_missing(dockerapi_names)
-    except Exception:
-        pass
     return {"ok": True, "added": added, "updated": updated}
 
 
@@ -1785,21 +2011,21 @@ def scan_import(request: Request, body: ImportBody, _=Depends(require_admin)):
 def scan_sync(request: Request, _=Depends(require_admin)):
     s = db.get_settings()
     ctx = netutil.host_context(request, s)
-    ok, info = dockerapi.available()
-    if not ok:
-        return _err("Docker 不可用: " + json.dumps(info, ensure_ascii=False), 502)
-    cs = dockerapi.containers()
-    added = updated = 0
-    for c in cs:
+    pairs, _errors = _collect(s)
+    added, updated = 0, 0
+    names_by_host = {}
+    for src, c in pairs:
+        host = str(src.get("id") or "")
+        names_by_host.setdefault(host, set()).add(c.get("name"))
         if not _eligible(c, s):
             continue
-        cand = _candidate(c, s)
-        old = db.find_item_by_container(c["name"])
+        cand = _candidate(c, s, src)
         cat_name = cand["auto_category"]
+        old = db.find_item_by_container(c["name"], host)
         if old:
             # 保留用户改过的名称/图标/描述；只刷新模板地址与存在性
-            patch = {"missing": False, "container_image": c["image"],
-                     "container_port": c["primary_port"]}
+            patch = {"missing": False, "container_image": c.get("image") or "",
+                     "container_port": c.get("primary_port") or 0}
             if cat_name and not old.get("category_id"):
                 patch["category_id"] = db.get_or_create_category(cat_name)
             old_lan = old.get("url_lan") or ""
@@ -1810,19 +2036,15 @@ def scan_sync(request: Request, _=Depends(require_admin)):
             db.update_item(old["id"], patch)
             updated += 1
         else:
-            cat_id = db.get_or_create_category(cat_name) if cat_name else None
             icon = cand["icon"] or ""
-            if not icon:
+            if not icon and host == "":
                 f, _why = icons.fetch_favicon(_fetchable_url(cand["url_lan"], ctx))
                 icon = f or ""
-            db.create_item({
-                "name": cand["name"], "url_lan": cand["url_lan"], "url_wan": cand["url_wan"],
-                "icon": icon, "category_id": cat_id, "source": "docker",
-                "container_name": c["name"], "container_image": c["image"],
-                "container_port": c["primary_port"],
-            })
+            cand["icon"] = icon
+            _create_from_candidate(cand, host, cat_name)
             added += 1
-    db.mark_missing([c["name"] for c in cs])
+    for host, names in names_by_host.items():
+        db.mark_missing(names, host)
     return {"ok": True, "added": added, "updated": updated}
 
 

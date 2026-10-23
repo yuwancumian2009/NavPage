@@ -97,6 +97,23 @@ mihomo / Clash（连接数、上下行速率、机场数）、自定义 JSON。�
 **网络与安全**（密码、内网判定、反代）、**镜像**（检查更新 / 更新 / 定时任务 / 清理）、
 **Compose**（改 YAML 并重构）。
 
+### 多主机：采集源（远端容器自动建卡）
+
+「扫描导入 → 采集源」可以加远端主机：在对端跑一个 agent 容器，它只读挂自己的
+docker.sock、每 5 分钟把容器清单 POST 给面板（**纯出站，对端不用开端口、不用公网 IP**），
+面板按该源配置的「地址前缀 + 容器端口」生成卡片地址，新容器默认自动建卡（可关）。
+
+```bash
+# 面板里点「+ 添加远端主机」会直接给出带令牌的完整命令
+docker run -d --name navpage-agent --restart unless-stopped \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -e PANEL_URL=http://<面板地址> -e AGENT_TOKEN=npk_xxx \
+  -e INTERVAL=300 yuwancumian2009/navpage:latest python -m app.agent
+```
+
+没 docker 的主机也能裸跑：把 `app/agent.py` 拷过去 `PANEL_URL=... AGENT_TOKEN=... python3 agent.py`
+（零依赖，只用标准库）。令牌只在创建时显示一次，可随时轮换 / 停用。
+
 ### Compose 管理
 
 把存放 compose 的目录挂进容器（**容器内路径必须和宿主机一致**，否则 YAML 里的

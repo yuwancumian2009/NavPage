@@ -133,13 +133,30 @@ CREATE TABLE IF NOT EXISTS items (
   container_name TEXT DEFAULT '',
   container_image TEXT DEFAULT '',
   container_port INTEGER DEFAULT 0,
+  docker_host TEXT DEFAULT '',
   missing INTEGER DEFAULT 0,
   widget TEXT DEFAULT '',
   created_at INTEGER DEFAULT 0,
   updated_at INTEGER DEFAULT 0
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_items_container
-  ON items(container_name) WHERE container_name <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_items_container_host
+  ON items(docker_host, container_name) WHERE container_name <> '';
+CREATE TABLE IF NOT EXISTS docker_sources (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  kind TEXT DEFAULT 'agent',
+  prefix TEXT DEFAULT '',
+  token_hash TEXT DEFAULT '',
+  token_hint TEXT DEFAULT '',
+  enabled INTEGER DEFAULT 1,
+  auto_import INTEGER DEFAULT 1,
+  containers TEXT DEFAULT '[]',
+  host_name TEXT DEFAULT '',
+  last_seen INTEGER DEFAULT 0,
+  last_error TEXT DEFAULT '',
+  created_at INTEGER DEFAULT 0,
+  updated_at INTEGER DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
@@ -361,13 +378,13 @@ def delete_categories(cids):
 ITEM_FIELDS = (
     "name", "description", "url_lan", "url_wan", "icon", "category_id",
     "sort", "hidden", "source", "container_name", "container_image",
-    "container_port", "missing", "widget", "url_visible", "card_size",
+    "container_port", "docker_host", "missing", "widget", "url_visible", "card_size",
 )
 
 # 后加的列：老库启动时自动补齐，避免用户手动迁移
 MIGRATIONS = {
     "items": [("widget", "TEXT DEFAULT ''"), ("url_visible", "INTEGER DEFAULT -1"),
-              ("card_size", "TEXT DEFAULT ''")],
+              ("card_size", "TEXT DEFAULT ''"), ("docker_host", "TEXT DEFAULT ''")],
     "categories": [("card_size", "TEXT DEFAULT ''")],
 }
 # card_size: '' = 跟随上级（条目→分类→全局），lg = 大卡，xs = 小卡（纯图标方形）
@@ -407,6 +424,14 @@ def _migrate(c):
     if not c.execute("SELECT 1 FROM settings WHERE key='migrated_cache_1h'").fetchone():
         c.execute("UPDATE settings SET value='3600' WHERE key='image_check_cache' AND value='1800'")
         c.execute("INSERT INTO settings(key, value) VALUES('migrated_cache_1h', '1')")
+    # 2026-10-22：多采集源（本机 + 远端 agent）后，容器名会在不同主机重复，
+    # 唯一索引必须从 container_name 单列换成 (docker_host, container_name)。
+    try:
+        c.execute("DROP INDEX IF EXISTS idx_items_container")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_items_container_host "
+                  "ON items(docker_host, container_name) WHERE container_name <> ''")
+    except Exception:
+        pass
     c.commit()
 
 
@@ -462,10 +487,12 @@ def get_item(iid):
     return _row_to_item(r) if r else None
 
 
-def find_item_by_container(name):
+def find_item_by_container(name, host=""):
+    """按 (采集源, 容器名) 找卡片。host='' 是本机，远端采集源传 str(source_id)。"""
     c = conn()
     with _lock:
-        r = c.execute("SELECT * FROM items WHERE container_name=?", (name,)).fetchone()
+        r = c.execute("SELECT * FROM items WHERE container_name=? AND COALESCE(docker_host,'')=?",
+                      (name, str(host or ""))).fetchone()
     return _row_to_item(r) if r else None
 
 
@@ -481,6 +508,7 @@ def create_item(data):
     d["container_name"] = d.get("container_name") or ""
     d["container_image"] = d.get("container_image") or ""
     d["container_port"] = int(d.get("container_port") or 0)
+    d["docker_host"] = str(d.get("docker_host") or "")
     d["hidden"] = 1 if d.get("hidden") else 0
     d["missing"] = 1 if d.get("missing") else 0
     d["url_visible"] = _enc_tri(d.get("url_visible"))
@@ -575,20 +603,27 @@ def reorder_categories(order):
         c.commit()
 
 
-def mark_missing(container_names):
-    """把不在 container_names 里的 docker 来源条目标记 missing=1。"""
+def mark_missing(container_names, host=""):
+    """把该采集源里不在 container_names 的 docker 卡片标记 missing=1。
+
+    host='' 是本机；远端采集源传 str(source_id)，只影响该来源的卡片，
+    不会把别的主机上同名容器误标成「已消失」。
+    """
     names = set(container_names)
     c = conn()
     with _lock:
         rows = c.execute(
-            "SELECT id, container_name FROM items WHERE source='docker' AND container_name<>''"
+            "SELECT id, container_name FROM items WHERE source='docker' AND container_name<>'' "
+            "AND COALESCE(docker_host,'')=?", (str(host or ""),)
         ).fetchall()
+        changed = 0
         for r in rows:
-            c.execute(
-                "UPDATE items SET missing=? WHERE id=?",
-                (0 if r["container_name"] in names else 1, r["id"]),
-            )
+            want = 0 if r["container_name"] in names else 1
+            if want:
+                changed += 1
+            c.execute("UPDATE items SET missing=? WHERE id=?", (want, r["id"]))
         c.commit()
+        return changed
 
 
 # ---------------------------------------------------------------- auth
@@ -632,3 +667,114 @@ def verify_token(token):
         return False
     good = hmac.new(secret.encode(), exp_s.encode(), hashlib.sha256).hexdigest()
     return hmac.compare_digest(good, sig)
+
+# ---------------------------------------------------------------- 采集源
+# 本机（Docker socket）是隐式的，不在表里：items.docker_host='' 就代表本机。
+# 这里只存远端 agent 采集源。
+
+SOURCE_FIELDS = ("name", "kind", "prefix", "enabled", "auto_import")
+
+
+def list_sources(only_enabled=False):
+    c = conn()
+    with _lock:
+        sql = "SELECT * FROM docker_sources"
+        if only_enabled:
+            sql += " WHERE enabled=1"
+        rows = c.execute(sql + " ORDER BY id").fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["enabled"] = bool(d.get("enabled"))
+        d["auto_import"] = bool(d.get("auto_import"))
+        d["containers"] = json.loads(d.get("containers") or "[]")
+        d["token"] = ""  # 明文令牌只在校验时用，永不回传
+        out.append(d)
+    return out
+
+
+def get_source(sid):
+    for x in list_sources():
+        if str(x["id"]) == str(sid):
+            return x
+    return None
+
+
+def create_source(name, prefix="", auto_import=True, kind="agent"):
+    now = int(time.time())
+    c = conn()
+    with _lock:
+        cur = c.execute(
+            "INSERT INTO docker_sources(name, kind, prefix, enabled, auto_import, containers,"
+            " created_at, updated_at) VALUES(?,?,?,1,?,'[]',?,?)",
+            (name, kind, prefix or "", 1 if auto_import else 0, now, now))
+        c.commit()
+        return cur.lastrowid
+
+
+def update_source(sid, patch):
+    allow = {"name", "prefix", "enabled", "auto_import"}
+    sets, vals = [], []
+    for k, v in (patch or {}).items():
+        if k not in allow:
+            continue
+        if k in ("enabled", "auto_import"):
+            v = 1 if v else 0
+        sets.append(f"{k}=?")
+        vals.append(v)
+    if not sets:
+        return
+    sets.append("updated_at=?")
+    vals.extend([int(time.time()), sid])
+    c = conn()
+    with _lock:
+        c.execute(f"UPDATE docker_sources SET {', '.join(sets)} WHERE id=?", vals)
+        c.commit()
+
+
+def delete_source(sid):
+    """删源：卡片保留，转成手动卡片。
+
+    docker_host 保持原值不动 —— 改成 ''（本机）会和已有的同名本机卡片撞
+    (docker_host, container_name) 唯一索引；留着它，卡片只是不再参与任何扫描
+    （只有 enabled 的采集源会进 _collect），也不会被标成「已消失」。
+    """
+    c = conn()
+    with _lock:
+        c.execute("UPDATE items SET source='manual', missing=0 WHERE docker_host=?",
+                  (str(sid),))
+        c.execute("DELETE FROM docker_sources WHERE id=?", (sid,))
+        c.commit()
+
+
+def set_source_token(sid, token_hash, hint=""):
+    c = conn()
+    with _lock:
+        c.execute("UPDATE docker_sources SET token_hash=?, token_hint=?, updated_at=? WHERE id=?",
+                  (token_hash, hint, int(time.time()), sid))
+        c.commit()
+
+
+def source_by_token_hash(h):
+    c = conn()
+    with _lock:
+        r = c.execute("SELECT * FROM docker_sources WHERE token_hash=? AND enabled=1",
+                      (h,)).fetchone()
+    return dict(r) if r else None
+
+
+def record_inventory(sid, containers, host_name=""):
+    c = conn()
+    with _lock:
+        c.execute("UPDATE docker_sources SET containers=?, host_name=?, last_seen=?, last_error='',"
+                  " updated_at=? WHERE id=?",
+                  (json.dumps(containers, ensure_ascii=False), host_name or "",
+                   int(time.time()), int(time.time()), sid))
+        c.commit()
+
+
+def set_source_error(sid, err):
+    c = conn()
+    with _lock:
+        c.execute("UPDATE docker_sources SET last_error=? WHERE id=?", ((err or "")[:300], sid))
+        c.commit()

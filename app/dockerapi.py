@@ -20,36 +20,38 @@ WEB_PRIVATE = {80, 443, 3000, 5000, 5001, 8000, 8001, 8080, 8081, 8088, 8090,
                8096, 8443, 8888, 9000, 9090, 25600, 32400}
 
 
-def _client():
-    if DOCKER_HOST.startswith("unix://"):
-        path = DOCKER_HOST[len("unix://"):]
+def _client(host=None):
+    """host 不传就用进程的 DOCKER_HOST；agent 端可以显式指定任意 socket/URL。"""
+    H = host or DOCKER_HOST
+    if H.startswith("unix://"):
+        path = H[len("unix://"):]
         transport = httpx.HTTPTransport(uds=path)
         return httpx.Client(transport=transport, base_url="http://docker", timeout=TIMEOUT)
-    if DOCKER_HOST.startswith("tcp://"):
-        return httpx.Client(base_url="http://" + DOCKER_HOST[len("tcp://"):], timeout=TIMEOUT)
-    if DOCKER_HOST.startswith("http"):
-        return httpx.Client(base_url=DOCKER_HOST, timeout=TIMEOUT)
-    raise RuntimeError(f"无法识别的 DOCKER_HOST: {DOCKER_HOST}")
+    if H.startswith("tcp://"):
+        return httpx.Client(base_url="http://" + H[len("tcp://"):], timeout=TIMEOUT)
+    if H.startswith("http"):
+        return httpx.Client(base_url=H, timeout=TIMEOUT)
+    raise RuntimeError(f"无法识别的 DOCKER_HOST: {H}")
 
 
-def _get(path):
-    with _client() as c:
+def _get(path, host=None):
+    with _client(host) as c:
         r = c.get(path)
         r.raise_for_status()
         return r.json()
 
 
-def available():
+def available(host=None):
     """返回 (ok, detail)"""
     try:
-        v = _get("/version")
+        v = _get("/version", host)
         return True, {
-            "host": DOCKER_HOST,
+            "host": host or DOCKER_HOST,
             "version": v.get("Version"),
             "api_version": v.get("ApiVersion"),
         }
     except Exception as e:
-        return False, {"host": DOCKER_HOST, "error": f"{type(e).__name__}: {e}"}
+        return False, {"host": host or DOCKER_HOST, "error": f"{type(e).__name__}: {e}"}
 
 
 def _post(path, params=None, json_body=None, timeout=None):
@@ -750,9 +752,18 @@ def _create_body(old, image):
     }
 
 
-def containers(all_containers=False):
+def raw_containers(all_containers=False, host=None):
+    """原始 /containers/json 结果（agent 端上报用）。"""
+    return _get(f"/containers/json?all={'true' if all_containers else 'false'}", host)
+
+
+def containers(all_containers=False, host=None):
     """返回规范化后的容器列表。"""
-    raw = _get(f"/containers/json?all={'true' if all_containers else 'false'}")
+    return normalize_containers(raw_containers(all_containers, host))
+
+
+def normalize_containers(raw):
+    """把 Docker API 的容器 JSON 规范化成面板内部结构（含 nav.* 标签解析）。"""
     out = []
     for c in raw:
         names = [n.lstrip("/") for n in (c.get("Names") or [])]

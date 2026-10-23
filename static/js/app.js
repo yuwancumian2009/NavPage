@@ -38,6 +38,13 @@
       const autocatting = ref(false);
       const importing = ref(false);
       const selNew = ref([]);
+      const sources = ref([]);
+      const sourceDlg = ref(false);
+      const sourceForm = ref({});
+      const sourceSaving = ref(false);
+      const tokenDlg = ref(false);
+      const agentCmd = ref("");
+      const tokenSrcId = ref('');
       // 外网地址导入（粘贴 Lucky 规则 → 解析 → 匹配卡片 → 写 url_wan）
       const wanText = ref('');
       const wanRows = ref([]);
@@ -1296,19 +1303,26 @@
         try {
           const r = await api.get('/api/admin/scan');
           scanResult.value = r.data;
+          if (r.data.sources) sources.value = r.data.sources;
           if (!r.data.ok) ElMessage.error(r.data.error || '扫描失败');
+          (r.data.errors || []).forEach(function (x) { ElMessage.warning(x.source + '：' + x.error); });
           selNew.value = [];
         } catch (e) { apiErr(e); }
         scanning.value = false;
       }
+      function keyOf(c) { return (c.docker_host || '') + '|' + c.container_name; }
       function selectAllNew() {
-        selNew.value = (scanResult.value ? scanResult.value.new : []).map(function (c) { return c.container_name; });
+        selNew.value = (scanResult.value ? scanResult.value.new : []).map(keyOf);
       }
       async function importSelected() {
         if (!selNew.value.length) return;
         importing.value = true;
         try {
-          const r = await api.post('/api/admin/scan/import', { names: selNew.value, category_from_project: true });
+          const items = selNew.value.map(function (k) {
+            const i = k.indexOf('|');
+            return { host: k.slice(0, i), name: k.slice(i + 1) };
+          });
+          const r = await api.post('/api/admin/scan/import', { items: items, category_from_project: true });
           ElMessage.success('导入完成：新增 ' + r.data.added + '，更新 ' + r.data.updated);
           await reload(); await loadBootstrap(); await doScan();
         } catch (e) { apiErr(e); }
@@ -1347,6 +1361,105 @@
         } catch (e) { apiErr(e); }
         wanApplying.value = false;
       }
+      /* ---------------- 采集源（本机 + 远端 Agent） ---------------- */
+      function agoText(sec) {
+        if (sec === null || sec === undefined) return '';
+        sec = Number(sec) || 0;
+        if (sec < 90) return sec + ' 秒前';
+        if (sec < 5400) return Math.round(sec / 60) + ' 分钟前';
+        if (sec < 172800) return Math.round(sec / 3600) + ' 小时前';
+        return Math.round(sec / 86400) + ' 天前';
+      }
+      async function loadSources() {
+        try {
+          const r = await api.get('/api/admin/sources');
+          sources.value = r.data.sources || [];
+        } catch (e) { /* 未登录时静默 */ }
+      }
+      function openSourceDlg() {
+        sourceForm.value = { id: '', name: '', prefix: '', auto_import: true, enabled: true };
+        sourceDlg.value = true;
+      }
+      function editSource(src) {
+        sourceForm.value = { id: src.id, name: src.name, prefix: src.prefix || '',
+                             auto_import: !!src.auto_import, enabled: !!src.enabled };
+        sourceDlg.value = true;
+      }
+      function cmdFor(token) {
+        // 用数组拼，避免 JS 字符串里写续行反斜杠（很容易多写一个变成 \\）
+        return [
+          'docker run -d --name navpage-agent --restart unless-stopped \\',
+          '  -v /var/run/docker.sock:/var/run/docker.sock:ro \\',
+          '  -e PANEL_URL=' + location.origin + ' \\',
+          '  -e AGENT_TOKEN=' + token + ' \\',
+          '  -e INTERVAL=300 \\',
+          '  yuwancumian2009/navpage:latest python -m app.agent'
+        ].join('\n');
+      }
+      async function saveSource() {
+        const f = sourceForm.value;
+        if (!String(f.name || '').trim()) { ElMessage.warning('填一个名称'); return; }
+        sourceSaving.value = true;
+        try {
+          if (f.id) {
+            await api.patch('/api/admin/sources/' + f.id, {
+              name: f.name, prefix: f.prefix, auto_import: !!f.auto_import, enabled: !!f.enabled });
+            ElMessage.success('已保存');
+          } else {
+            const r = await api.post('/api/admin/sources', {
+              name: f.name, prefix: f.prefix, auto_import: !!f.auto_import });
+            agentCmd.value = cmdFor(r.data.token);
+            tokenSrcId.value = r.data.id;
+            tokenDlg.value = true;
+          }
+          sourceDlg.value = false;
+          await loadSources();
+          if (scanResult.value) await doScan();
+        } catch (e) { apiErr(e); }
+        sourceSaving.value = false;
+      }
+      async function toggleSource(src) {
+        try {
+          await api.patch('/api/admin/sources/' + src.id, { enabled: !src.enabled });
+          await loadSources(); await doScan();
+        } catch (e) { apiErr(e); }
+      }
+      async function delSource(src) {
+        try {
+          await ElMessageBox.confirm('删除采集源「' + src.name + '」？它的卡片会保留并转成手动卡片。',
+                                     '提示', { type: 'warning' });
+          await api.delete('/api/admin/sources/' + src.id);
+          await loadSources(); await doScan();
+        } catch (e) { if (e !== 'cancel') apiErr(e); }
+      }
+      function showAgentCmd(src) {
+        tokenSrcId.value = src.id;
+        agentCmd.value = cmdFor('<' + (src.name || '令牌') + ' 的令牌已隐藏，点下面「轮换令牌」生成新的>');
+        tokenDlg.value = true;
+      }
+      async function rotateSource(sid) {
+        try {
+          await ElMessageBox.confirm('轮换后端上正在跑的 agent 会立刻失效，需要用新命令重启它。继续？',
+                                     '提示', { type: 'warning' });
+          const r = await api.post('/api/admin/sources/' + sid + '/rotate');
+          agentCmd.value = cmdFor(r.data.token);
+          ElMessage.success('新令牌已生成，复制下面命令替换旧容器');
+          await loadSources();
+        } catch (e) { if (e !== 'cancel') apiErr(e); }
+      }
+      async function copyAgentCmd() {
+        const t = agentCmd.value || '';
+        try {
+          await navigator.clipboard.writeText(t);
+          ElMessage.success('命令已复制');
+        } catch (e) {
+          const ta = document.createElement('textarea');
+          ta.value = t; document.body.appendChild(ta); ta.select();
+          document.execCommand('copy'); document.body.removeChild(ta);
+          ElMessage.success('命令已复制');
+        }
+      }
+
       async function syncAll() {
         scanning.value = true;
         try {
@@ -2738,7 +2851,10 @@
 
       // 切到「扫描导入」时自动扫一次，避免打开就是一片空白
       watch(tab, function (v) {
-        if (v === 'scan' && token.value && !scanResult.value && !scanning.value) doScan();
+        if (v === 'scan' && token.value) {
+          loadSources();
+          if (!scanResult.value && !scanning.value) doScan();
+        }
         // Compose 页：每次进来都重扫（宿主机上可能刚加了项目），但不阻塞切换
         if (v === 'compose' && token.value && !cmpLoading.value) loadCompose();
         if (v === 'images' && token.value) {
@@ -2751,6 +2867,9 @@
         s, groups, network, locked, q, pw, busy, engineIdx, wallpapers, wallUrlInput,
         token, adminOpen, tab, items, categories, docker, scanResult, scanning, autocatting,
         importing, selNew, newCat, newPw, itemDlg, editItem, icons,
+        sources, sourceDlg, sourceForm, sourceSaving, tokenDlg, agentCmd, tokenSrcId,
+        agoText, loadSources, openSourceDlg, editSource, saveSource, toggleSource, delSource,
+        showAgentCmd, rotateSource, copyAgentCmd,
         modeChoice, modeOptions, lanProbe, reprobeLan, probeText, probeUrlText, themeOptions, sizeOptions, schemeOptions, isMobile, centerTab,
         sizeOptionsCat, sizeOptionsItem, sizeOf, spanOf, cardStyle, setCatSize,
         clock, dateStr, wallpaperUrl, bgStyle, cardMin, groupStyle, filteredGroups, drawerSize,

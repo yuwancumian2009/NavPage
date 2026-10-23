@@ -356,6 +356,47 @@
             <el-button size="small" :loading="autocatting" @click="autocatAll">按服务类型归类</el-button>
           </div>
           <div class="np-scroll">
+          <div class="np-scan-sec">
+            <div class="np-scan-head">
+              <b>采集源</b>
+              <el-button size="small" type="primary" plain @click="openSourceDlg">+ 添加远端主机</el-button>
+            </div>
+            <table class="ep-table">
+              <thead><tr><th>采集源</th><th class="c-src-state">状态</th><th class="c-src-num">容器</th><th class="c-src-op">操作</th></tr></thead>
+              <tbody>
+                <tr v-for="src in sources" :key="src.id || 'local'">
+                  <td>
+                    <div class="np-strong">
+                      {{ src.name }}
+                      <el-tag size="small" :type="src.kind === 'local' ? 'info' : 'success'">
+                        {{ src.kind === 'local' ? '本机' : 'Agent' }}
+                      </el-tag>
+                    </div>
+                    <div class="np-muted np-ellipsis" :title="src.prefix || ''">
+                      {{ src.prefix || (src.kind === 'local' ? '地址按浏览器访问地址自动展开' : '未设置地址前缀') }}
+                    </div>
+                  </td>
+                  <td>
+                    <span class="np-src-dot" :class="src.online ? 'ok' : 'bad'"></span>
+                    <span class="np-muted">
+                      {{ src.kind === 'local' ? '实时读取' : (src.online ? '在线 · ' + agoText(src.ago) : (src.last_seen ? '离线 · ' + agoText(src.ago) : '从未上报')) }}
+                    </span>
+                  </td>
+                  <td>{{ src.container_count }}</td>
+                  <td class="np-src-ops">
+                    <template v-if="src.kind !== 'local'">
+                      <el-button link size="small" title="复制安装命令" @click="showAgentCmd(src)">命令</el-button>
+                      <el-button link size="small" @click="editSource(src)">编辑</el-button>
+                      <el-button link size="small" @click="toggleSource(src)">{{ src.enabled ? '停用' : '启用' }}</el-button>
+                      <el-button link size="small" type="danger" @click="delSource(src)">删除</el-button>
+                    </template>
+                    <span v-else class="np-muted">内置</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
           <div class="np-docker" :class="docker.ok ? 'ok' : 'bad'">
             <template v-if="docker.ok">
               Docker 已连接 · {{ docker.version }} · API {{ docker.api_version }}
@@ -379,12 +420,13 @@
                 </el-button>
               </div>
               <table class="ep-table" v-if="scanResult.new.length">
-                <thead><tr><th class="c-chk"></th><th class="c-name-m">名称</th><th class="c-box">容器</th><th class="c-port">端口</th><th class="c-lan">内网地址</th></tr></thead>
+                <thead><tr><th class="c-chk"></th><th class="c-name-m">名称</th><th class="c-box">容器</th><th class="c-src">来源</th><th class="c-port">端口</th><th class="c-lan">内网地址</th></tr></thead>
                 <tbody>
-                  <tr v-for="c in scanResult.new" :key="c.container_name">
-                    <td><input type="checkbox" v-model="selNew" :value="c.container_name"></td>
+                  <tr v-for="c in scanResult.new" :key="(c.docker_host || '') + '|' + c.container_name">
+                    <td><input type="checkbox" v-model="selNew" :value="(c.docker_host || '') + '|' + c.container_name"></td>
                     <td>{{ c.name }}<div class="np-muted">自动归入：{{ c.auto_category || c.category || '未分类' }}</div></td>
                     <td class="np-muted">{{ c.container_name }}</td>
+                    <td><el-tag size="small" :type="c.docker_host ? 'success' : 'info'">{{ c.source_name || '本机' }}</el-tag></td>
                     <td>
                       <span v-if="c.no_port" class="np-chip">无端口</span>
                       <template v-else>{{ c.container_port }}</template>
@@ -401,11 +443,12 @@
             <div class="np-scan-sec">
               <div class="np-scan-head"><b>已收录 {{ scanResult.existing.length }} 个</b></div>
               <table class="ep-table" v-if="scanResult.existing.length">
-                <thead><tr><th class="c-name-l">名称</th><th class="c-box">容器</th><th class="c-port">端口</th><th class="c-state">状态</th></tr></thead>
+                <thead><tr><th class="c-name-l">名称</th><th class="c-box">容器</th><th class="c-src">来源</th><th class="c-port">端口</th><th class="c-state">状态</th></tr></thead>
                 <tbody>
-                  <tr v-for="c in scanResult.existing" :key="c.container_name">
+                  <tr v-for="c in scanResult.existing" :key="(c.docker_host || '') + '|' + c.container_name">
                     <td>{{ c.name }}</td>
                     <td class="np-muted">{{ c.container_name }}</td>
+                    <td><el-tag size="small" :type="c.docker_host ? 'success' : 'info'">{{ c.source_name || '本机' }}</el-tag></td>
                     <td>{{ c.container_port }}</td>
                     <td class="np-muted">{{ c.status }}</td>
                   </tr>
@@ -1414,6 +1457,45 @@
                  @click="createCompose(false)">仅创建</el-button>
       <el-button size="small" type="primary" :loading="cmpNew.busy" :disabled="cmpNew.busy"
                  @click="createCompose(true)">创建并构建</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 采集源：新增 / 编辑 -->
+  <el-dialog v-model="sourceDlg" :title="sourceForm.id ? '编辑采集源' : '添加远端主机'"
+             width="480px" append-to-body>
+    <el-form label-width="96px" size="small">
+      <el-form-item label="名称">
+        <el-input v-model="sourceForm.name" placeholder="甲骨文/圣何塞"></el-input>
+      </el-form-item>
+      <el-form-item label="地址前缀">
+        <el-input v-model="sourceForm.prefix" placeholder="http://146.235.228.251:"></el-input>
+        <div class="np-muted">卡片内网地址 = 前缀 + 容器端口；容器有 nav.url.lan 标签时以标签为准。</div>
+      </el-form-item>
+      <el-form-item label="自动建卡">
+        <el-switch v-model="sourceForm.auto_import"></el-switch>
+        <span class="np-muted" style="margin-left:8px">上报的新容器自动建成卡片（落「未分类」）</span>
+      </el-form-item>
+      <el-form-item label="启用">
+        <el-switch v-model="sourceForm.enabled"></el-switch>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button size="small" @click="sourceDlg = false">取消</el-button>
+      <el-button size="small" type="primary" :loading="sourceSaving" @click="saveSource">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 采集源：Agent 安装命令 / 令牌 -->
+  <el-dialog v-model="tokenDlg" title="Agent 安装命令" width="640px" append-to-body>
+    <div class="np-muted" style="margin-bottom:8px">
+      在对端主机（需要 docker）执行下面这条命令即可，纯出站上报，不用开放任何端口。
+      令牌只显示一次：换机器或重装时点「轮换令牌」重新生成。
+    </div>
+    <pre class="np-cmd">{{ agentCmd }}</pre>
+    <template #footer>
+      <el-button size="small" @click="tokenDlg = false">关闭</el-button>
+      <el-button size="small" @click="copyAgentCmd">复制命令</el-button>
+      <el-button size="small" type="warning" v-if="tokenSrcId" @click="rotateSource(tokenSrcId)">轮换令牌</el-button>
     </template>
   </el-dialog>
 

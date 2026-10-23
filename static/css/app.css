@@ -1224,3 +1224,22 @@ body {
 }
 .np-cmp-name { margin-bottom: 8px; }
 .np-cmp-name input { font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace; font-size: 12px; }
+
+/* ---- 采集源（多主机） ---- */
+th.c-src { width: 92px; }
+th.c-src-state { width: 132px; }
+th.c-src-num { width: 52px; }
+th.c-src-op { width: 208px; }
+.np-src-ops { white-space: nowrap; }
+.np-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.np-src-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  margin-right: 6px; vertical-align: middle; background: #c0c4cc;
+}
+.np-src-dot.ok { background: #67c23a; box-shadow: 0 0 0 2px rgba(103,194,58,.18); }
+.np-src-dot.bad { background: #c0c4cc; }
+.np-cmd {
+  margin: 0; padding: 12px 14px; border-radius: 8px; background: #1f2430; color: #d7dce5;
+  font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap; word-break: break-all; max-height: 260px; overflow: auto;
+}

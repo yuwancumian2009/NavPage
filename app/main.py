@@ -1846,6 +1846,7 @@ def _create_from_candidate(cand, host, cat_name=None):
         "category_id": db.get_or_create_category(cat_name) if cat_name else None,
         "container_name": cand["container_name"], "container_image": cand["container_image"],
         "container_port": cand["container_port"], "docker_host": host,
+        "auto_created": True,
     })
 
 
@@ -1987,11 +1988,17 @@ def sources_rotate(sid: str, _=Depends(require_admin)):
 
 
 @app.delete("/api/admin/sources/{sid}")
-def sources_delete(sid: str, _=Depends(require_admin)):
+def sources_delete(sid: str, keep_manual: bool = False, _=Depends(require_admin)):
+    """删采集源。
+
+    keep_manual=false（默认）：该源自动建的卡片一起删掉；
+      手工建/被认领的卡片保留，只解除绑定。
+    keep_manual=true：所有卡片都保留，只解除绑定。
+    """
     if not db.get_source(sid):
         return _err("采集源不存在", 404)
-    db.delete_source(sid)
-    return {"ok": True}
+    res = db.delete_source(sid, keep_manual=keep_manual)
+    return {"ok": True, **res}
 
 
 # ---------------------------------------------------------------- 扫描 / 导入

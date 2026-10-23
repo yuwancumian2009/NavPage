@@ -379,12 +379,14 @@ ITEM_FIELDS = (
     "name", "description", "url_lan", "url_wan", "icon", "category_id",
     "sort", "hidden", "source", "container_name", "container_image",
     "container_port", "docker_host", "missing", "widget", "url_visible", "card_size",
+    "auto_created",
 )
 
 # 后加的列：老库启动时自动补齐，避免用户手动迁移
 MIGRATIONS = {
     "items": [("widget", "TEXT DEFAULT ''"), ("url_visible", "INTEGER DEFAULT -1"),
-              ("card_size", "TEXT DEFAULT ''"), ("docker_host", "TEXT DEFAULT ''")],
+              ("card_size", "TEXT DEFAULT ''"), ("docker_host", "TEXT DEFAULT ''"),
+              ("auto_created", "INTEGER DEFAULT 0")],
     "categories": [("card_size", "TEXT DEFAULT ''")],
 }
 # card_size: '' = 跟随上级（条目→分类→全局），lg = 大卡，xs = 小卡（纯图标方形）
@@ -506,6 +508,7 @@ def create_item(data):
     d["container_image"] = d.get("container_image") or ""
     d["container_port"] = int(d.get("container_port") or 0)
     d["docker_host"] = str(d.get("docker_host") or "")
+    d["auto_created"] = 1 if d.get("auto_created") else 0
     d["hidden"] = 1 if d.get("hidden") else 0
     d["missing"] = 1 if d.get("missing") else 0
     d["url_visible"] = _enc_tri(d.get("url_visible"))
@@ -535,7 +538,7 @@ def update_item(iid, patch):
             v = patch[k]
             if k == "category_id" and v in ("", None):
                 v = None
-            if k in ("hidden", "missing"):
+            if k in ("hidden", "missing", "auto_created"):
                 v = 1 if v else 0
             if k == "container_port":
                 v = int(v or 0)
@@ -729,19 +732,35 @@ def update_source(sid, patch):
         c.commit()
 
 
-def delete_source(sid):
-    """删源：卡片保留，转成手动卡片。
+def delete_source(sid, keep_manual=False):
+    """删源并清理它的卡片。
 
-    docker_host 保持原值不动 —— 改成 ''（本机）会和已有的同名本机卡片撞
-    (docker_host, container_name) 唯一索引；留着它，卡片只是不再参与任何扫描
-    （只有 enabled 的采集源会进 _collect），也不会被标成「已消失」。
+    keep_manual=False（默认）：该源自动建的卡片直接删掉（源没了，卡片就是垃圾）；
+      用户自己建、后来被「认领」的卡片保留，但解除绑定（docker_host/container_name
+      一起清空，否则占着 (docker_host, container_name) 唯一索引，同名卡片以后
+      再也建不出来）。
+    keep_manual=True：只解除绑定，一张都不删。
+
+    返回 {"removed": 删掉的卡片数, "released": 保留并解除绑定的卡片数}。
     """
+    sid = str(sid)
+    removed = released = 0
     c = conn()
     with _lock:
-        c.execute("UPDATE items SET source='manual', missing=0 WHERE docker_host=?",
-                  (str(sid),))
+        rows = c.execute(
+            "SELECT id, auto_created FROM items WHERE COALESCE(docker_host,'')=?",
+            (sid,)).fetchall()
+        for r in rows:
+            if r["auto_created"] and not keep_manual:
+                c.execute("DELETE FROM items WHERE id=?", (r["id"],))
+                removed += 1
+            else:
+                c.execute("UPDATE items SET source='manual', missing=0, docker_host='',"
+                          " container_name='' WHERE id=?", (r["id"],))
+                released += 1
         c.execute("DELETE FROM docker_sources WHERE id=?", (sid,))
         c.commit()
+    return {"removed": removed, "released": released}
 
 
 def set_source_token(sid, token_hash, hint=""):

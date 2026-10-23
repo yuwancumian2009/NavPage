@@ -1425,12 +1425,30 @@
         } catch (e) { apiErr(e); }
       }
       async function delSource(src) {
+        // 三选一：一起删卡片（默认）/ 只解除绑定保留卡片 / 取消。
+        // 「只解除绑定」走 cancel 按钮 —— 这样不用为了一个复选框自己画弹窗。
+        let keepManual;
         try {
-          await ElMessageBox.confirm('删除采集源「' + src.name + '」？它的卡片会保留并转成手动卡片。',
-                                     '提示', { type: 'warning' });
-          await api.delete('/api/admin/sources/' + src.id);
+          await ElMessageBox.confirm(
+            '删除采集源「' + src.name + '」？' +
+            '<br>「一起删除卡片」会把它扫出来的卡片一起清掉（你手工建、后来被它接管的卡片会保留）；' +
+            '<br>「只解除关联」则所有卡片都留在首页。',
+            '删除采集源', {
+              type: 'warning', dangerouslyUseHTMLString: true,
+              confirmButtonText: '一起删除卡片', cancelButtonText: '只解除关联',
+              distinguishCancelAndClose: true,
+            });
+          keepManual = false;
+        } catch (e) {
+          if (e === 'cancel') keepManual = true; else return;
+        }
+        try {
+          const r = await api.delete('/api/admin/sources/' + src.id + (keepManual ? '?keep_manual=true' : ''));
+          const n = (r && r.removed) || 0, k = (r && r.released) || 0;
+          ElMessage.success('已删除采集源' + (n ? '，清掉 ' + n + ' 张自动卡片' : '') +
+                            (k ? '，保留 ' + k + ' 张手工卡片' : ''));
           await loadSources(); await doScan();
-        } catch (e) { if (e !== 'cancel') apiErr(e); }
+        } catch (e) { apiErr(e); }
       }
       function showAgentCmd(src) {
         tokenSrcId.value = src.id;

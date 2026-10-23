@@ -1243,3 +1243,15 @@ th.c-src-op { width: 208px; }
   font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap; word-break: break-all; max-height: 260px; overflow: auto;
 }
+
+/* 扫描导入·新发现表：加了「操作（排除）」列后原宽度会把表格顶出容器，
+   右边操作链接被裁到画面外，这里收窄各列并让地址列省略号截断。 */
+.np-scan-sec .ep-table .c-chk { width: 34px; }
+.np-scan-sec .ep-table .c-name-m { width: 208px; }
+.np-scan-sec .ep-table .c-box { width: 126px; }
+.np-scan-sec .ep-table .c-src { width: 76px; }
+.np-scan-sec .ep-table .c-port { width: 62px; }
+.np-scan-sec .ep-table .c-lan { width: 112px; }
+.np-scan-sec .ep-table .c-state { width: 56px; }
+.np-scan-sec .ep-table td.np-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-scan-sec .ep-table td:last-child a { color: var(--el-color-primary, #409eff); white-space: nowrap; }

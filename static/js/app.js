@@ -1315,7 +1315,8 @@
       async function excludeCand(c) {
         try {
           await ElMessageBox.confirm('把「' + c.name + '」加入排除名单？以后扫描不会再显示它。',
-                                     '排除容器', { type: 'warning' });
+                                     '排除容器', { type: 'warning',
+                                     confirmButtonText: '排除', cancelButtonText: '取消' });
           await api.post('/api/admin/scan/exclude', { names: [c.container_name], excluded: true });
           ElMessage.success('已排除「' + c.name + '」');
           await doScan();

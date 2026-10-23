@@ -176,3 +176,62 @@ def guess_mime(name):
         "jpeg": "image/jpeg", "gif": "image/gif", "svg": "image/svg+xml",
         "webp": "image/webp", "bmp": "image/bmp", "avif": "image/avif",
     }.get(ext, "application/octet-stream")
+
+
+# ---------------------------------------------------------------- 缩略图
+# 卡片上的图标只显示 32~48px，但用户上传的图常常是几 MB 的原图
+# （实测有一张 1.77MB 的 PNG 占首屏 60% 流量）。这里按需生成 128px 的 webp，
+# 生成一次落盘复用；失败/太小/矢量的图直接回原图，绝不因为缩图把图标弄丢。
+THUMB_DIR = (os.environ.get("NAVPAGE_ICON_THUMB_DIR")
+             or os.path.join(os.path.dirname(ICON_DIR.rstrip("/")), "iconthumbs"))
+THUMB_PX = 128
+THUMB_SKIP_BYTES = 48 * 1024      # 本来就小的图不值得转
+THUMB_MIME = "image/webp"
+
+
+def thumb_path(name, max_px=THUMB_PX):
+    """返回可直接返回给浏览器的图标路径。原图很小或转换失败时返回原图。"""
+    src = icon_path(name)
+    if not src:
+        return None
+    low = src.lower()
+    if low.endswith(".svg"):
+        return src
+    try:
+        st = os.stat(src)
+    except OSError:
+        return src
+    if st.st_size <= THUMB_SKIP_BYTES:
+        return src
+    key = hashlib.sha1(("%s|%d|%d|%d" % (os.path.basename(src), st.st_size,
+                                         int(st.st_mtime), max_px)).encode()).hexdigest()[:16]
+    dst = os.path.join(THUMB_DIR, key + ".webp")
+    if os.path.exists(dst):
+        return dst
+    try:
+        from PIL import Image
+    except Exception:
+        return src                      # 没装 Pillow 就退回原图，功能不受影响
+    tmp = dst + ".tmp"
+    try:
+        os.makedirs(THUMB_DIR, exist_ok=True)
+        im = Image.open(src)
+        # 多帧的 ico/gif 取信息量最大的一帧
+        try:
+            im.seek(getattr(im, "n_frames", 1) - 1)
+        except Exception:
+            pass
+        im = im.convert("RGBA")
+        im.thumbnail((max_px, max_px), Image.LANCZOS)
+        im.save(tmp, "WEBP", quality=84, method=4)
+        if os.path.getsize(tmp) >= st.st_size:
+            os.unlink(tmp)
+            return src                  # 转完反而更大（小尺寸 ico），用原图
+        os.replace(tmp, dst)
+        return dst
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+        return src

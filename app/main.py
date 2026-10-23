@@ -397,6 +397,80 @@ def wallpaper(name: str):
     return FileResponse(path, headers={"Cache-Control": "public, max-age=86400"})
 
 
+@app.get("/api/wprelay")
+def wallpaper_relay(u: str):
+    """远端壁纸本地中转缓存。
+
+    壁纸可以填外部 URL（例：https://pic.o.hhxin.top/api/random）。浏览器每次都
+    绕公网去拉，实测一次 3.3 秒，背景白了半天才出来。这里在 NAS 上缓存 30 分钟，
+    之后就由 NAS 本地直出（几十毫秒）；取失败时退回过期的旧图，不让背景彻底消失。
+    """
+    u = (u or "").strip()
+    if not u.lower().startswith(("http://", "https://")):
+        raise HTTPException(400, "bad url")
+    d = os.path.join(db.WALLPAPER_DIR, "_relay")
+    key = hashlib.sha1(u.encode("utf-8")).hexdigest()[:20]
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        pass
+    hits = []
+    if os.path.isdir(d):
+        hits = [f for f in os.listdir(d) if f.startswith(key + ".") and not f.endswith(".tmp")]
+    path = os.path.join(d, hits[0]) if hits else None
+    fresh = bool(path) and (time.time() - os.path.getmtime(path) < 1800)
+    if not fresh:
+        try:
+            with httpx.Client(timeout=20, verify=False, follow_redirects=True) as c:
+                r = c.get(u, headers={"User-Agent": "Mozilla/5.0 NavPage"})
+                r.raise_for_status()
+                ctype = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
+                if not ctype.startswith("image/"):
+                    raise ValueError("not image: %s" % ctype)
+                ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp",
+                       "image/gif": "gif", "image/avif": "avif"}.get(ctype, "jpg")
+                tmp = os.path.join(d, "tmp_" + key)
+                with open(tmp, "wb") as f:
+                    f.write(r.content)
+                # 壁纸源经常给 4K 原图（实测 pic.o.hhxin.top 一张 7.9MB），
+                # 浏览器只为铺满屏幕，压到 2560px 的 webp 体积能掉 90%+。
+                try:
+                    from PIL import Image
+                    im = Image.open(tmp)
+                    if max(im.size) > 2560:
+                        im.thumbnail((2560, 2560), Image.LANCZOS)
+                    im = im.convert("RGB")
+                    wt = os.path.join(d, "tmpw_" + key)
+                    im.save(wt, "WEBP", quality=84, method=4)
+                    if os.path.getsize(wt) < os.path.getsize(tmp):
+                        os.unlink(tmp)
+                        tmp2, ext = wt, "webp"
+                    else:
+                        tmp2 = tmp
+                except Exception:
+                    tmp2 = tmp
+                new = os.path.join(d, key + "." + ext)
+                os.replace(tmp2, new)
+                for h in hits:
+                    try:
+                        os.unlink(os.path.join(d, h))
+                    except Exception:
+                        pass
+                path = new
+                # 顺手清掉一周没用过的旧中转文件
+                for f in os.listdir(d):
+                    fp = os.path.join(d, f)
+                    try:
+                        if f.startswith("tmp_") or time.time() - os.path.getmtime(fp) > 7 * 86400:
+                            os.unlink(fp)
+                    except Exception:
+                        pass
+        except Exception:
+            if not path:
+                raise HTTPException(502, "壁纸源取不到")
+    return FileResponse(path, headers={"Cache-Control": "public, max-age=1800"})
+
+
 @app.get("/api/logo/{name}")
 def logo_file(name: str):
     """左上角自定义图标（外观页上传）。故意不鉴权：登录页上也要显示它。"""
@@ -422,13 +496,22 @@ def wallpapers():
     return {"ok": True, "files": files}
 
 
-@app.get("/api/iconfile/{name}")
-def iconfile(name: str):
-    p = icons.icon_path(name)
+def _icon_response(name):
+    """图标统一出口：大于 48KB 的原图按需转 128px webp 再发。
+
+    卡片上的图标只有 32~48px，直接把用户上传的原图丢给浏览器很亏：
+    实测首屏 3.0MB 里 2.4MB 是图标，其中一张 1.77MB 的 PNG 就占了一半以上。
+    """
+    p = icons.thumb_path(name)
     if not p:
         raise HTTPException(404, "not found")
-    return FileResponse(p, media_type=icons.guess_mime(name),
+    return FileResponse(p, media_type=icons.guess_mime(os.path.basename(p)),
                         headers={"Cache-Control": "public, max-age=604800"})
+
+
+@app.get("/api/iconfile/{name}")
+def iconfile(name: str):
+    return _icon_response(name)
 
 
 def _cached_by_url(url):
@@ -468,15 +551,11 @@ def icon_proxy(url: str):
         raise HTTPException(400, "missing url")
     hit = _cached_by_url(url)
     if hit:
-        return FileResponse(os.path.join(db.ICON_DIR, hit),
-                            media_type=icons.guess_mime(hit),
-                            headers={"Cache-Control": "public, max-age=604800"})
+        return _icon_response(hit)
     name = fetch_and_cache_icon(url)
     if not name:
         raise HTTPException(404, "icon not available")
-    return FileResponse(os.path.join(db.ICON_DIR, name),
-                        media_type=icons.guess_mime(name),
-                        headers={"Cache-Control": "public, max-age=604800"})
+    return _icon_response(name)
 
 
 # ---------------------------------------------------------------- auth

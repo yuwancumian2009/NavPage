@@ -16,6 +16,7 @@ import json
 import re
 import threading
 import time
+from urllib.parse import quote
 
 import httpx
 
@@ -1714,6 +1715,219 @@ def mtphotos(cfg):
     return _rich(text, stats, detail, dense=True)
 
 
+# ---------------------------------------------------------------- Microsoft Rewards
+
+# Rewards 面板的 /api/status 被管理员会话硬闸门挡住，只能账号密码换 Cookie，
+# 进程内缓存 30 分钟（Cookie 本身就是 7 天有效，但面板重启会失效，短一点更稳）。
+_MSR_SESS = {}
+_MSR_SESS_TTL = 1800
+_MSR_COOKIE = "msr_admin_session"
+
+
+def _msr_key(base, user, pwd):
+    return base + "|" + user + "|" + hashlib.sha256(pwd.encode("utf-8")).hexdigest()[:12]
+
+
+def _msr_login(c, base, user, pwd):
+    """面板管理员登录，返回会话 Cookie 值（缓存在进程里）。"""
+    ck = _msr_key(base, user, pwd)
+    hit = _MSR_SESS.get(ck)
+    if hit and time.time() - hit[1] < _MSR_SESS_TTL:
+        return hit[0]
+    r = c.post(base + "/api/auth/login", json={"username": user, "password": pwd})
+    j = {}
+    try:
+        j = r.json() or {}
+    except Exception:
+        pass
+    if r.status_code in (400, 401, 403) or j.get("success") is False:
+        raise PermissionError(j.get("message") or "面板账号或密码不对")
+    r.raise_for_status()
+    tok = r.cookies.get(_MSR_COOKIE) or ""
+    if not tok:
+        raise PermissionError("面板登录没返回会话 Cookie，面板版本可能不匹配")
+    _MSR_SESS[ck] = (tok, time.time())
+    return tok
+
+
+def _msr_day(ts):
+    """面板的 lastSyncAt 是**毫秒**时间戳，直接喂 localtime 会跑到 5000 年后。"""
+    try:
+        v = float(ts)
+    except Exception:
+        return ""
+    if v > 1e11:            # 毫秒
+        v /= 1000.0
+    try:
+        return time.strftime("%Y-%m-%d", time.localtime(v))
+    except Exception:
+        return ""
+
+
+def _msr_ago(ts):
+    try:
+        d = time.time() - float(ts) / 1000.0
+    except Exception:
+        return ""
+    if d < 90:
+        return "刚刚"
+    if d < 3600:
+        return "%d 分钟前" % (d // 60)
+    if d < 86400:
+        return "%d 小时前" % (d // 3600)
+    return "%d 天前" % (d // 86400)
+
+
+def msrewards(cfg):
+    """Microsoft Rewards（rewards-docker）：账号积分看板。
+
+    数据全部走面板接口，不读容器内文件：
+      POST /api/auth/login {username,password} → Set-Cookie msr_admin_session
+      GET  /api/status         → accounts[].{name,balance,todayEarned,streakDays,lastSyncAt,dataState}
+      GET  /api/history/recent → snapshots{accId: {date: {earned, balance, officialTasks{...}}}}
+    """
+    base = _base(cfg)
+    if not base:
+        return _err("没填面板地址，例如 http://192.168.1.109:5308")
+    user = (cfg.get("username") or "admin").strip() or "admin"
+    pwd = (cfg.get("password") or "").strip()
+    if not pwd:
+        return _err("没填面板密码：/api/status 要管理员会话，填 MicrosoftRewards 面板 admin 的密码")
+
+    accounts, snaps, st = [], {}, {}
+    try:
+        with _client() as c:
+            tok = _msr_login(c, base, user, pwd)
+            h = {"Cookie": "%s=%s" % (_MSR_COOKIE, quote(tok, safe=""))}
+            r = c.get(base + "/api/status", headers=h)
+            if r.status_code in (401, 403):
+                _MSR_SESS.pop(_msr_key(base, user, pwd), None)   # 会话失效：下次重新登录
+                raise PermissionError("面板会话失效")
+            r.raise_for_status()
+            st = r.json() or {}
+            accounts = st.get("accounts") or []
+            try:
+                r2 = c.get(base + "/api/history/recent", headers=h)
+                if r2.status_code == 200:
+                    snaps = (r2.json() or {}).get("snapshots") or {}
+            except Exception:
+                snaps = {}
+    except PermissionError as e:
+        return _err("%s（填的是面板 admin 的登录密码）" % e)
+    except Exception as e:
+        return _err("连不上 Microsoft Rewards：%s" % str(e)[:80])
+
+    enabled = [a for a in accounts if a.get("enabled", True)]
+    if not accounts:
+        return _err("面板能连上，但里面还没有账号")
+    if not enabled:
+        return _err("面板里 %d 个账号全部停用了" % len(accounts))
+
+    today_str = time.strftime("%Y-%m-%d")
+    total_bal = sum(int(a.get("balance") or 0) for a in enabled)
+    today_pts = sum(int(a.get("todayEarned") or 0) for a in enabled)
+
+    # 每日合计 → 近 7 日均分（不含今天，今天还没跑完，混进去会把均值压低）
+    by_date = {}
+    for _aid, days in (snaps or {}).items():
+        for d, rec in (days or {}).items():
+            if not isinstance(rec, dict):
+                continue
+            by_date[d] = by_date.get(d, 0) + int(rec.get("earned") or 0)
+    past = [v for d, v in sorted(by_date.items()) if d < today_str][-7:]
+    avg7 = (sum(past) / float(len(past))) if past else None
+
+    # 今天有没有账号没同步 / 数据不全
+    stale = []
+    for a in enabled:
+        try:
+            synced_today = _msr_day(a.get("lastSyncAt")) == today_str
+        except Exception:
+            synced_today = False
+        if not synced_today or a.get("dataState") in ("stale", "unknown"):
+            stale.append(a.get("name") or a.get("user") or "?")
+
+    try:
+        max_streak = max([int(a.get("streakDays") or 0) for a in enabled] or [0])
+    except Exception:
+        max_streak = 0
+
+    tone_today = "good"
+    if stale:
+        tone_today = "warn"
+    elif avg7 and today_pts >= avg7:
+        tone_today = "good"
+    elif avg7 and today_pts < avg7 * 0.5:
+        tone_today = "warn"
+
+    stats = [
+        {"label": "账号", "value": ("%d" % len(enabled)) if len(enabled) == len(accounts)
+         else ("%d/%d" % (len(enabled), len(accounts))),
+         "tone": "warn" if len(enabled) < len(accounts) else "good"},
+        {"label": "今日", "value": "+%d" % today_pts, "tone": tone_today},
+        {"label": "总积分", "value": "{:,}".format(total_bal), "tone": "good"},
+        {"label": "连续", "value": ("%d 天" % max_streak) if max_streak else "—",
+         "tone": "good" if max_streak else "muted"},
+    ]
+    txt = "今日 +%d · 共 %s 分" % (today_pts, "{:,}".format(total_bal))
+
+    # 今日任务进度：只有单个账号时才展示（多账号的任务口径不一，混在一起没意义）
+    prog = None
+    detail = []
+    one = enabled[0] if len(enabled) == 1 else None
+    if one:
+        rec = ((snaps or {}).get(one.get("id")) or {}).get(today_str) or {}
+        tasks = rec.get("officialTasks") or {}
+        bits = []
+        sp = tasks.get("searchPoints") or {}
+        if sp.get("max"):
+            bits.append("搜索 %s/%s" % (sp.get("current") or 0, sp.get("max")))
+        ds = tasks.get("dailySet") or {}
+        if ds.get("max"):
+            bits.append("日常 %s/%s" % (ds.get("current") or 0, ds.get("max")))
+        ac = tasks.get("appCheckIn") or {}
+        if ac.get("max"):
+            bits.append("签到 %s/%s" % (ac.get("current") or 0, ac.get("max")))
+        stp = tasks.get("stamps") or {}
+        if stp.get("max"):
+            bits.append("印章 %s/%s" % (stp.get("progress") or 0, stp.get("max")))
+            prog = {"value": float(stp.get("progress") or 0) / float(stp["max"]),
+                    "label": "今日印章 %s/%s" % (stp.get("progress") or 0, stp["max"])}
+        if bits:
+            detail.append(["今日任务", " · ".join(bits)])
+
+    for a in enabled[:6]:
+        nm = a.get("name") or a.get("user") or "账号"
+        line = "余额 %s · 今日 +%d · 连续 %d 天" % (
+            "{:,}".format(int(a.get("balance") or 0)), int(a.get("todayEarned") or 0),
+            int(a.get("streakDays") or 0))
+        if not (a.get("lastSyncAt") and _msr_day(a.get("lastSyncAt")) == today_str):
+            line += " · 今天还没同步"
+        detail.append([nm, line])
+    if len(enabled) > 6:
+        detail.append(["其他", "还有 %d 个账号没展开" % (len(enabled) - 6)])
+
+    if past:
+        tail = [d for d, _v in sorted(by_date.items()) if d < today_str][-5:]
+        detail.append(["近几天", " · ".join("%s日 %+d" % (d[5:], by_date[d]) for d in tail)])
+        detail.append(["7 日均分", "+%d（%d 天样本）" % (round(avg7), len(past))])
+
+    sched = st.get("nextScheduledTask") or {}
+    if isinstance(sched, dict):
+        when = sched.get("time") or sched.get("at") or sched.get("nextRun") or ""
+        name = sched.get("name") or sched.get("label") or ""
+        if when:
+            detail.append(["下次任务", ("%s %s" % (name, when)).strip()])
+    if st.get("isBusy"):
+        detail.append(["正在运行", str(st.get("runningAccountName") or st.get("currentTaskName") or "任务中")])
+    elif st.get("schedulerRunning") is False:
+        detail.append(["调度器", "已停止"])
+    if stale:
+        detail.append(["待同步", "、".join(stale[:4])])
+
+    return _rich(txt, stats, detail, progress=prog)
+
+
 PROVIDERS = {
     "qbittorrent": {
         "label": "qBittorrent", "icon": "⚡",
@@ -1825,6 +2039,20 @@ PROVIDERS = {
         ],
         "hint": "显示账号总积分 / 今日消耗积分 / 可用账号数 / 临期积分（数据来自 wb-proxy 面板 API）。",
         "fetch": wbproxy,
+    },
+    "msrewards": {
+        "label": "Microsoft Rewards", "icon": "🎯",
+        "fields": [
+            {"key": "url", "label": "面板地址", "ph": "http://192.168.1.109:5308",
+             "hint": "MicrosoftRewards（rewards-docker）面板地址，默认 5308"},
+            {"key": "username", "label": "面板账号", "ph": "admin",
+             "hint": "面板管理员账号，默认 admin"},
+            {"key": "password", "label": "面板密码", "ph": "面板登录密码", "pw": True,
+             "hint": "面板 admin 的登录密码；/api/status 只认管理员会话，API 没有匿名读接口"},
+        ],
+        "hint": "显示账号数 / 今日获得积分 / 总积分 / 近 7 日均分；点开看每个账号的余额、"
+                "连续天数、今日任务进度（搜索/日常/签到/印章）和近几天走势。",
+        "fetch": msrewards,
     },
     "mtphotos": {
         "label": "MT Photos / 相册", "icon": "🖼️",

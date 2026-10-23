@@ -4,3 +4,5 @@ httpx==0.28.1
 python-multipart==0.0.20
 # Compose 管理要解析 YAML（没有它也能启动，只是解析退化成正则）
 pyyaml==6.0.2
+# 图标缩略图（上传的大图转 128px webp，首屏省 2MB+）
+pillow==11.1.0

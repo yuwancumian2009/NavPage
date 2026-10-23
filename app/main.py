@@ -573,8 +573,19 @@ def update_item(iid: int, body: ItemBody, _=Depends(require_admin)):
 
 @app.delete("/api/admin/items/{iid}")
 def delete_item(iid: int, _=Depends(require_admin)):
+    """删卡片。容器卡片不是真删，而是留一条隐藏墓碑。
+
+    远端采集源每 5 分钟上报一次，真把行删掉的话下一次上报就把它原样重建出来
+    （用户会以为「删不掉」）。墓碑 = hidden=1 + 保留 container_name/docker_host：
+    首页不渲染、扫描不算「新发现」、自动建卡也认为它已存在，只在「项目」页里
+    以灰色「已排除」出现，想恢复点一下就行。
+    """
+    it = db.get_item(iid)
+    if it and (it.get("container_name") or "").strip() and it.get("source") == "docker":
+        db.update_item(iid, {"hidden": 1, "missing": 1})
+        return {"ok": True, "kept_as_excluded": True}
     db.delete_item(iid)
-    return {"ok": True}
+    return {"ok": True, "kept_as_excluded": False}
 
 
 class ExcludeBody(BaseModel):

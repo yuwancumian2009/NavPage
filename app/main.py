@@ -549,6 +549,8 @@ class ItemBody(BaseModel):
     container_name: str | None = None
     container_image: str | None = None
     container_port: int | None = None
+    docker_host: str | None = None
+    missing: bool | None = None
     widget: dict | None = None
     url_visible: int | None = None
     card_size: str | None = None
@@ -1770,10 +1772,14 @@ def _find_similar_item(cand):
     """
     hosts = {h for h in (_url_netloc(cand.get("url_lan")), _url_netloc(cand.get("url_wan"))) if h}
     nk = _name_key(cand.get("name"))
+    cname = (cand.get("container_name") or "").strip()
     best = None
     for it in db.list_items():
         if it.get("hidden"):
             continue
+        # 容器名一致 = 同一个容器（用户可能把卡片改名了，容器名不会变）
+        if cname and (it.get("container_name") or "").strip() == cname:
+            return it
         if hosts:
             for f in ("url_lan", "url_wan"):
                 if _url_netloc(it.get(f)) in hosts:

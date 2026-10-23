@@ -1749,6 +1749,56 @@ def _source_view(src, now=None):
     return d
 
 
+def _url_netloc(u):
+    try:
+        return urllib.parse.urlparse((u or "").strip()).netloc.lower()
+    except Exception:
+        return ""
+
+
+def _name_key(u):
+    return "".join(ch for ch in (u or "").casefold() if ch.isalnum())
+
+
+def _find_similar_item(cand):
+    """找一张「看起来就是同一个服务」的已有卡片（用户手工建过的那种）。
+
+    远端采集源是新功能，很多服务用户早就在导航页里手工放过卡片了（甚至已经
+    分好组、配好域名）。自动建卡如果只管 (docker_host, container_name)，
+    就会在旁边再长出一张一模一样的卡片 —— 首页重复、看着像 bug。
+    这里按两件事认领：地址主机相同（域名/端口对得上），或者名字几乎一样。
+    """
+    hosts = {h for h in (_url_netloc(cand.get("url_lan")), _url_netloc(cand.get("url_wan"))) if h}
+    nk = _name_key(cand.get("name"))
+    best = None
+    for it in db.list_items():
+        if it.get("hidden"):
+            continue
+        if hosts:
+            for f in ("url_lan", "url_wan"):
+                if _url_netloc(it.get(f)) in hosts:
+                    return it
+        ik = _name_key(it.get("name"))
+        if nk and ik and len(nk) >= 4 and len(ik) >= 4 and (nk in ik or ik in nk):
+            best = best or it
+    return best
+
+
+def _adopt(it, cand, host, c):
+    """把已有卡片接管成本采集源的容器卡片：只补容器信息，名称/分组/地址都不动。"""
+    patch = {"docker_host": host, "source": "docker", "container_name": c["name"], "missing": False}
+    if c.get("image"):
+        patch["container_image"] = c["image"]
+    if c.get("primary_port"):
+        patch["container_port"] = int(c["primary_port"])
+    if cand.get("url_wan") and not (it.get("url_wan") or "").strip():
+        patch["url_wan"] = cand["url_wan"]
+    if cand.get("url_lan") and not (it.get("url_lan") or "").strip():
+        patch["url_lan"] = cand["url_lan"]
+    db.update_item(it["id"], patch)
+    return it["id"]
+
+
 def _collect(s=None, ok_hosts=None):
     """把所有采集源的容器摊平成 [(source, container)]。
 
@@ -1821,6 +1871,12 @@ def _agent_auto_import(src, s):
             continue
         cand = _candidate(c, s, src)
         old = db.find_item_by_container(name, host)
+        if not old:
+            sim = _find_similar_item(cand)
+            if sim:
+                _adopt(sim, cand, host, c)
+                updated += 1
+                continue
         if old:
             patch = {"missing": False}
             if c.get("image") and c["image"] != old.get("container_image"):
@@ -2009,6 +2065,11 @@ def scan_import(request: Request, body: ImportBody, _=Depends(require_admin)):
             db.update_item(old["id"], patch)
             updated += 1
         else:
+            sim = _find_similar_item(cand)
+            if sim:
+                _adopt(sim, cand, host, c)
+                updated += 1
+                continue
             icon = cand["icon"] or ""
             # 远端主机取不到 favicon（网络不一定通），只在图标标签缺失时给本机试
             if not icon and host == "":

@@ -4,6 +4,7 @@
 """
 import os
 import re
+import random
 import socket
 import threading
 import urllib.parse
@@ -14,6 +15,7 @@ import secrets
 import warnings
 import concurrent.futures
 from urllib.parse import quote
+from concurrent.futures import as_completed
 
 warnings.filterwarnings("ignore")
 
@@ -397,104 +399,220 @@ def wallpaper(name: str):
     return FileResponse(path, headers={"Cache-Control": "public, max-age=86400"})
 
 
-@app.get("/api/wprelay")
-def wallpaper_relay(u: str):
-    """远端壁纸本地中转缓存。
 
-    壁纸可以填外部 URL（例：https://pic.o.hhxin.top/api/random）。浏览器每次都
-    绕公网去拉，实测一次 3.3 秒，背景白了半天才出来。这里在 NAS 上缓存 30 分钟，
-    之后就由 NAS 本地直出（几十毫秒）；取失败时退回过期的旧图，不让背景彻底消失。
-    """
-    u = (u or "").strip()
-    if not u.lower().startswith(("http://", "https://")):
-        raise HTTPException(400, "bad url")
+# ---------------------------------------------------------------- 远端壁纸中转
+_RELAY_POOL = 10           # 每个壁纸 URL 本地常备几张（连刷十几次都不用等）
+_RELAY_BUSY = {}           # key -> Lock，保证同一 URL 只有一个线程在补池子
+_RELAY_LAST = {}           # key -> 上一次发出去的文件名（避免连续两次同一张）
+_RELAY_LOCK = threading.Lock()
+
+
+def _relay_dir():
     d = os.path.join(db.WALLPAPER_DIR, "_relay")
-    key = hashlib.sha1(u.encode("utf-8")).hexdigest()[:20]
     try:
         os.makedirs(d, exist_ok=True)
     except Exception:
         pass
-    hits = []
-    if os.path.isdir(d):
-        hits = [f for f in os.listdir(d) if f.startswith(key + ".") and not f.endswith(".tmp")]
-    path = os.path.join(d, hits[0]) if hits else None
-    fresh = bool(path) and (time.time() - os.path.getmtime(path) < 1800)
-    if not fresh:
-        try:
-            with httpx.Client(timeout=20, verify=False, follow_redirects=True) as c:
-                r = c.get(u, headers={"User-Agent": "Mozilla/5.0 NavPage"})
-                r.raise_for_status()
-                ctype = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
-                if not ctype.startswith("image/"):
-                    raise ValueError("not image: %s" % ctype)
-                ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp",
-                       "image/gif": "gif", "image/avif": "avif"}.get(ctype, "jpg")
-                tmp = os.path.join(d, "tmp_" + key)
-                with open(tmp, "wb") as f:
-                    f.write(r.content)
-                # 壁纸源经常给 4K 原图（实测 pic.o.hhxin.top 一张 7.9MB），
-                # 浏览器只为铺满屏幕，压到 2560px 的 webp 体积能掉 90%+。
-                try:
-                    from PIL import Image
-                    im = Image.open(tmp)
-                    if max(im.size) > 1920:
-                        im.thumbnail((1920, 1920), Image.LANCZOS)
-                    im = im.convert("RGB")
-                    wt = os.path.join(d, "tmpw_" + key)
-                    im.save(wt, "WEBP", quality=80, method=4)
-                    if os.path.getsize(wt) < os.path.getsize(tmp):
-                        os.unlink(tmp)
-                        tmp2, ext = wt, "webp"
-                    else:
-                        tmp2 = tmp
-                except Exception:
-                    tmp2 = tmp
-                new = os.path.join(d, key + "." + ext)
-                os.replace(tmp2, new)
-                for h in hits:
-                    try:
-                        os.unlink(os.path.join(d, h))
-                    except Exception:
-                        pass
-                path = new
-                # 顺手清掉一周没用过的旧中转文件
-                for f in os.listdir(d):
-                    fp = os.path.join(d, f)
-                    try:
-                        if f.startswith("tmp_") or time.time() - os.path.getmtime(fp) > 7 * 86400:
-                            os.unlink(fp)
-                    except Exception:
-                        pass
-        except Exception:
-            if not path:
-                raise HTTPException(502, "壁纸源取不到")
-    return FileResponse(path, headers={"Cache-Control": "public, max-age=1800"})
+    return d
 
+
+def _relay_key(u):
+    return hashlib.sha1(u.encode("utf-8")).hexdigest()[:20]
+
+
+def _relay_pool(d, key):
+    """该 URL 已缓存的图，新的在前。"""
+    try:
+        fs = [f for f in os.listdir(d)
+              if f.startswith(key + "_") and not f.startswith("tmp_")
+              and "_live" not in f]
+    except Exception:
+        return []
+    def ts(f):
+        try:
+            return int(f.rsplit("_", 1)[1].split(".")[0])
+        except Exception:
+            return 0
+    return sorted(fs, key=ts, reverse=True)
+
+
+def _relay_live(d, key):
+    """上一次发出去的那张（池子被取空时拿它兜底，不让用户干等公网）。"""
+    try:
+        for f in os.listdir(d):
+            if f.startswith(key + "_live"):
+                return os.path.join(d, f)
+    except Exception:
+        pass
+    return None
+
+
+def _relay_fetch(u, key, d):
+    """拉一张远端壁纸，压到 1920px webp 落盘，返回文件名；失败返回 None。"""
+    try:
+        with httpx.Client(timeout=20, verify=False, follow_redirects=True) as c:
+            r = c.get(u, headers={"User-Agent": "Mozilla/5.0 NavPage"})
+            r.raise_for_status()
+            ctype = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
+            if not ctype.startswith("image/"):
+                return None
+            ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp",
+                   "image/gif": "gif", "image/avif": "avif"}.get(ctype, "jpg")
+            name = "%s_%d.%s" % (key, int(time.time() * 1000), ext)
+            tmp = os.path.join(d, "tmp_" + name)
+            with open(tmp, "wb") as f:
+                f.write(r.content)
+            # 壁纸源常给 4K 原图（实测一张 7.9MB），浏览器只为铺满屏幕，
+            # 压到 1920px webp 体积能掉 90%+。
+            try:
+                from PIL import Image
+                im = Image.open(tmp)
+                # draft() 让 JPEG 解码时直接按 1/2、1/4 降采样，4K 原图解码从
+                # 一两秒掉到几十毫秒（解码是 C 代码、吃 GIL，会拖慢同时进来的请求）。
+                try:
+                    im.draft("RGB", (1920, 1920))
+                except Exception:
+                    pass
+                if max(im.size) > 1920:
+                    im.thumbnail((1920, 1920), Image.LANCZOS)
+                wt = os.path.join(d, "tmpw_" + name)
+                im.convert("RGB").save(wt, "WEBP", quality=80, method=4)
+                if os.path.getsize(wt) < os.path.getsize(tmp):
+                    os.unlink(tmp)
+                    name = name.rsplit(".", 1)[0] + ".webp"
+                    os.replace(wt, os.path.join(d, name))
+                else:
+                    os.unlink(wt)
+                    os.replace(tmp, os.path.join(d, name))
+            except Exception:
+                os.replace(tmp, os.path.join(d, name))
+            return name
+    except Exception:
+        return None
+
+
+def _relay_prune(d, key):
+    for f in _relay_pool(d, key)[_RELAY_POOL:]:
+        try:
+            os.unlink(os.path.join(d, f))
+        except Exception:
+            pass
+    try:
+        for f in os.listdir(d):
+            fp = os.path.join(d, f)
+            try:
+                if (f.startswith("tmp") and time.time() - os.path.getmtime(fp) > 600) or \
+                        time.time() - os.path.getmtime(fp) > 7 * 86400:
+                    os.unlink(fp)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _relay_topup(u, key, d):
+    """把池子补到 _RELAY_POOL 张（后台线程调，同一 URL 同时只跑一个）。
+
+    单张要 3~5 秒，串行补 6 张太慢 → 3 路并行。
+    """
+    lock = _RELAY_BUSY.setdefault(key, threading.Lock())
+    if not lock.acquire(blocking=False):
+        return
+    try:
+        need = _RELAY_POOL - len(_relay_pool(d, key))
+        while need > 0:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(3, need)) as ex:
+                futs = [ex.submit(_relay_fetch, u, key, d) for _ in range(min(3, need))]
+                got = sum(1 for f in as_completed(futs) if f.result())
+            if not got:
+                break
+            need -= got
+        _relay_prune(d, key)
+    finally:
+        lock.release()
+
+
+@app.get("/api/wprelay")
+def wallpaper_relay(u: str):
+    """远端壁纸本地中转：本地存一池子图，每次换一张，取走一张后台补一张。
+
+    壁纸可以填外部 URL（例：https://pic.o.hhxin.top/api/random），浏览器直接去拉
+    每次要绕公网、实测 3~5 秒，而且原图常有 7~9MB。这里由 NAS 先拉好并压到 1920px
+    webp，浏览器拿到的是本地几十毫秒、几百 KB。
+
+    注意**不能**给浏览器长缓存：用户要的是「每次刷新换一张随机壁纸」。所以响应
+    no-store，服务端每次从池子里随机挑一张（并把它删掉，让后台补新的），既保证随机
+    又不用等公网。
+    """
+    u = (u or "").strip()
+    if not u.lower().startswith(("http://", "https://")):
+        raise HTTPException(400, "bad url")
+    d = _relay_dir()
+    key = _relay_key(u)
+    pool = _relay_pool(d, key)
+    if not pool:
+        # 池子空（第一次访问 / 刚被取空）：同步拉一张顶住，剩下的交给后台补。
+        name = _relay_fetch(u, key, d)
+        if not name:
+            raise HTTPException(502, "壁纸源取不到")
+        pool = [name]
+    with _RELAY_LOCK:
+        pool = _relay_pool(d, key)
+        live = _relay_live(d, key)
+        if pool:
+            last = _RELAY_LAST.get(key)
+            cands = [f for f in pool if f != last] or pool
+            pick = random.choice(cands)
+            _RELAY_LAST[key] = pick
+            # 发出去的这张挪成 live，池子里就没有它了 → 后台再拉一张新的补上，
+            # 所以每次刷新拿到的都是没见过的图。
+            try:
+                newlive = os.path.join(d, "%s_live%s" % (key, os.path.splitext(pick)[1]))
+                if live and live != newlive:
+                    try:
+                        os.unlink(live)
+                    except Exception:
+                        pass
+                os.replace(os.path.join(d, pick), newlive)
+                live = newlive
+            except Exception:
+                live = os.path.join(d, pick)
+    if not live:
+        name = _relay_fetch(u, key, d)
+        if not name:
+            raise HTTPException(502, "壁纸源取不到")
+        live = os.path.join(d, name)
+    threading.Thread(target=_relay_topup, args=(u, key, d), daemon=True).start()
+    return FileResponse(live, headers={
+        "Cache-Control": "no-store, max-age=0",
+        "Pragma": "no-cache",
+    })
 
 _WP_WARMED = {"t": 0.0}
 
 
 def _wallpaper_warmer():
-    """后台每 20 分钟把远端壁纸提前拉进本地缓存。
+    """后台把远端壁纸池子一直保持在满的状态。
 
-    远端壁纸源（pic.o.hhxin.top）单张要给 4~5 秒，缓存 30 分钟过期后第一个打开
-    导航页的人就得干等。这里趁没人用的时候先拉好，用户打开时永远是本地直出。
+    远端壁纸源（pic.o.hhxin.top）单张要 3~5 秒，池子里没货时第一个打开导航页的人
+    就得干等。这里趁没人访问时提前备好 4 张，用户每次刷新直接拿现成的、且每张都不一样。
     """
     first = True
     while True:
         try:
-            time.sleep(45 if first else 1200)
+            time.sleep(30 if first else 600)
             first = False
-            s = db.get_settings() or {}
-            u = (s.get("wallpaper") or "").strip()
+            st = db.get_settings() or {}
+            u = (st.get("wallpaper") or "").strip()
             if not u.lower().startswith(("http://", "https://")):
                 continue
             urls = [u]
             if "/random" in u:
                 urls += [u.replace("/random", "/pc"), u.replace("/random", "/mobile")]
+            d = _relay_dir()
             for c in urls:
                 try:
-                    wallpaper_relay(c)
+                    _relay_topup(c, _relay_key(c), d)
                 except Exception:
                     pass
         except Exception:

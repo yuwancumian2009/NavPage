@@ -235,8 +235,8 @@
           }
           return '';
         }
-        // 远端壁纸（例：pic.o.hhxin.top/api/random）每次都要绕公网，实测 3.3s；
-        // 交给后端中转缓存 30 分钟，之后由 NAS 本地直出。
+        // 远端壁纸（例：pic.o.hhxin.top/api/random）绕公网单张要 3~5 秒，交给后端中转：
+        // NAS 本地存一池子图，每次刷新随机给一张（no-store，保证换图）并后台补新。
         if (w.indexOf('http') === 0) return '/api/wprelay?u=' + encodeURIComponent(orientWallUrl(w, isPortrait.value));
         return '/api/wallpaper/' + encodeURIComponent(w);
       });

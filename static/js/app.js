@@ -1411,9 +1411,42 @@
         } catch (e) { apiErr(e); }
         gatelyBusy.value = false;
       }
+      /* 子域名智能缩写：2-4 个字母（与后端 _abbr 保持一致） */
+      const ABBR_ALIAS = {
+        emby: 'emby', jellyfin: 'jf', jelly: 'jf', plex: 'plex',
+        qbittorrent: 'qb', qbit: 'qb', transmission: 'tr', deluge: 'dg',
+        moviepilot: 'mp', moviepilotv2: 'mp', moviepilotv3: 'mp',
+        navpage: 'np', gately: 'gt', lucky: 'lucky',
+        familytree: 'ft', liveposter: 'lp',
+        xhsautodeliver: 'xhs', wechatautopost: 'wx',
+        autospeed: 'spd', speedtest: 'spd', sunpanel: 'sun',
+        lunatvdl: 'ltv', lunatv: 'ltv', qinglong: 'ql',
+        wbapihub: 'wb', alist: 'al', openlist: 'ol',
+        immich: 'im', photoprism: 'pp', navidrome: 'nd',
+        audiobookshelf: 'ab', homeassistant: 'ha', vaultwarden: 'vw',
+        portainer: 'pt', codeserver: 'cs', uptimekuma: 'uk',
+        syncthing: 'st', filebrowser: 'fb', cloudreve: 'cv'
+      };
+      const ABBR_NOISE = ['auto', 'web', 'app', 'apps', 'server', 'srv', 'panel', 'service',
+        'docker', 'ui', 'pro', 'hub', 'box', 'dl', 'the', 'my', 'new', 'test'];
+      function shortName(text) {
+        const t = (text || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+        if (!t) return '';
+        const key = t.replace(/-/g, '');
+        const tries = [t, t.replace(/-?v?\d+$/, ''), key, key.replace(/v?\d+$/, '')];
+        for (const c of tries) { if (c && ABBR_ALIAS[c]) return ABBR_ALIAS[c]; }
+        let toks = t.split('-').filter(function (x) {
+          return x && ABBR_NOISE.indexOf(x) < 0 && !/^v?\d+$/.test(x);
+        });
+        if (!toks.length) toks = t.split('-').filter(function (x) { return !!x; });
+        if (!toks.length) return '';
+        let out;
+        if (toks.length >= 2) out = toks.map(function (x) { return x[0]; }).join('');
+        else out = toks[0].length <= 4 ? toks[0] : toks[0].slice(0, 3);
+        return (out.replace(/[^a-z0-9]/g, '').slice(0, 4)) || toks[0].slice(0, 3);
+      }
       function openProxyDlg(it) {
-        const raw = (it.container_name || it.name || '').toLowerCase();
-        const sub = raw.replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+        const sub = shortName(it.container_name || it.name || '');
         proxyDlg.value = { open: true, item: it, subdomain: sub, busy: false };
       }
       async function doProvision() {

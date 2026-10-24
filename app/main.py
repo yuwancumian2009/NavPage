@@ -3044,6 +3044,58 @@ def _wan_host(domain, scheme, port):
     return "%s:%d" % (domain, int(port))
 
 
+# 子域名智能缩写：默认只取 2-4 个字母（Lucky 时代项目名太长，外网地址不好记）
+_ABBR_ALIAS = {
+    "emby": "emby", "jellyfin": "jf", "jelly": "jf", "plex": "plex",
+    "qbittorrent": "qb", "qbit": "qb", "transmission": "tr", "deluge": "dg",
+    "moviepilot": "mp", "moviepilotv2": "mp", "moviepilotv3": "mp",
+    "navpage": "np", "gately": "gt", "lucky": "lucky",
+    "familytree": "ft", "liveposter": "lp",
+    "xhsautodeliver": "xhs", "wechatautopost": "wx",
+    "autospeed": "spd", "speedtest": "spd", "sunpanel": "sun",
+    "lunatvdl": "ltv", "lunatv": "ltv", "qinglong": "ql",
+    "wbapihub": "wb", "alist": "al", "openlist": "ol",
+    "immich": "im", "photoprism": "pp", "navidrome": "nd",
+    "audiobookshelf": "ab", "homeassistant": "ha", "vaultwarden": "vw",
+    "portainer": "pt", "code-server": "cs", "uptimekuma": "uk",
+    "syncthing": "st", "filebrowser": "fb", "cloudreve": "cv",
+}
+_ABBR_NOISE = {"auto", "web", "app", "apps", "server", "srv", "panel", "service",
+               "docker", "ui", "pro", "hub", "box", "dl", "the", "my", "new", "test"}
+
+
+def _slug_wan_host(url_wan):
+    """从卡片外网地址里抠出子域名（用于撞名判断）。"""
+    u = (url_wan or "").strip()
+    if not u:
+        return ""
+    u = re.sub(r"^\w+://", "", u).split("/")[0].split(":")[0]
+    return u.split(".")[0].lower()
+
+
+def _abbr(text):
+    """把容器/项目名压成 2-4 个字母：family-tree→ft，qbittorrent→qb，moviepilotv2→mp。"""
+    t = re.sub(r"[^a-z0-9]+", "-", wanimport.norm_name(text or "")).strip("-")
+    if not t:
+        return ""
+    key = t.replace("-", "")
+    for cand in (t, re.sub(r"-?v?\d+$", "", t), key, re.sub(r"v?\d+$", "", key)):
+        if cand and cand in _ABBR_ALIAS:
+            return _ABBR_ALIAS[cand]
+    toks = [x for x in t.split("-") if x and x not in _ABBR_NOISE and not re.fullmatch(r"v?\d+", x)]
+    if not toks:
+        toks = [x for x in t.split("-") if x]
+    if not toks:
+        return ""
+    if len(toks) >= 2:
+        out = "".join(x[0] for x in toks)
+    else:
+        w = toks[0]
+        out = w[:4] if len(w) <= 4 else w[:3]
+    out = re.sub(r"[^a-z0-9]", "", out)[:4]
+    return out or toks[0][:3]
+
+
 def _slug(text):
     t = wanimport.norm_name(text or "")
     t = re.sub(r"[^a-z0-9-]+", "-", t).strip("-")
@@ -3056,9 +3108,20 @@ def _provision(it, s=None, subdomain=""):
     base = (s.get("gately_domain") or "").strip().strip(".")
     if not base:
         raise HTTPException(400, "先在设置 → 反代面板里填「根域名」")
-    sub = _slug(subdomain) or _slug(it.get("container_name") or it.get("name") or "")
+    if subdomain and subdomain.strip():
+        sub = _slug(subdomain)
+    else:
+        base_name = it.get("container_name") or it.get("name") or ""
+        sub = _abbr(base_name) or _slug(base_name)
     if not sub:
         raise HTTPException(400, "生成不出子域名，请手动填写")
+    # 撞名保护：同一个根域名下已有卡片占用，就依次加 2、3…
+    taken = {(_slug_wan_host(x.get("url_wan"))) for x in db.list_items(include_hidden=True) if int(x["id"]) != int(it["id"])}
+    if sub in taken:
+        for n in range(2, 10):
+            if "%s%d" % (sub, n) not in taken:
+                sub = "%s%d" % (sub, n)
+                break
     port, tls = _gately_listen(s)
     domain = "%s.%s" % (sub, base)
     target = _item_target(it, s)

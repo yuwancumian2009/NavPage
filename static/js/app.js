@@ -55,6 +55,13 @@
       const wanSelectedCount = computed(function () {
         return wanRows.value.filter(function (r) { return !!r.item_id; }).length;
       });
+      // 反代面板联动（Gately）：可读规则映射回卡片，也可给卡片直接建规则
+      const gatelyState = ref({ configured: false, ok: false, version: '', rules: 0, error: '' });
+      const gatelyBusy = ref(false);
+      const proxyDlg = ref({ open: false, item: null, subdomain: '', busy: false });
+      const gatelyScheme = computed(function () {
+        return (s.value.gately_tls === false) ? 'http' : 'https';
+      });
       const newCat = ref('');
       const selCats = ref([]);   // 分类页勾选的分类 id
       const newPw = ref('');
@@ -846,7 +853,7 @@
         await loadWallpapers();
         // 角标先发（只是个轻量 GET），再等 reload 把卡片拉回来 —— 否则卡片多的时候
         // 角标要等 reload 完才出现，顶栏会先空一下（2026-10-18 实测 1.2s 内还没渲染）
-        if (token.value) { loadImgBadge(); await reload(); }
+        if (token.value) { loadImgBadge(); await reload(); loadGatelyState(); }
       }
 
       /* ---------------- 登录 ---------------- */
@@ -866,6 +873,7 @@
           loadImgBadge();       // 登录后才知道有没有可更新镜像（不等 reload，先把角标点亮）
           await reload();
           recheckLan(false);    // 登录后才知道内网地址，这次补上探测
+          loadGatelyState();    // 登录后才读得到反代面板状态（决定「反代」按钮显不显示）
         } catch (e) { apiErr(e); }
         busy.value = false;
       }
@@ -1381,6 +1389,49 @@
         } catch (e) { apiErr(e); }
         wanApplying.value = false;
       }
+      /* ---------------- 反代面板联动（Gately） ---------------- */
+      async function loadGatelyState() {
+        try {
+          const r = await api.get('/api/admin/gately/state');
+          gatelyState.value = r.data;
+        } catch (e) { gatelyState.value = { configured: false, ok: false, error: '读取状态失败', rules: 0, version: '' }; }
+      }
+      async function gatelyPull() {
+        gatelyBusy.value = true;
+        try {
+          const r = await api.post('/api/admin/gately/preview', {});
+          const rows = r.data.rows || [];
+          wanRows.value = rows.map(function (x) {
+            return Object.assign({}, x, { scheme: x.scheme || 'https' });
+          });
+          wanItems.value = r.data.items || [];
+          const matched = wanRows.value.filter(function (x) { return !!x.item_id; }).length;
+          if (!rows.length) ElMessage.warning('Gately 里还没有反代规则');
+          else ElMessage.success('拉到 ' + rows.length + ' 条规则，匹配到 ' + matched + ' 张卡片');
+        } catch (e) { apiErr(e); }
+        gatelyBusy.value = false;
+      }
+      function openProxyDlg(it) {
+        const raw = (it.container_name || it.name || '').toLowerCase();
+        const sub = raw.replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+        proxyDlg.value = { open: true, item: it, subdomain: sub, busy: false };
+      }
+      async function doProvision() {
+        const d = proxyDlg.value;
+        if (!d.item) return;
+        d.busy = true;
+        try {
+          const r = await api.post('/api/admin/gately/provision', {
+            item_id: d.item.id, subdomain: d.subdomain
+          });
+          ElMessage.success((r.data.action === 'unchanged' ? '规则已存在，' : '已生成反代，')
+            + '卡片外网地址：' + r.data.url);
+          d.open = false;
+          await reload();
+          await loadGatelyState();
+        } catch (e) { apiErr(e); }
+        d.busy = false;
+      }
       /* ---------------- 采集源（本机 + 远端 Agent） ---------------- */
       function agoText(sec) {
         if (sec === null || sec === undefined) return '';
@@ -1547,6 +1598,7 @@
           await api.put('/api/admin/settings', body);
           syncWallInput();
           await loadBootstrap();
+          loadGatelyState();
           ElMessage.success('设置已保存');
         } catch (e) { apiErr(e); }
         busy.value = false;
@@ -1743,6 +1795,7 @@
 
       function openAdmin(tabName) {
         adminOpen.value = true;
+        loadGatelyState();
         // 支持直接跳到某个 tab（顶栏「可更新镜像」角标点进来就是 images）
         if (tabName) tab.value = tabName;
         nextTick(function () { initTabsScroll(); bindCellTitle(); });
@@ -2936,6 +2989,7 @@
         selCats, catAllChecked, catIndeterminate,
         onCatCheck, toggleAllCats, doScan, selectAllNew, importSelected, excludeCand, syncAll, autocatAll, autoSaveAt, flushAutoSave,
         wanText, wanRows, wanItems, wanParsing, wanApplying, wanOverwrite, wanSelectedCount, wanPreview, wanApply,
+        gatelyState, gatelyBusy, gatelyScheme, proxyDlg, loadGatelyState, gatelyPull, openProxyDlg, doProvision,
         refreshIcons, saveSettings, uploadWall, pickWall, useWallUrl, clearWall,
         delWall, openAdmin,
         iconDlg, iconTab, iconList, iconLoading, iconQ, iconResults, iconSearching,

@@ -806,6 +806,8 @@ def normalize_containers(raw):
             "nav_url_wan": labels.get("nav.url.wan", ""),
             "nav_category": labels.get("nav.category", ""),
             "nav_hide": str(labels.get("nav.hide", "")).lower() in ("1", "true", "yes"),
+            # 反代联动：nav.proxy.domain=emby → 自动在 Gately 建 emby.<根域名> 的反代
+            "nav_proxy_domain": labels.get("nav.proxy.domain", ""),
         })
     out.sort(key=lambda x: (x["compose_project"] or "~", x["name"]))
     return out

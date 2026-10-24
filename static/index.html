@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/vendor/element-plus.css?v=1">
-<link rel="stylesheet" href="/css/app.css?v=68">
+<link rel="stylesheet" href="/css/app.css?v=69">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -287,6 +287,8 @@
                   <td>{{ catName(it.category_id) }}</td>
                   <td>
                     <el-button size="small" text type="primary" @click="openItem(it)">编辑</el-button>
+                    <el-button v-if="gatelyState.configured" size="small" text type="warning"
+                               @click="openProxyDlg(it)">反代</el-button>
                     <el-button v-if="it.hidden" size="small" text @click="setExcluded(it, false)">恢复</el-button>
                     <el-button v-else size="small" text @click="setExcluded(it, true)">排除</el-button>
                     <el-button size="small" text type="danger" @click="delItem(it)">删除</el-button>
@@ -491,6 +493,13 @@
             <div class="np-scan-head">
               <b>导入外网地址</b>
               <span class="np-bar-tip">把 Lucky「Web服务」的规则复制粘贴进来，按后端端口 / 卡片名自动匹配</span>
+            </div>
+            <div class="np-bar" style="margin: 0 0 8px">
+              <el-button size="small" type="success" :loading="gatelyBusy"
+                         :disabled="!gatelyState.configured" @click="gatelyPull">从 Gately 拉取规则</el-button>
+              <span class="np-bar-tip" v-if="gatelyState.configured && gatelyState.ok">已连上 {{ gatelyState.version }} · 现有 {{ gatelyState.rules }} 条规则</span>
+              <span class="np-bar-tip" v-else-if="gatelyState.configured">连接异常：{{ gatelyState.error }}</span>
+              <span class="np-bar-tip" v-else>未配置：设置 → 反代面板填地址和令牌后可用</span>
             </div>
             <el-input v-model="wanText" class="np-wan-paste" type="textarea" :rows="4" resize="vertical"
                       placeholder="每行有域名和内网地址就行，可以直接粘贴 Lucky 的表格：&#10;emby.example.com        192.168.1.109:8096&#10;jellyfin.example.com  -&gt; 192.168.1.109:8096"></el-input>
@@ -745,6 +754,48 @@
               <label>信任 X-Forwarded-For</label>
               <el-switch v-model="s.trust_proxy"></el-switch>
               <div class="np-hint">反向代理后面才需要开。</div>
+            </div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-sec-head">反代面板（Gately） <span>规则可读可写，卡片外网地址自动跟着变</span></div>
+            <div class="np-field">
+              <label>面板地址</label>
+              <el-input v-model="s.gately_url" size="small" placeholder="http://192.168.1.109:16680"></el-input>
+              <div class="np-hint">Gately 管理界面地址（默认 16680 端口）。</div>
+            </div>
+            <div class="np-field">
+              <label>API 令牌</label>
+              <el-input v-model="s.gately_token" size="small" type="password" show-password
+                        placeholder="在 Gately「API 令牌」页新建，勾 webservice 读写"></el-input>
+              <div class="np-hint">只需要 Web 服务的读 + 写权限，别给它 Docker / 终端权限。</div>
+            </div>
+            <div class="np-field">
+              <label>根域名</label>
+              <el-input v-model="s.gately_domain" size="small" placeholder="如 example.com"></el-input>
+              <div class="np-hint">给卡片生成反代时拼成 <code>emby.example.com</code> 这种。</div>
+            </div>
+            <div class="np-field row">
+              <label>监听端口</label>
+              <div class="np-2col">
+                <el-input v-model.number="s.gately_listener_port" size="small" placeholder="443"></el-input>
+                <el-switch v-model="s.gately_tls" active-text="HTTPS"></el-switch>
+              </div>
+              <div class="np-hint">规则写进哪个监听端口。正式用 443 + HTTPS（证书在 Gately 的 SSL 里签）。</div>
+            </div>
+            <div class="np-field">
+              <label>自动建反代</label>
+              <el-switch v-model="s.gately_auto"></el-switch>
+              <div class="np-hint">容器打标签 <code>nav.proxy.domain=emby</code>，扫描导入后自动建 <code>emby.根域名</code> 的反代并写回卡片。</div>
+            </div>
+            <div class="np-field">
+              <label>连接状态</label>
+              <div class="np-2col">
+                <el-button size="small" @click="loadGatelyState">测试连接</el-button>
+                <span class="np-hint" v-if="gatelyState.ok" style="color:#30a46c">正常 · {{ gatelyState.version }} · {{ gatelyState.rules }} 条规则</span>
+                <span class="np-hint" v-else-if="gatelyState.error" style="color:#e5484d">{{ gatelyState.error }}</span>
+                <span class="np-hint" v-else>未测试</span>
+              </div>
             </div>
           </div>
 
@@ -1508,6 +1559,26 @@
     </template>
   </el-dialog>
 
+  <!-- 生成反代：给这张卡片在 Gately 上建规则，并把外网地址写回卡片 -->
+  <el-dialog v-model="proxyDlg.open" title="生成反代地址" width="460px" append-to-body>
+    <div class="np-field">
+      <label>卡片</label>
+      <div class="np-muted">{{ proxyDlg.item && proxyDlg.item.name }} · 内网 {{ proxyDlg.item && proxyDlg.item.url_lan }}</div>
+    </div>
+    <div class="np-field">
+      <label>子域名</label>
+      <el-input v-model="proxyDlg.subdomain" size="small" placeholder="emby"></el-input>
+      <div class="np-hint">
+        生成的地址：<code>{{ gatelyScheme }}://{{ proxyDlg.subdomain }}{{ s.gately_domain ? '.' + s.gately_domain : '' }}</code>
+        ，规则写进 gately 的 {{ s.gately_listener_port }} 端口
+      </div>
+    </div>
+    <template #footer>
+      <el-button size="small" @click="proxyDlg.open = false">取消</el-button>
+      <el-button size="small" type="primary" :loading="proxyDlg.busy" @click="doProvision">生成并写入卡片</el-button>
+    </template>
+  </el-dialog>
+
   <!-- 卡片右键菜单（只有登录后的管理员会看到） -->
   <teleport to="body">
     <div class="np-ctx" v-if="ctxMenu.open"
@@ -1542,6 +1613,6 @@
 <script src="/vendor/element-plus.min.js"></script>
 <script src="/vendor/element-icons.min.js"></script>
 <script src="/vendor/axios.min.js"></script>
-<script src="/js/app.js?v=82"></script>
+<script src="/js/app.js?v=84"></script>
 </body>
 </html>

@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 import httpx
 
-from . import db, netutil, dockerapi, icons, iconlib, widgets, registry, cron, version, wanimport
+from . import db, netutil, dockerapi, icons, iconlib, widgets, registry, cron, version, wanimport, gately
 from . import compose as compose_mod
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -2362,6 +2362,8 @@ def scan_import(request: Request, body: ImportBody, _=Depends(require_admin)):
         wanted = [(str(body.host or ""), n) for n in (body.names or [])]
     added, updated = 0, 0
     for host, name in wanted:
+        if host:
+            continue      # 远端采集源的容器：反代指向远端机器，模板地址不可靠，留给用户手动建
         pair = idx.get((host, name))
         if not pair:
             continue
@@ -2396,7 +2398,38 @@ def scan_import(request: Request, body: ImportBody, _=Depends(require_admin)):
             cand["icon"] = icon
             _create_from_candidate(cand, host, cat_name)
             added += 1
-    return {"ok": True, "added": added, "updated": updated}
+    proxied, proxy_err = _auto_provision_batch(s, wanted, idx)
+    return {"ok": True, "added": added, "updated": updated,
+            "proxied": proxied, "proxy_error": proxy_err}
+
+
+def _auto_provision_batch(s, wanted, idx):
+    """扫描导入后，给带 nav.proxy.domain 标签的容器自动建反代（失败不影响导入）。"""
+    if not s.get("gately_auto"):
+        return 0, ""
+    if not ((s.get("gately_url") or "").strip() and (s.get("gately_token") or "").strip()
+            and (s.get("gately_domain") or "").strip()):
+        return 0, "Gately 未配置完整（地址/令牌/根域名）"
+    done, errs = 0, []
+    for host, name in wanted:
+        pair = idx.get((host, name))
+        if not pair:
+            continue
+        _src, c = pair
+        sub = (c.get("nav_proxy_domain") or "").strip()
+        if not sub:
+            continue
+        it = db.find_item_by_container(name, host)
+        if not it:
+            continue
+        try:
+            _provision(it, s, subdomain=sub)
+            done += 1
+        except HTTPException as e:
+            errs.append("%s: %s" % (name, e.detail))
+        except Exception as e:
+            errs.append("%s: %s" % (name, e))
+    return done, "；".join(errs[:3])
 
 
 @app.post("/api/admin/scan/sync")
@@ -2863,6 +2896,178 @@ def admin_wan_apply(body: WanApplyBody, _=Depends(require_admin)):
         db.update_item(int(r.item_id), {"url_wan": url})
         updated += 1
     return {"ok": True, "updated": updated, "skipped": skipped, "failed": failed}
+
+
+# ---------------------------------------------------------------- 反代面板联动（Gately）
+#
+# 与上面「粘贴导入」的区别：Gately 有公开 REST API，规则是明文 JSON，所以这里能直接
+# 读规则映射成卡片外网地址，也能反过来给卡片建规则——「部署容器 → 自动反代 → 卡片
+# 自动带上外网地址」这条链路就是靠这里闭合的。Lucky 做不到（规则被它自己加密）。
+
+class GatelyProvisionBody(BaseModel):
+    item_id: int
+    subdomain: str = ""
+
+
+def _gately_cfg(s=None):
+    s = s or db.get_settings()
+    return (s.get("gately_url") or "").strip(), (s.get("gately_token") or "").strip()
+
+
+def _gately_client(s=None):
+    s = s or db.get_settings()
+    url, tok = _gately_cfg(s)
+    if not url or not tok:
+        raise HTTPException(400, "还没配置 Gately 地址和 API 令牌（设置 → 反代面板）")
+    return gately.Client(url, tok)
+
+
+def _gately_listen(s):
+    return int(s.get("gately_listener_port") or 443), bool(s.get("gately_tls", True))
+
+
+def _expand_lan(url, s, host=""):
+    """把卡片内网地址展开成绝对地址（模板里的 {host}/{scheme} 换成真实值）。"""
+    h = host or (s.get("host_lan_ip") or "").strip() or "127.0.0.1"
+    return (url or "").strip().replace("{host}", h).replace("{scheme}", "http")
+
+
+def _item_target(it, s):
+    """卡片 → Gately 后端地址（http://host:port）。
+
+    Gately 与端口在同一台机器时用 127.0.0.1 最稳（容器里也通）；配置了内网地址优先用它。
+    """
+    host = (s.get("host_lan_ip") or "").strip() or "127.0.0.1"
+    port = int(it.get("container_port") or 0)
+    lan = _expand_lan(it.get("url_lan"), s)
+    if lan:
+        u = lan if "://" in lan else "http://" + lan
+        parts = urllib.parse.urlsplit(u)
+        p = parts.port or port or (443 if parts.scheme == "https" else 80)
+        return "http://%s:%d" % (parts.hostname or host, p)
+    if not port:
+        raise HTTPException(400, "这张卡片没有内网端口，先在「编辑」里补上端口再生成反代")
+    return "http://%s:%d" % (host, port)
+
+
+def _match_gately(row, items):
+    """Gately 的一条规则 → 卡片。先比后端 host:port 与卡片内网地址，再退到端口 / 名称。"""
+    host = (row.get("backend_host") or "").lower()
+    port = int(row.get("backend_port") or 0)
+    if port:
+        same = []
+        for it in items:
+            lan = _expand_lan(it.get("url_lan"), db.get_settings(), "127.0.0.1")
+            if not lan:
+                continue
+            u = lan if "://" in lan else "http://" + lan
+            parts = urllib.parse.urlsplit(u)
+            ih, ip = (parts.hostname or "").lower(), parts.port or 0
+            if ip == port:
+                same.append((it, ih))
+        exact = [it for it, ih in same if host in (ih, "") or ih in ("127.0.0.1", "localhost", host)]
+        if len(exact) == 1:
+            return exact[0], "后端地址"
+        cands = [it for it, _ih in same] or [i for i in items if int(i.get("container_port") or 0) == port]
+        if len(cands) == 1:
+            return cands[0], "端口"
+        if cands:
+            lab = wanimport.norm_name(row.get("label") or "")
+            for i in cands:
+                if lab and lab in (wanimport.norm_name(i.get("name")),
+                                   wanimport.norm_name(i.get("container_name") or "")):
+                    return i, "端口+名称"
+    lab = wanimport.norm_name(row.get("site_name") or row.get("label") or "")
+    if lab:
+        for it in items:
+            if lab == wanimport.norm_name(it.get("name")) or lab == wanimport.norm_name(it.get("container_name") or ""):
+                return it, "名称"
+    return None, ""
+
+
+@app.get("/api/admin/gately/state")
+def admin_gately_state(_=Depends(require_admin)):
+    """设置页用：是否配置好、能不能通、版本、现有规则条数。"""
+    s = db.get_settings()
+    url, tok = _gately_cfg(s)
+    port, tls = _gately_listen(s)
+    out = {"configured": bool(url and tok), "url": url, "domain": (s.get("gately_domain") or "").strip(),
+           "listener_port": port, "tls": tls, "auto": bool(s.get("gately_auto")),
+           "ok": False, "version": "", "error": "", "rules": 0}
+    if out["configured"]:
+        try:
+            c = gately.Client(url, tok)
+            out["version"] = str((c.info() or {}).get("version") or "")
+            out["rules"] = len(gately.rows_from_listeners(c.listeners()))
+            out["ok"] = True
+        except gately.GatelyError as e:
+            out["error"] = str(e)
+    return out
+
+
+@app.post("/api/admin/gately/preview")
+def admin_gately_preview(_=Depends(require_admin)):
+    """把 Gately 现有规则拉下来 → 逐条匹配卡片（不落库，给前端预览）。"""
+    s = db.get_settings()
+    c = _gately_client(s)
+    try:
+        rows = gately.rows_from_listeners(c.listeners())
+    except gately.GatelyError as e:
+        raise HTTPException(400, "拉取失败：%s" % e)
+    items = db.list_items(include_hidden=True)
+    out = []
+    for r in rows:
+        it, how = _match_gately(r, items)
+        out.append({
+            **r,
+            "url": "%s://%s" % (r["scheme"], r["domain"]),
+            "item_id": it["id"] if it else None,
+            "item_name": (it or {}).get("name") or "",
+            "current_wan": (it or {}).get("url_wan") or "",
+            "match_by": how,
+        })
+    return {
+        "ok": True,
+        "rows": out,
+        "items": [{"id": i["id"], "name": i["name"], "port": int(i.get("container_port") or 0),
+                   "url_wan": i.get("url_wan") or ""} for i in items],
+    }
+
+
+def _slug(text):
+    t = wanimport.norm_name(text or "")
+    t = re.sub(r"[^a-z0-9-]+", "-", t).strip("-")
+    return t[:40]
+
+
+def _provision(it, s=None, subdomain=""):
+    """给一张卡片在 Gately 上建/更新反代规则，并把外网地址写回卡片。"""
+    s = s or db.get_settings()
+    base = (s.get("gately_domain") or "").strip().strip(".")
+    if not base:
+        raise HTTPException(400, "先在设置 → 反代面板里填「根域名」")
+    sub = _slug(subdomain) or _slug(it.get("container_name") or it.get("name") or "")
+    if not sub:
+        raise HTTPException(400, "生成不出子域名，请手动填写")
+    port, tls = _gately_listen(s)
+    domain = "%s.%s" % (sub, base)
+    target = _item_target(it, s)
+    c = _gately_client(s)
+    try:
+        res = gately.ensure_site(c, port, tls, domain, target, name=it.get("name") or sub)
+    except gately.GatelyError as e:
+        raise HTTPException(400, "Gately 写入失败：%s" % e)
+    url = "%s://%s" % ("https" if tls else "http", domain)
+    db.update_item(int(it["id"]), {"url_wan": url})
+    return {"ok": True, "action": res["action"], "domain": domain, "url": url, "target": target}
+
+
+@app.post("/api/admin/gately/provision")
+def admin_gately_provision(body: GatelyProvisionBody, _=Depends(require_admin)):
+    it = db.get_item(int(body.item_id))
+    if not it:
+        raise HTTPException(404, "卡片不存在")
+    return _provision(it, subdomain=body.subdomain)
 
 
 # ---------------------------------------------------------------- static (must be last)

@@ -109,6 +109,17 @@ DEFAULT_SETTINGS = {
     # 整个设置对象，所以这个键在存量实例里可能已被写进 DB，改默认值对它们无效。
     "scan_hide_no_port": False,
     "footer_text": "",
+    # ---------------- 反代面板联动（Gately）----------------
+    # gately_url 例：http://192.168.1.109:16680；gately_token 在面板「API 令牌」页建，
+    # 只需 webservice:read + webservice:write（读规则、建规则）。
+    # gately_domain 是根域名：给卡片生成反代时拼成 <子域名>.<根域名>。
+    # gately_auto：容器带标签 nav.proxy.domain=<子域名> 时，扫描导入/同步自动建反代并写外网地址。
+    "gately_url": "",
+    "gately_token": "",
+    "gately_domain": "",
+    "gately_listener_port": 443,
+    "gately_tls": True,
+    "gately_auto": False,
 }
 
 SCHEMA = """

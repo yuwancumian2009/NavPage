@@ -995,7 +995,7 @@ body {
 .np-wan-paste { margin-top: 6px; }
 .np-wan-tab { table-layout: fixed; }
 .np-wan-tab th, .np-wan-tab td { padding: 6px 8px; vertical-align: middle; }
-.np-wan-tab .col-back { width: 172px; }
+.np-wan-tab .col-back { width: 208px; }
 .np-wan-tab .col-card { width: 196px; }
 .np-wan-tab .col-wan { width: 158px; }
 .np-wan-tab .np-scheme { margin-right: 0; }

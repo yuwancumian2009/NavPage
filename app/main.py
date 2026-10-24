@@ -3020,7 +3020,8 @@ def admin_gately_preview(_=Depends(require_admin)):
         it, how = _match_gately(r, items)
         out.append({
             **r,
-            "url": "%s://%s" % (r["scheme"], r["domain"]),
+            "domain": _wan_host(r["domain"], r["scheme"], r.get("listener_port")),
+            "url": "%s://%s" % (r["scheme"], _wan_host(r["domain"], r["scheme"], r.get("listener_port"))),
             "item_id": it["id"] if it else None,
             "item_name": (it or {}).get("name") or "",
             "current_wan": (it or {}).get("url_wan") or "",
@@ -3032,6 +3033,15 @@ def admin_gately_preview(_=Depends(require_admin)):
         "items": [{"id": i["id"], "name": i["name"], "port": int(i.get("container_port") or 0),
                    "url_wan": i.get("url_wan") or ""} for i in items],
     }
+
+
+def _wan_host(domain, scheme, port):
+    """外网地址里的 host 部分：监听口不是 80/443 时必须带端口，否则写出来的地址打不开。"""
+    if not port:
+        return domain
+    if (scheme == "https" and int(port) == 443) or (scheme == "http" and int(port) == 80):
+        return domain
+    return "%s:%d" % (domain, int(port))
 
 
 def _slug(text):
@@ -3057,7 +3067,7 @@ def _provision(it, s=None, subdomain=""):
         res = gately.ensure_site(c, port, tls, domain, target, name=it.get("name") or sub)
     except gately.GatelyError as e:
         raise HTTPException(400, "Gately 写入失败：%s" % e)
-    url = "%s://%s" % ("https" if tls else "http", domain)
+    url = "%s://%s" % ("https" if tls else "http", _wan_host(domain, "https" if tls else "http", port))
     db.update_item(int(it["id"]), {"url_wan": url})
     return {"ok": True, "action": res["action"], "domain": domain, "url": url, "target": target}
 

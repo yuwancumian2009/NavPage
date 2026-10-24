@@ -355,6 +355,7 @@ def bootstrap(request: Request, mode: str = ""):
 @app.get("/api/widgets")
 def api_widgets(request: Request, ids: str = ""):
     """批量取卡片小组件数据。需要登录（否则会泄露媒体库/下载统计）。"""
+    _WIDGET_LAST_HIT["t"] = time.time()
     if not is_authed(request):
         raise HTTPException(401, "未登录")
     s = db.get_settings()
@@ -617,6 +618,39 @@ def _wallpaper_warmer():
                     pass
         except Exception:
             time.sleep(60)
+
+
+_WIDGET_LAST_HIT = {"t": 0.0}
+
+
+def _widgets_warmer():
+    """空跑预热小组件缓存。
+
+    冷缓存时一次 /api/widgets 要把 20 个面板全问一遍（实测 9.5 秒），第一个打开页面的人
+    就得盯着空白卡片。这里在后台先跑一遍；之后只在「最近 10 分钟有人看过页面」时才继续热，
+    没人用就安静待着，不去打扰远端面板。
+    """
+    first = True
+    while True:
+        try:
+            time.sleep(15 if first else 55)
+            warm = first or (time.time() - _WIDGET_LAST_HIT["t"] < 600)
+            first = False
+            if not warm:
+                continue
+            st = db.get_settings() or {}
+            if not st.get("widgets_enabled"):
+                continue
+            items = [i for i in db.list_items(include_hidden=False) if i.get("widget")]
+            if items:
+                widgets.fetch_many(items, ttl=max(5, int(st.get("widget_interval") or 60)))
+        except Exception:
+            time.sleep(30)
+
+
+@app.on_event("startup")
+def _start_widgets_warmer():
+    threading.Thread(target=_widgets_warmer, daemon=True).start()
 
 
 @app.on_event("startup")

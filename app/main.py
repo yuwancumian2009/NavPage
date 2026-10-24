@@ -2362,8 +2362,6 @@ def scan_import(request: Request, body: ImportBody, _=Depends(require_admin)):
         wanted = [(str(body.host or ""), n) for n in (body.names or [])]
     added, updated = 0, 0
     for host, name in wanted:
-        if host:
-            continue      # 远端采集源的容器：反代指向远端机器，模板地址不可靠，留给用户手动建
         pair = idx.get((host, name))
         if not pair:
             continue
@@ -2412,6 +2410,8 @@ def _auto_provision_batch(s, wanted, idx):
         return 0, "Gately 未配置完整（地址/令牌/根域名）"
     done, errs = 0, []
     for host, name in wanted:
+        if host:
+            continue    # 远端采集源的容器：反代要指向远端机器，模板地址不可靠，留给用户手动建
         pair = idx.get((host, name))
         if not pair:
             continue

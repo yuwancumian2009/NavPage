@@ -2089,8 +2089,101 @@ def _key(cfg):
     return hashlib.sha1(raw.encode()).hexdigest()
 
 
+# 网络类失败的识别：远端偶发抖动（TLS 握手超时、连接被重置）不该把卡片打成红色错误
+_NET_HINTS = ("Timeout", "timeout", "ConnectError", "ReadTimeout", "handshake",
+              "Connection reset", "RemoteProtocol", "SSL", "EOF occurred",
+              "Network is unreachable", "Temporary failure", "Name or service")
+_LAST_OK = {}          # key -> (ts, result)   最近一次成功结果
+_LAST_ERR = {}         # key -> (ts, err)      最近一次失败（用来判断要不要挂「旧数据」标记）
+_INFLIGHT = set()      # 正在后台刷新的 key，避免并发请求把同一个源打爆
+_STALE_MAX = 1800      # 旧数据最多顶 30 分钟，再久就老实报错
+_FAIL_TTL = 15         # 失败结果只钉 15 秒，恢复得快
+
+
+def _looks_net_error(res):
+    if res.get("ok"):
+        return False
+    e = str(res.get("error") or "")
+    return any(h in e for h in _NET_HINTS)
+
+
+def _call_provider(p, cfg):
+    """调 provider；网络类错误自动重试一次（远端握手抖动基本第二次就过了）。"""
+    res = None
+    for attempt in range(2):
+        try:
+            res = p["fetch"](cfg)
+        except Exception as e:
+            res = _err(f"{type(e).__name__}: {e}")
+        if not isinstance(res, dict):
+            res = _err("provider 返回异常")
+        res.setdefault("ok", False)
+        if res.get("ok") or not _looks_net_error(res):
+            break
+        if attempt == 0:
+            time.sleep(0.6)
+    return res
+
+
+def _store(k, res, ttl):
+    """写缓存。成功→按 ttl 缓存并清掉失败标记；失败→保留上次好数据并把它顶上（带 stale 标记）。"""
+    now = time.time()
+    res["ts"] = int(now)
+    if res.get("ok"):
+        with _cache_lock:
+            _LAST_OK[k] = (now, res)
+            _LAST_ERR.pop(k, None)
+        keep = ttl
+    else:
+        with _cache_lock:
+            _LAST_ERR[k] = (now, str(res.get("error"))[:120])
+            prev = _LAST_OK.get(k)
+        keep = min(ttl, _FAIL_TTL)
+        if prev and now - prev[0] <= _STALE_MAX:
+            d = dict(prev[1])
+            d["stale"] = max(1, int(now - prev[0]))   # 前端据此显示「⟳」（0 会被当成 false）
+            d["warn"] = str(res.get("error"))[:120]
+            res = d
+    with _cache_lock:
+        _cache[k] = (now, res, keep)
+        if len(_cache) > 500:
+            for kk in sorted(_cache, key=lambda x: _cache[x][0])[:200]:
+                _cache.pop(kk, None)
+    return res
+
+
+def _refresh_async(k, cfg, ttl):
+    """后台刷新：同一个 key 同时在跑的只留一个线程。"""
+    with _cache_lock:
+        if k in _INFLIGHT:
+            return
+        _INFLIGHT.add(k)
+    p = PROVIDERS.get(cfg.get("type"))
+    if not p:
+        with _cache_lock:
+            _INFLIGHT.discard(k)
+        return
+
+    def run():
+        try:
+            _store(k, _call_provider(p, cfg), ttl)
+        finally:
+            with _cache_lock:
+                _INFLIGHT.discard(k)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
 def fetch(cfg, use_cache=True, ttl=CACHE_TTL):
-    """取单个小组件的数据。失败也缓存一小会儿，避免失败风暴。"""
+    """取单个小组件的数据。
+
+    远端面板（甲骨文 Emby 走公网 HTTPS）偶发握手超时，早期版本会把失败缓存满一个周期，
+    卡片就整块变红报错（用户 2026-10-23 反馈）。现在的策略：
+      1. 缓存新鲜 → 直接返回；
+      2. 缓存过期但有旧值 → **立刻返回旧值**，后台线程去刷新（stale-while-revalidate），
+         只有后台刷新真的失败了才在卡片上挂「⟳」标记，页面不干等；
+      3. 完全没有数据（首次）→ 同步取，网络类错误自动重试一次。
+    """
     if not cfg or not cfg.get("type"):
         return {"ok": False, "error": "未配置"}
     p = PROVIDERS.get(cfg["type"])
@@ -2102,24 +2195,29 @@ def fetch(cfg, use_cache=True, ttl=CACHE_TTL):
     if use_cache:
         with _cache_lock:
             hit = _cache.get(k)
-        if hit and now - hit[0] < ttl:
-            return hit[1]
+            err = _LAST_ERR.get(k)
+        if hit and now - hit[0] < hit[2]:
+            d = dict(hit[1])
+            if err and not d.get("stale"):
+                d["stale"] = max(1, int(now - hit[0]))
+                d["warn"] = err[1]
+            return d
+        if hit:
+            age = now - hit[0]
+            d = dict(hit[1])
+            if d.get("ok"):
+                if age <= _STALE_MAX:
+                    if err:
+                        d["stale"] = max(1, int(age))
+                        d["warn"] = err[1]
+                    _refresh_async(k, cfg, ttl)
+                    return d
+                # 旧数据太久了（>30 分钟没成功过）：不再顶替，走同步取，老实报错
+            else:
+                _refresh_async(k, cfg, ttl)     # 已知是错误：立刻返回，别让页面等重试
+                return d
 
-    try:
-        res = p["fetch"](cfg)
-    except Exception as e:
-        res = _err(f"{type(e).__name__}: {e}")
-    if not isinstance(res, dict):
-        res = _err("provider 返回异常")
-    res.setdefault("ok", False)
-    res["ts"] = int(now)
-
-    with _cache_lock:
-        _cache[k] = (now, res)
-        if len(_cache) > 500:
-            for kk in sorted(_cache, key=lambda x: _cache[x][0])[:200]:
-                _cache.pop(kk, None)
-    return res
+    return _store(k, _call_provider(p, cfg), ttl)
 
 
 def fetch_many(items, ttl=CACHE_TTL):

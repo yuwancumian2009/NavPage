@@ -758,6 +758,13 @@
         if (!s.value.status_dot || !it || !it.container_name) return null;
         return st.value[it.id] || null;
       }
+      // 小组件用「上次成功的数据」兜底时，给个轻提示（悬浮看原因）
+      function staleTip(w) {
+        const s2 = Math.max(1, Math.round((w.stale || 0) / 60));
+        return '本次取数失败，显示 ' + (s2 >= 60 ? Math.round(s2 / 60) + ' 小时' : s2 + ' 分钟') + '前的数据'
+          + (w.warn ? '（' + w.warn + '）' : '');
+      }
+
       function dotTip(it) {
         const d = dotOf(it); if (!d) return '';
         const ms = d.ms || 0;
@@ -2909,7 +2916,7 @@
         wpop, wpopShow, wpopHide, wpopHold,
         onWidgetTypeChange, testWidget, loadWidgets,
         st, dotOf, dotTip, loadStatus,
-        showUrlFor, barW, layoutMode, layoutDirty, savingLayout, dragId, dragOverKey,
+        showUrlFor, barW, staleTip, layoutMode, layoutDirty, savingLayout, dragId, dragOverKey,
         startLayout, cancelLayout, onDragStart, onDragOverGroup, onDragOverCard, onDrop,
         onDragEnd, saveLayout, quickAddGroup,
         cmpRows, cmpLoading, cmpError, cmpRoot, cmpLast, cmpDlg, cmpDirty,

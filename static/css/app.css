@@ -532,6 +532,10 @@ body {
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden; word-break: break-word;
 }
+.np-wstale {
+  flex: none; margin-left: auto; padding-left: 4px;
+  font-size: 11px; line-height: 1; opacity: .45;
+}
 .np-wdot {
   flex: none; width: 7px; height: 7px; border-radius: 50%; margin-top: 5px;
   background: #67c23a; box-shadow: 0 0 6px rgba(103, 194, 58, .8);

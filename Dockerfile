@@ -15,26 +15,19 @@ RUN pip install --no-cache-dir -r /app/requirements.txt \
         -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn \
  || pip install --no-cache-dir -r /app/requirements.txt
 
-COPY app /app/app
-COPY static /app/static
-
-# Compose 管理要用 docker CLI + compose 插件。只拷两个静态二进制，
-# 不装 docker.io 那一坨（省 100MB+）。插件目录必须是 /usr/local/libexec/docker/cli-plugins，
-# CLI 只在这个路径下自动发现插件。
-COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
-COPY --from=docker:cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
-
 # 2.0.0：内置 frpc（FRP 隧道）。官方 release 按 TARGETARCH 取对应架构的包，
 # 只留 frpc 一个二进制（约 15MB），frps 由用户自己的公网服务器跑。
 #
-# 下载顺序有讲究（2026-10-25 在 NAS 上实测）：直连 GitHub release 在国内超时，
-# gh-proxy.com 能拿到完整包，ghfast.top 会返回被截断的文件，所以 直连 -> gh-proxy -> ghfast。
+# 两个坑（2026-10-25 在 NAS 上实测）：
+#  1) 直连 GitHub release 在国内会「连上但不动」，python urlretrieve 没有超时代价是构建挂死 20 分钟，
+#     所以这里必须显式 timeout，并按 直连 -> gh-proxy -> ghfast 逐级回退；
+#  2) 这一层必须放在 COPY static 之前 —— 否则每次改前端都会让 frp 重新下载一遍（部署从 3 分钟变 20 分钟）。
 ARG TARGETARCH
 ARG FRP_VERSION=0.61.1
 RUN set -eux; \
     arch="${TARGETARCH:-amd64}"; \
     url="https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_${arch}.tar.gz"; \
-    dl() { python -c "import urllib.request,sys;urllib.request.urlretrieve(sys.argv[1],'/tmp/frp.tgz')" "$1"; }; \
+    dl() { python -c "import urllib.request,sys,shutil;r=urllib.request.urlopen(sys.argv[1],timeout=20);open('/tmp/frp.tgz','wb').write(r.read())" "$1"; }; \
     rm -f /tmp/frp.tgz; \
     dl "$url" || dl "https://gh-proxy.com/$url" || dl "https://ghfast.top/$url"; \
     size=$(python -c "import os;print(os.path.getsize('/tmp/frp.tgz'))"); \
@@ -43,6 +36,15 @@ RUN set -eux; \
     mv /tmp/frp_${FRP_VERSION}_linux_${arch}/frpc /usr/local/bin/frpc; \
     chmod +x /usr/local/bin/frpc; rm -rf /tmp/frp.tgz /tmp/frp_${FRP_VERSION}_linux_${arch}; \
     frpc -v
+
+COPY app /app/app
+COPY static /app/static
+
+# Compose 管理要用 docker CLI + compose 插件。只拷两个静态二进制，
+# 不装 docker.io 那一坨（省 100MB+）。插件目录必须是 /usr/local/libexec/docker/cli-plugins，
+# CLI 只在这个路径下自动发现插件。
+COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker:cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
 
 RUN mkdir -p /data/wallpapers /data/icons /data/gw
 

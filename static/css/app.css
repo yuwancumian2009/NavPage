@@ -1008,6 +1008,14 @@ body {
   font-size: 13px; color: #303133; flex-wrap: wrap;
 }
 .np-skip { font-size: 12px; line-height: 1.6; word-break: break-all; }
+/* 排除名单：一个容器一个小胶囊，右边直接带「恢复」，手机上可换行不溢出 */
+.np-excl { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.np-excl-tag { display: inline-flex; align-items: center; gap: 2px; padding: 2px 4px 2px 10px;
+  border: 1px solid #e4e7ed; border-radius: 14px; font-size: 12px; line-height: 26px;
+  background: #fafafa; color: #606266; max-width: 100%; }
+.np-excl-tag > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-excl-dead { color: #c0c4cc; font-style: normal; margin-left: 4px; }
+html.dark .np-excl-tag { background: #1f1f1f; border-color: #3a3a3a; color: #cfd3dc; }
 .np-empty-sm { padding: 26px 0; text-align: center; color: #909399; font-size: 13px; }
 
 /* ---- 导入外网地址：固定列宽，长域名/长卡片名不再把后两列挤飞（2026-10-19） ---- */

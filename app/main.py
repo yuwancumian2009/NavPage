@@ -2320,9 +2320,10 @@ def scan(_=Depends(require_admin)):
         key = (str(src.get("id") or ""), c.get("name") or "")
         live.add(key)
         if not _eligible(c, s):
-            skipped.append({"name": c.get("name"), "container_name": key[1],
-                            "source_name": src.get("name") or "本机",
-                            "reason": _skip_reason(c, s)})
+            reason = _skip_reason(c, s)
+            if reason != "已排除":      # 已排除的有专门的「排除名单」区块，不重复堆在已跳过里
+                skipped.append({"name": c.get("name"), "container_name": key[1],
+                                "source_name": src.get("name") or "本机", "reason": reason})
             continue
         cand = _candidate(c, s, src)
         cand.update({"id": c.get("id", ""), "image": c.get("image", ""),
@@ -2347,7 +2348,13 @@ def scan(_=Depends(require_admin)):
     for v in views:                      # 本机没有上报数，用实时扫到的容器数补上，别显示 0
         if (v.get("kind") or "local") == "local":
             v["container_count"] = sum(1 for k in live if k[0] == str(v.get("id") or ""))
+    # 排除名单要能在界面上看见，否则「被排除了」这件事对用户是隐形的：
+    # 容器不出现、也不在新发现里，只有「已跳过」里一行灰字（2026-10-26 用户报 gately 凭空消失）。
+    excl_names = [x.strip() for x in (s.get("scan_exclude") or "").split(",") if x.strip()]
+    live_names = {c.get("name") for _src, c in pairs}
+    excluded = [{"name": n, "exists": n in live_names} for n in excl_names]
     return {"ok": True, "docker": info, "new": new, "existing": existing,
+            "excluded": excluded,
             "missing": missing, "skipped": skipped, "total": len(live),
             "errors": errors, "sources": views, "auto": _auto_scan_info()}
 

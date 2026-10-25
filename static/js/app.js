@@ -1665,6 +1665,14 @@
           await doScan();
         } catch (e) { if (e !== 'cancel') apiErr(e); }
       }
+      /* 排除名单里点「恢复」：把名字从 scan_exclude 摘掉，重扫就能再出现在新发现里 */
+      async function restoreExcluded(name) {
+        try {
+          await api.post('/api/admin/scan/exclude', { names: [name], excluded: false });
+          ElMessage.success('已恢复「' + name + '」，重新扫描后可在「新发现」里导入');
+          await doScan();
+        } catch (e) { apiErr(e); }
+      }
       function selectAllNew() {
         selNew.value = (scanResult.value ? scanResult.value.new : []).map(keyOf);
       }
@@ -3293,7 +3301,7 @@
         setMode, onEnter, openItem, saveItem, delItem, delItemById, setExcluded,
         addCat, renameCat, delCat, bulkDelCats, moveCat, catIdx,
         selCats, catAllChecked, catIndeterminate,
-        onCatCheck, toggleAllCats, doScan, selectAllNew, importSelected, excludeCand, syncAll, autocatAll, autoSaveAt, flushAutoSave,
+        onCatCheck, toggleAllCats, doScan, selectAllNew, importSelected, excludeCand, restoreExcluded, syncAll, autocatAll, autoSaveAt, flushAutoSave,
         wanText, wanRows, wanItems, wanParsing, wanApplying, wanOverwrite, wanSelectedCount, wanPreview, wanApply,
         gw, gwBusy, gwProxying, loadGw, gwSave, gwReload, gwIssue, gwCertDel, gwSyncAll,
         gwNodes, nodeBusy, nodeSteps, nodeForm, loadNodes, nodeLogText,

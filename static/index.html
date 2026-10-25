@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/vendor/element-plus.css?v=1">
-<link rel="stylesheet" href="/css/app.css?v=78">
+<link rel="stylesheet" href="/css/app.css?v=80">
 </head>
 <body>
 <div id="app" v-cloak :class="{ 'np-settings-win': settingsWin }">
@@ -485,6 +485,18 @@
                   </tr>
                 </tbody>
               </table>
+            </div>
+
+            <!-- 排除名单：被排除的容器不会出现在「新发现」里，必须能看见、能一键放回 -->
+            <div class="np-scan-sec" v-if="scanResult.excluded && scanResult.excluded.length">
+              <div class="np-scan-head"><b>排除名单 {{ scanResult.excluded.length }} 个</b>
+                <span class="np-bar-tip">排除了就不会再导入；点「恢复」放回候选</span></div>
+              <div class="np-excl">
+                <span class="np-excl-tag" v-for="x in scanResult.excluded" :key="x.name">
+                  <span>{{ x.name }}<em v-if="!x.exists" class="np-excl-dead">容器已不存在</em></span>
+                  <el-button size="small" text type="primary" @click="restoreExcluded(x.name)">恢复</el-button>
+                </span>
+              </div>
             </div>
 
             <div class="np-scan-sec" v-if="scanResult.skipped && scanResult.skipped.length">
@@ -2263,6 +2275,6 @@
 <script src="/vendor/element-plus.min.js"></script>
 <script src="/vendor/element-icons.min.js"></script>
 <script src="/vendor/axios.min.js"></script>
-<script src="/js/app.js?v=93"></script>
+<script src="/js/app.js?v=95"></script>
 </body>
 </html>

@@ -1225,6 +1225,15 @@
                   </div>
                 </div>
                 <div class="np-field">
+                  <label>传输协议</label>
+                  <el-select v-model="s.frp_protocol" size="small" style="width:220px">
+                    <el-option label="tcp（frps 直连 7000）" value="tcp"></el-option>
+                    <el-option label="websocket（ws 明文）" value="websocket"></el-option>
+                    <el-option label="wss（443 反代，最常见的公网玩法）" value="wss"></el-option>
+                  </el-select>
+                  <div class="np-hint">frps 挂在 nginx/OpenResty 后面、对外只有 443 时选 <code>wss</code>，端口填 443。</div>
+                </div>
+                <div class="np-field">
                   <label>Token</label>
                   <el-input v-model="s.frp_token" size="small" type="password" show-password></el-input>
                 </div>
@@ -1237,7 +1246,14 @@
                       <el-option label="https" value="https"></el-option>
                     </el-select>
                   </div>
-                  <div class="np-hint">填了就用 <code>子域名.后缀</code> 自动生成每条卡片的 FRP 地址（DNS 需把 <code>*.后缀</code> 解析到 frps）。</div>
+                  <div class="np-hint">frps 配了 <code>subdomainHost</code> 才用这一项（frps 的 vhost 端口在 80/443 时最省事）。</div>
+                </div>
+                <div class="np-field">
+                  <label>自定义域名根后缀（customDomains）</label>
+                  <div class="np-2col">
+                    <el-input v-model="s.frp_domain" size="small" placeholder="o.example.com"></el-input>
+                  </div>
+                  <div class="np-hint">frps 没开 <code>subdomainHost</code> 时用这个：每条卡片按 <code>容器名.后缀</code> 注册 customDomains，DNS 需把 <code>*.后缀</code> 解析到 frps，并由 frps 前面的 nginx 把该域名转到 frps 的 vhost HTTP 端口。</div>
                 </div>
                 <div class="np-field">
                   <label>frps 的 HTTP / HTTPS 端口</label>

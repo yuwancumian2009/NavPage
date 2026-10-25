@@ -50,6 +50,12 @@ class FrpManager:
         lines = [
             f'serverAddr = "{toml_escape(cfg.get("frp_server") or "")}"',
             f'serverPort = {int(cfg.get("frp_port") or 7000)}',
+        ]
+        # frps 挂在 443 后面（OpenResty/nginx 终结 TLS）时必须走 wss，否则明文 TCP 直接连不上。
+        proto = (cfg.get("frp_protocol") or "tcp").strip().lower()
+        if proto and proto != "tcp":
+            lines.append(f'transport.protocol = "{toml_escape(proto)}"')
+        lines += [
             'auth.method = "token"',
             f'auth.token = "{toml_escape(cfg.get("frp_token") or "")}"',
             'transport.tls.enable = true',

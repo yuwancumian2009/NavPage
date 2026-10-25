@@ -632,6 +632,8 @@ body {
 .np-tabs > .el-tabs__content { flex: 1; overflow: hidden; }
 .np-tabs .el-tab-pane { height: 100%; display: flex; flex-direction: column; min-height: 0; }
 .np-scroll { flex: 1; min-height: 0; overflow: auto; }
+/* 项目页：列宽自适应，不允许横向滚动（用户明确要求） */
+.np-scroll.np-no-x { overflow-x: hidden; }
 /* 兜底：万一哪个标签页内容没包进 .np-scroll，面板自身也能滚，不会再「看不到保存按钮」 */
 .np-tabs .el-tab-pane { overflow-y: auto; overflow-x: hidden; }
 
@@ -1083,16 +1085,18 @@ body {
 .ep-table .c-ver { width: 130px; }
 .ep-table .c-auto { width: 92px; }
 /* ---- 项目表专用：长地址/长名称折行显示全文，操作列按钮紧凑排满 ----
-   列宽 52+160+230+230+80+192 = 944，对应桌面抽屉 980px 的内容宽（多出来的宽按比例摊）。
+   固定列 52+200+200+76+192 = 720，名称列 auto 吸收余量（桌面抽屉 980 时名称约 216）。
    注意：td 的 width 含 padding（box-sizing: border-box），操作列 192 - 20 = 172 才装得下 4 个按钮（164）。
    之前沿用通用单行省略规则：地址列被截成「http://192.168.1.1…」，
    操作列的「排除」只剩一个省略号、点都点不到。 */
 .ep-table.np-items-table { table-layout: fixed; }
 .ep-table.np-items-table .c-icon { width: 52px; }
-.ep-table.np-items-table .c-name { width: 160px; }
+/* 名称列给 auto：吃掉剩余宽度。固定列合计 720，抽屉再窄也不会顶出横向滚动条
+   （之前 944 是硬算出来的，竖直滚动条占掉的 8px 就会让整表撑出横向滚动） */
+.ep-table.np-items-table .c-name { width: auto; min-width: 120px; }
 .ep-table.np-items-table .c-lan,
-.ep-table.np-items-table .c-wan { width: 230px; }
-.ep-table.np-items-table .c-cat { width: 80px; }
+.ep-table.np-items-table .c-wan { width: 200px; }
+.ep-table.np-items-table .c-cat { width: 76px; }
 .ep-table.np-items-table .c-op { width: 192px; white-space: nowrap; overflow: visible; }
 /* 名称 / 地址：允许折行，全文可见（hover 另有 title 提示） */
 .ep-table.np-items-table tbody td:nth-child(2),
@@ -1184,14 +1188,41 @@ body {
   .ep-table .c-count { width: 76px; } .ep-table .c-size { width: 92px; } .ep-table .c-move { width: 76px; } .ep-table .c-act { width: 146px; }
   .ep-table .c-box { width: 114px; } .ep-table .c-port { width: 72px; }
   .ep-table .c-tag { width: 130px; } .ep-table .c-state { width: 132px; } .ep-table .c-ver { width: 128px; } .ep-table .c-act { width: 136px; }
-  /* 项目表手机上给足宽度（横向滑动），地址折行显示全文，操作按钮不再被裁 */
-  .ep-table.np-items-table { min-width: 716px; }
-  .ep-table.np-items-table .c-icon { width: 44px; }
-  .ep-table.np-items-table .c-name { width: 110px; }
-  .ep-table.np-items-table .c-lan, .ep-table.np-items-table .c-wan { width: 150px; }
-  .ep-table.np-items-table .c-cat { width: 72px; }
-  .ep-table.np-items-table .c-op { width: 190px; }
-  .ep-table.np-items-table .c-op .el-button { padding: 4px 6px; }
+  /* 项目表：手机上改成卡片列表，一行一条，彻底没有横向滚动 */
+  .ep-table.np-items-table { display: block; min-width: 0; width: 100%; table-layout: auto; }
+  .ep-table.np-items-table thead { display: none; }
+  .ep-table.np-items-table tbody { display: block; }
+  .ep-table.np-items-table tbody tr {
+    display: grid; grid-template-columns: 30px minmax(0, 1fr);
+    column-gap: 9px; row-gap: 2px; align-items: start;
+    border: 1px solid #ebeef5; border-radius: 10px; background: #fff;
+    padding: 9px 11px; margin-bottom: 8px;
+  }
+  .ep-table.np-items-table tbody td {
+    display: block; width: auto; padding: 0; border: 0;
+    white-space: normal; overflow: visible; text-overflow: clip;
+  }
+  .ep-table.np-items-table tbody tr:hover td { background: transparent; }
+  .ep-table.np-items-table tbody td:nth-child(1) { grid-column: 1; grid-row: 1 / span 3; }
+  .ep-table.np-items-table tbody td:nth-child(2) { grid-column: 2; }
+  .ep-table.np-items-table tbody td:nth-child(2) > div.np-strong { white-space: normal; }
+  .ep-table.np-items-table tbody td:nth-child(3),
+  .ep-table.np-items-table tbody td:nth-child(4),
+  .ep-table.np-items-table tbody td:nth-child(5) { grid-column: 1 / -1; padding-left: 39px; }
+  .ep-table.np-items-table tbody td:nth-child(3)::before,
+  .ep-table.np-items-table tbody td:nth-child(4)::before,
+  .ep-table.np-items-table tbody td:nth-child(5)::before {
+    color: #a8abb2; font-size: 11px; margin-right: 6px; font-family: inherit;
+  }
+  .ep-table.np-items-table tbody td:nth-child(3)::before { content: "内网"; }
+  .ep-table.np-items-table tbody td:nth-child(4)::before { content: "外网"; }
+  .ep-table.np-items-table tbody td:nth-child(5)::before { content: "分类"; }
+  .ep-table.np-items-table tbody td:nth-child(6) {
+    grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px;
+    margin-top: 5px; padding-top: 7px; border-top: 1px dashed #ebeef5;
+  }
+  .ep-table.np-items-table tbody td:nth-child(6) .el-button { margin-left: 0; padding: 3px 9px; }
+  .ep-table.np-items-table tbody td:nth-child(5) { color: #606266; }
 
   /* 设置项：手机上没有横向空间，改成「标签在上、控件在下」占满整行 */
   .np-field { grid-template-columns: 1fr; row-gap: 6px; }

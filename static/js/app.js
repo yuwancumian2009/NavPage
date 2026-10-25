@@ -826,7 +826,11 @@
         } catch (e) { /* 忽略 */ }
       }
 
+      const refreshBusy = ref(false);
       async function reload() {
+        if (refreshBusy.value) return;
+        refreshBusy.value = true;
+        const t0 = Date.now();
         try {
           const r = await api.get('/api/admin/state');
           const d = r.data;
@@ -839,7 +843,12 @@
           s.value = Object.assign({}, s.value, d.settings || {});
           syncWallInput();
           await loadWidgetProviders();
-        } catch (e) { apiErr(e); }
+          const n = items.value.length;
+          const ms = Math.max(1, Math.round(Date.now() - t0));
+          const hhmm = new Date().toTimeString().slice(0, 8);
+          ElMessage({ message: '已刷新 · ' + n + ' 条 · ' + hhmm, type: 'success', duration: 1500 });
+          console.debug('[navpage] reload', n, ms + 'ms');
+        } catch (e) { apiErr(e); } finally { refreshBusy.value = false; }
         await loadWallpapers();
       }
 
@@ -3029,7 +3038,7 @@
         imgBadge, imgCheckedText, loadImgBadge, openImagesPage,
         imgAuto, cronPresets, cronPreset, autoNames, autoLastText, isAutoName, toggleAutoName, fmtTs, loadAuto,
         logoUrl, logoUrlInput, uploadLogo, useLogoUrl, clearLogo,
-        pruneSt, pruneModes, prunePreset, keepInput, keepList, addKeep, delKeep, secFold, toggleSec,
+        pruneSt, pruneModes, prunePreset, keepInput, keepList, addKeep, delKeep, secFold, toggleSec, refreshBusy,
         pruneBusy, prunePrev, pruneNames, pruneLastText, previewPrune, runPrune,
         loadBootstrap, loadWallpapers, reload, boot, doLogin, logout, changePw,
         setMode, onEnter, openItem, saveItem, delItem, delItemById, setExcluded,

@@ -233,7 +233,7 @@
       <div class="np-admin-head">
         <span class="np-admin-title">管理控制台</span>
         <span class="np-admin-actions">
-          <el-button v-if="token" size="small" @click="reload">刷新</el-button>
+          <el-button v-if="token" size="small" :loading="refreshBusy" @click="reload">刷新</el-button>
           <el-button v-if="token" size="small" type="danger" plain @click="logout">退出</el-button>
           <el-button size="small" text @click="adminOpen = false">关闭</el-button>
         </span>
@@ -259,7 +259,7 @@
             <el-button size="small" @click="refreshIcons()">重抓图标</el-button>
             <span class="np-bar-tip">共 {{ items.length }} 条</span>
           </div>
-          <div class="np-scroll">
+          <div class="np-scroll np-no-x">
             <table class="ep-table np-items-table">
               <thead>
                 <tr><th class="c-icon">图标</th><th class="c-name">名称</th><th class="c-lan">内网地址</th><th class="c-wan">外网地址</th><th class="c-cat">分类</th><th class="c-op">操作</th></tr>

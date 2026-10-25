@@ -84,7 +84,7 @@
         <div class="np-netbadge" :class="network.mode === 'lan' ? 'is-lan' : 'is-wan'"
              :title="'判定依据：' + (network.source || '未知') + (network.host ? ' ｜ 访问主机：' + network.host : '')">
           <span class="np-netdot"></span>
-          <span>{{ network.mode === 'lan' ? '内网访问' : '外网访问' }}</span>
+          <span>{{ network.mode === 'lan' ? '内网访问' : (network.mode === 'frp' ? 'FRP 访问' : '外网访问') }}</span>
           <span class="np-netip" v-if="network.client_ip">{{ network.client_ip }}</span>
         </div>
         <div class="np-modeswitch">

@@ -6,3 +6,6 @@ python-multipart==0.0.20
 pyyaml==6.0.2
 # 图标缩略图（上传的大图转 128px webp，首屏省 2MB+）
 pillow==11.1.0
+# 2.0.0 内置网关：aiohttp 做反代，cryptography 做 ACME(JWS/CSR/自签)
+aiohttp>=3.9,<4
+cryptography>=42

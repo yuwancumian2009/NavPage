@@ -14,6 +14,10 @@ services:
         max-file: "3"
     ports:
       - "8095:8080"
+      # 2.0.0 内置反代：HTTP 8081 / HTTPS 18443（设置 → 网关 里可改，改了这里也要同步）
+      # NAS 的 80/443 被 fnOS 占着，所以默认不用 80/443；路由器把外网 80/443 转到这两个端口即可。
+      - "8081:8081"
+      - "18443:18443"
     environment:
       TZ: Asia/Shanghai
       NAVPAGE_DATA: /data

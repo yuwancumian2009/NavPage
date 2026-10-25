@@ -125,6 +125,48 @@ DEFAULT_SETTINGS = {
     "icon_online_fallback": True,
     # 抓不到 favicon（纯 API 容器、没有前端的服务）时，用名称首字母生成占位图。
     "icon_letter_fallback": True,
+
+    # ---------------------------------------------------------- 2.0.0 内置网关
+    # 反代 + 证书 + DDNS + FRP 全部内置，不再依赖 Lucky/Gately。
+    "gw_enabled": False,
+    "gw_http_port": 8081,        # 反代 HTTP 监听（容器内 80 常被占，默认 8081）
+    "gw_https_port": 18443,      # 反代 HTTPS 监听（NAS 443 被 fnOS 占，默认 18443）
+    "gw_root_domain": "",        # 根域名：卡片自动反代拼成 <子域名>.<根域名>
+    "gw_auto_proxy": False,      # 扫描导入/同步时，给容器自动建反代并写回卡片
+    "gw_auto_cert": True,        # 建反代时自动申请证书
+    "gw_acme_email": "",
+    "gw_acme_env": "letsencrypt",   # letsencrypt | staging（测试用，不占签发配额）
+    "gw_acme_dir": "",              # 自建 ACME 目录地址（step-ca / Pebble），留空用上面的环境
+    "gw_acme_insecure": False,      # 自建 ACME 用自签证书时，跳过 TLS 校验
+    "gw_upstream_scheme": "http",   # 转发到容器时用的协议
+    "gw_verify_tls": False,         # 转发到 https 后端时是否校验证书（自签常关）
+    "gw_wan_scheme": "https",       # 卡片「外网地址」用 https 还是 http（跟着监听端口走）
+    "gw_wildcard": True,            # 一张 *.根域名 通配符证书覆盖所有卡片，省签发次数
+    "gw_target_host": "",           # 转发目标主机：留空自动用容器默认网关（=宿主机）
+    "gw_dns_wait": 8,               # DNS-01 写完 TXT 后等多少秒再让 ACME 去验
+
+    # 证书 / DNS：DNS-01 需要能改 TXT，同一套凭据也给 DDNS 用
+    "dns_provider": "",         # cloudflare | alidns | dnspod | webhook
+    "dns_creds": {},            # 供应商凭据（JSON）
+    "gw_cert_days": 30,         # 剩余天数小于它就自动续期
+
+    # DDNS
+    "ddns_enabled": False,
+    "ddns_record": "",          # 完整记录名，如 home.example.com
+    "ddns_interval": 300,       # 秒
+    "ddns_ip_sources": "https://api.ipify.org,https://myip.ipip.net/json,https://4.ipw.cn",
+
+    # FRP 客户端
+    "frp_enabled": False,
+    "frp_server": "",
+    "frp_port": 7000,
+    "frp_token": "",
+    "frp_vhost_http_port": 80,
+    "frp_vhost_https_port": 443,
+    "frp_scheme": "https",      # 卡片上 FRP 地址用 http 还是 https
+    "frp_subdomain_host": "",   # frps 的 subdomainHost；填了就用子域名模式
+    "frp_domain": "",           # 不用子域名模式时，卡片 FRP 地址的根域名（*.frp.xx.com 指向 frps）
+    "frp_log_level": "info",
 }
 
 SCHEMA = """
@@ -176,6 +218,16 @@ CREATE TABLE IF NOT EXISTS docker_sources (
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
+);
+-- 2.0.0 网关：证书元数据（PEM 落盘在 /data/gw/certs/<domain>.crt|.key）
+CREATE TABLE IF NOT EXISTS gw_certs (
+  domain TEXT PRIMARY KEY,
+  status TEXT DEFAULT 'pending',   -- pending | valid | error
+  issuer TEXT DEFAULT '',
+  not_before INTEGER DEFAULT 0,
+  not_after INTEGER DEFAULT 0,
+  error TEXT DEFAULT '',
+  updated_at INTEGER DEFAULT 0
 );
 """
 
@@ -395,14 +447,19 @@ ITEM_FIELDS = (
     "name", "description", "url_lan", "url_wan", "icon", "category_id",
     "sort", "hidden", "source", "container_name", "container_image",
     "container_port", "docker_host", "missing", "widget", "url_visible", "card_size",
-    "auto_created",
+    "auto_created", "url_frp", "proxy_domain", "addr_pref",
 )
 
 # 后加的列：老库启动时自动补齐，避免用户手动迁移
 MIGRATIONS = {
     "items": [("widget", "TEXT DEFAULT ''"), ("url_visible", "INTEGER DEFAULT -1"),
               ("card_size", "TEXT DEFAULT ''"), ("docker_host", "TEXT DEFAULT ''"),
-              ("auto_created", "INTEGER DEFAULT 0")],
+              ("auto_created", "INTEGER DEFAULT 0"),
+              # 2.0.0：卡片第三个地址（FRP 隧道的公网域名）+ 反代绑定的域名 + 地址使用偏好
+              # addr_pref: inherit/auto/lan/wan/frp —— 卡片可单独指定用哪个地址，
+              # 不再只能跟着右上角的全局开关走。
+              ("url_frp", "TEXT DEFAULT ''"), ("proxy_domain", "TEXT DEFAULT ''"),
+              ("addr_pref", "TEXT DEFAULT 'inherit'")],
     "categories": [("card_size", "TEXT DEFAULT ''")],
 }
 # card_size: '' = 跟随上级（条目→分类→全局），lg = 大卡，xs = 小卡（纯图标方形）
@@ -448,6 +505,43 @@ def _migrate(c):
     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_items_container_host "
               "ON items(docker_host, container_name) WHERE container_name <> ''")
     c.commit()
+
+
+# ---------------------------------------------------------------- 网关证书
+def cert_upsert(domain, **kw):
+    c = conn()
+    now = int(time.time())
+    cols = ("status", "issuer", "not_before", "not_after", "error")
+    vals = [kw.get(k, "") if isinstance(kw.get(k), str) else int(kw.get(k) or 0) for k in cols]
+    with _lock:
+        c.execute(
+            "INSERT INTO gw_certs(domain, status, issuer, not_before, not_after, error, updated_at) "
+            "VALUES(?,?,?,?,?,?,?) ON CONFLICT(domain) DO UPDATE SET "
+            "status=excluded.status, issuer=excluded.issuer, not_before=excluded.not_before, "
+            "not_after=excluded.not_after, error=excluded.error, updated_at=excluded.updated_at",
+            (domain, *vals, now))
+        c.commit()
+
+
+def cert_list():
+    c = conn()
+    with _lock:
+        rows = c.execute("SELECT * FROM gw_certs ORDER BY domain").fetchall()
+    return [dict(r) for r in rows]
+
+
+def cert_get(domain):
+    c = conn()
+    with _lock:
+        r = c.execute("SELECT * FROM gw_certs WHERE domain=?", (domain,)).fetchone()
+    return dict(r) if r else None
+
+
+def cert_delete(domain):
+    c = conn()
+    with _lock:
+        c.execute("DELETE FROM gw_certs WHERE domain=?", (domain,))
+        c.commit()
 
 
 def _row_to_item(r):
@@ -566,7 +660,7 @@ def update_item(iid, patch):
                 v = 1 if v else 0
             if k == "container_port":
                 v = int(v or 0)
-            if k in ("url_lan", "url_wan"):
+            if k in ("url_lan", "url_wan", "url_frp"):
                 v = netutil.normalize_url(v)
             if k == "widget":
                 v = _enc_widget(v)

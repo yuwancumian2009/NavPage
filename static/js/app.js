@@ -87,7 +87,10 @@
       const modeOptions = [
         { v: 'auto', t: '自动' },
         { v: 'lan', t: '内网' },
-        { v: 'wan', t: '外网' }
+        { v: 'wan', t: '外网' },
+        // 2.0.0：FRP 隧道地址。没配 FRP 的卡片会自动回落到反代/内网地址，
+        // 所以这一档即使全局没开也不会出现「一片空白」。
+        { v: 'frp', t: 'FRP' }
       ];
       const themeOptions = [
         { v: 'glass', t: '毛玻璃' },
@@ -567,7 +570,12 @@
       });
 
       // 桌面 980px：项目表 6 列（名称 + 内外网地址）需要宽度，780px 时地址只能折成两三行
-      const drawerSize = computed(function () { return isMobile.value ? '100%' : (window.innerWidth >= 1200 ? '980px' : '84vw'); });
+      // 设置独立窗口：/settings 打开时抽屉铺满整个窗口（没有主页面在后面）
+      const settingsWin = ref(location.pathname.replace(/\/+$/, '') === '/settings');
+      const drawerSize = computed(function () {
+        if (settingsWin.value) return '100%';
+        return isMobile.value ? '100%' : (window.innerWidth >= 1200 ? '980px' : '84vw');
+      });
 
       /* ---------------- 小工具 ---------------- */
       function initial(name) {
@@ -619,6 +627,8 @@
           const d = r.data;
           if (d.app) appMeta.value = d.app;
           if (d.settings) s.value = Object.assign({}, s.value, d.settings);
+          // dns_creds 是对象，缺省时补上，否则 v-model="s.dns_creds.token" 写不进去
+          if (!s.value.dns_creds || typeof s.value.dns_creds !== 'object') s.value.dns_creds = {};
           locked.value = !!d.locked;
           if (!d.locked) {
             groups.value = d.groups || [];
@@ -865,7 +875,138 @@
         await loadWallpapers();
         // 角标先发（只是个轻量 GET），再等 reload 把卡片拉回来 —— 否则卡片多的时候
         // 角标要等 reload 完才出现，顶栏会先空一下（2026-10-18 实测 1.2s 内还没渲染）
-        if (token.value) { loadImgBadge(); await reload(); loadGatelyState(); }
+        if (token.value) { loadImgBadge(); await reload(); loadGatelyState(); loadGw(); }
+        // 独立设置窗口（/settings）：直接铺开设置面板，按 ?tab= 定位到具体页签
+        if (settingsWin.value) {
+          const q = new URLSearchParams(location.search);
+          adminOpen.value = true;
+          if (q.get('tab')) tab.value = q.get('tab');
+          collapseAllSec();
+          loadGw();
+        }
+      }
+
+
+      /* ---------------- 2.0.0 内置网关（反代 / 证书 / DDNS / FRP） ----------------
+         这一块的所有操作都要求后端 2.0.0+：老版本会 404，前端只是静默不显示状态，
+         不影响原有功能（渐进增强）。 */
+      const gw = ref({});
+      const gwBusy = ref('');
+      const gwProxying = ref(0);
+      const GW_KEYS = [
+        'gw_enabled', 'gw_http_port', 'gw_https_port', 'gw_root_domain', 'gw_wildcard',
+        'gw_wan_scheme', 'gw_target_host', 'gw_upstream_scheme', 'gw_verify_tls',
+        'gw_auto_proxy', 'gw_auto_cert', 'gw_acme_email', 'gw_acme_env', 'gw_acme_dir',
+        'gw_acme_insecure', 'gw_cert_days', 'gw_dns_wait',
+        'dns_provider', 'dns_creds',
+        'ddns_enabled', 'ddns_record', 'ddns_interval', 'ddns_ip_sources',
+        'frp_enabled', 'frp_server', 'frp_port', 'frp_token', 'frp_scheme',
+        'frp_vhost_http_port', 'frp_vhost_https_port', 'frp_subdomain_host', 'frp_domain'
+      ];
+      async function loadGw() {
+        if (!token.value) return;
+        try { const r = await api.get('/api/admin/gw/status'); gw.value = r.data || {}; } catch (e) { /* 忽略 */ }
+      }
+      function gwPatch() {
+        const out = {};
+        GW_KEYS.forEach(function (k) { if (s.value[k] !== undefined) out[k] = s.value[k]; });
+        return out;
+      }
+      async function gwSave() {
+        gwBusy.value = 'save';
+        try {
+          const r = await api.put('/api/admin/gw/settings', { patch: gwPatch() });
+          ElMessage.success(r.data && r.data.reload ? '已保存，网关正在重载' : '已保存');
+          await loadGw();
+        } catch (e) { apiErr(e); }
+        gwBusy.value = '';
+      }
+      async function gwReload() {
+        gwBusy.value = 'reload';
+        try { await api.post('/api/admin/gw/reload'); ElMessage.success('网关已重载'); await loadGw(); }
+        catch (e) { apiErr(e); }
+        gwBusy.value = '';
+      }
+      async function gwIssue() {
+        gwBusy.value = 'cert';
+        try {
+          const r = await api.post('/api/admin/gw/cert/issue', { force: true }, { timeout: 180000 });
+          if (r.data && r.data.ok) {
+            ElMessage.success('证书已签发：' + (r.data.domains || []).join(', '));
+          } else {
+            ElMessage.error('签发失败：' + ((r.data && r.data.error) || '未知错误'));
+          }
+          await loadGw();
+        } catch (e) { apiErr(e); }
+        gwBusy.value = '';
+      }
+      async function gwCertDel(name) {
+        gwBusy.value = 'certdel';
+        try { await api.delete('/api/admin/gw/cert/' + encodeURIComponent(name)); ElMessage.success('已删除'); await loadGw(); }
+        catch (e) { apiErr(e); }
+        gwBusy.value = '';
+      }
+      async function gwSyncAll() {
+        gwBusy.value = 'sync';
+        try {
+          const r = await api.post('/api/admin/gw/sync', { issue: !!s.value.gw_auto_cert }, { timeout: 180000 });
+          ElMessage.success('已同步 ' + ((r.data && r.data.updated) || 0) + ' 个条目');
+          await loadGw(); await reload(); await loadBootstrap();
+        } catch (e) { apiErr(e); }
+        gwBusy.value = '';
+      }
+      async function gwDdnsNow() {
+        gwBusy.value = 'ddns';
+        try {
+          const r = await api.post('/api/admin/gw/ddns/tick', {}, { timeout: 60000 });
+          const st = (r.data && r.data.state) || {};
+          if (st.status === 'ok') ElMessage.success('已更新：' + st.ip + ' → ' + st.record);
+          else ElMessage.error('更新失败：' + (st.error || '未知错误'));
+          await loadGw();
+        } catch (e) { apiErr(e); }
+        gwBusy.value = '';
+      }
+      async function gwFrpApply() {
+        gwBusy.value = 'frp';
+        try {
+          const r = await api.post('/api/admin/gw/frp/apply');
+          const st = (r.data && r.data.frp) || {};
+          if (st.running) ElMessage.success('frpc 已启动，共 ' + (st.proxies || 0) + ' 条隧道');
+          else ElMessage.warning('frpc 没起来：' + (st.error || '看日志'));
+          await loadGw();
+        } catch (e) { apiErr(e); }
+        gwBusy.value = '';
+      }
+      async function gwDnsTest() {
+        gwBusy.value = 'dnstest';
+        try {
+          const r = await api.post('/api/admin/gw/dns/test', { provider: s.value.dns_provider, creds: s.value.dns_creds || {} }, { timeout: 60000 });
+          if (r.data && r.data.ok) ElMessage.success('凭据可用，检测到域名：' + (r.data.zones || []).join(', '));
+          else ElMessage.error('检测失败：' + ((r.data && r.data.error) || '未知错误'));
+        } catch (e) { apiErr(e); }
+        gwBusy.value = '';
+      }
+      async function gwProxyItem(it) {
+        if (!it || !it.id) return;
+        gwProxying.value = it.id;
+        try {
+          const r = await api.post('/api/admin/gw/item/' + it.id + '/proxy', {}, { timeout: 180000 });
+          const d = r.data || {};
+          if (d.ok) {
+            ElMessage.success('已生成：' + (d.url_wan || ''));
+            itemDlg.value = false;
+            await reload(); await loadBootstrap(); await loadGw();
+          } else {
+            ElMessage.error('生成失败：' + (d.error || '未知错误'));
+          }
+        } catch (e) { apiErr(e); }
+        gwProxying.value = 0;
+      }
+      function gwCopy(t) {
+        const txt = String(t || '');
+        if (!txt) return;
+        try { navigator.clipboard.writeText(txt); ElMessage.success('已复制'); }
+        catch (e) { ElMessage.warning('复制失败，请手动选中'); }
       }
 
       /* ---------------- 登录 ---------------- */
@@ -1105,9 +1246,11 @@
         return p ? a + ':' + p + t : a + t;
       }
       function fillUrlParts(it) {
-        const L = splitUrl(it.url_lan), W = splitUrl(it.url_wan);
+        const L = splitUrl(it.url_lan), W = splitUrl(it.url_wan), F = splitUrl(it.url_frp);
         it.addr_lan = L.addr; it.port_lan = L.port; it.tail_lan = L.tail;
         it.addr_wan = W.addr; it.port_wan = W.port; it.tail_wan = W.tail;
+        it.addr_frp = F.addr; it.port_frp = F.port; it.tail_frp = F.tail;
+        if (!['inherit', 'auto', 'lan', 'wan', 'frp'].includes(it.addr_pref)) it.addr_pref = 'inherit';
         return it;
       }
 
@@ -1139,9 +1282,9 @@
           }
         } else {
           editItem.value = {
-            id: 0, name: '', url_lan: '', url_wan: '', icon: '',
+            id: 0, name: '', url_lan: '', url_wan: '', url_frp: '', icon: '',
             description: '', category_id: null, hidden: false, source: 'manual',
-            url_visible: -1, card_size: 'inherit'
+            url_visible: -1, card_size: 'inherit', addr_pref: 'inherit'
           };
         }
         fillUrlParts(editItem.value);   // 拆成「地址 / 端口」两个框再展示
@@ -1159,7 +1302,7 @@
         const it = editItem.value;
         if (!(it.name || '').trim()) { ElMessage.warning('名称不能为空'); return; }
         // 端口框只收数字（留空 = 不加端口）；地址栏里自带的端口不受影响
-        const badPort = [[it.port_lan, '内网端口'], [it.port_wan, '外网端口']]
+        const badPort = [[it.port_lan, '内网端口'], [it.port_wan, '反代端口'], [it.port_frp, 'FRP 端口']]
           .filter(function (p) { return (p[0] || '').trim() !== '' && !/^\d{1,5}$/.test((p[0] || '').trim()); })[0];
         if (badPort) { ElMessage.warning(badPort[1] + '只能填数字'); return; }
         busy.value = true;
@@ -1177,8 +1320,10 @@
         }
         const url_lan = joinUrl(it.addr_lan, it.port_lan, it.tail_lan);
         const url_wan = joinUrl(it.addr_wan, it.port_wan, it.tail_wan);
+        const url_frp = joinUrl(it.addr_frp, it.port_frp, it.tail_frp);
         const payload = {
-          name: it.name, url_lan: url_lan, url_wan: url_wan,
+          name: it.name, url_lan: url_lan, url_wan: url_wan, url_frp: url_frp,
+          addr_pref: it.addr_pref || 'inherit',
           icon: it.icon || '', description: it.description || '',
           category_id: (it.category_id === '' || it.category_id === undefined) ? null : it.category_id,
           hidden: !!it.hidden,
@@ -1865,7 +2010,20 @@
         });
       }
 
+      function closeAdmin() {
+        // 独立设置窗口里「关闭」应该是关窗口（adminOpen=false 会让窗口一片空白）
+        if (settingsWin.value) { try { window.close(); } catch (e) {} }
+        adminOpen.value = false;
+      }
+
       function openAdmin(tabName) {
+        // 桌面端默认开独立窗口（2.0.0 设置页签变多，抽屉里挤）；
+        // 被浏览器拦截或手机端 -> 退回抽屉，功能一样。
+        if (!settingsWin.value && !isMobile.value) {
+          const url = '/settings' + (tabName ? '?tab=' + encodeURIComponent(tabName) : '');
+          const w = window.open(url, 'navpage_settings', 'width=1180,height=900');
+          if (w) { try { w.focus(); } catch (e) {} adminOpen.value = false; return; }
+        }
         adminOpen.value = true;
         collapseAllSec();  // 每次打开设置页：所有卡片回到收起状态
         loadGatelyState();
@@ -3064,6 +3222,8 @@
         onCatCheck, toggleAllCats, doScan, selectAllNew, importSelected, excludeCand, syncAll, autocatAll, autoSaveAt, flushAutoSave,
         wanText, wanRows, wanItems, wanParsing, wanApplying, wanOverwrite, wanSelectedCount, wanPreview, wanApply,
         gatelyState, gatelyBusy, gatelyScheme, wanPortSuffix, proxyDlg, loadGatelyState, gatelyPull, openProxyDlg, doProvision,
+        gw, gwBusy, gwProxying, loadGw, gwSave, gwReload, gwIssue, gwCertDel, gwSyncAll,
+        gwDdnsNow, gwFrpApply, gwDnsTest, gwProxyItem, gwCopy, settingsWin, closeAdmin,
         refreshIcons, saveSettings, uploadWall, pickWall, useWallUrl, clearWall,
         delWall, openAdmin,
         iconDlg, iconTab, iconList, iconLoading, iconQ, iconResults, iconSearching,

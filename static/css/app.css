@@ -1330,3 +1330,29 @@ th.c-src-op { width: 208px; }
 .np-scan-sec .ep-table .c-state { width: 56px; }
 .np-scan-sec .ep-table td.np-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .np-scan-sec .ep-table td:last-child a { color: var(--el-color-primary, #409eff); white-space: nowrap; }
+/* ================= 2.0.0 设置独立窗口 + 网关 ================= */
+/* /settings 打开时主页面隐藏，抽屉铺满整窗口（前端加 .np-settings-win 到 #app） */
+.np-settings-win .np-shell { display: none !important; }
+.np-settings-win .np-lock { display: none !important; }
+.np-settings-win .el-overlay { background: transparent !important; }
+.np-settings-win .np-drawer { box-shadow: none !important; }
+
+.np-gwbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px;
+  margin: 0 0 10px; border-radius: 10px; background: rgba(127,127,127,.08); font-size: 12px; }
+.np-gwbar-sp { flex: 1 1 auto; }
+.np-dot { width: 8px; height: 8px; border-radius: 50%; background: #c0c4cc; display: inline-block; flex: 0 0 auto; }
+.np-dot.ok { background: #2ecc71; box-shadow: 0 0 0 3px rgba(46,204,113,.15); }
+.np-dot.off { background: #e6a23c; }
+.np-gwerr { color: #e74c3c; }
+
+.np-gwlist { border: 1px solid rgba(127,127,127,.18); border-radius: 10px; overflow: hidden; margin: 6px 0 10px; }
+.np-gwrow { display: flex; align-items: center; gap: 10px; padding: 8px 10px; font-size: 12px;
+  border-bottom: 1px solid rgba(127,127,127,.12); }
+.np-gwrow:last-child { border-bottom: 0; }
+.np-gwrow-main { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.np-gwrow-sub { color: #909399; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-tag { padding: 1px 6px; border-radius: 6px; font-size: 11px; flex: 0 0 auto; }
+.np-tag.ok { background: rgba(46,204,113,.12); color: #27ae60; }
+.np-tag.warn { background: rgba(230,162,60,.15); color: #d68910; }
+.np-gwlog { max-height: 240px; overflow: auto; background: #1e1e1e; color: #d4d4d4; font-size: 11px;
+  line-height: 1.5; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; margin: 0; }

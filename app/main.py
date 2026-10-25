@@ -15,6 +15,7 @@ import hashlib
 import secrets
 import warnings
 import concurrent.futures
+import asyncio
 from urllib.parse import quote
 from concurrent.futures import as_completed
 
@@ -29,12 +30,16 @@ from pydantic import BaseModel
 import httpx
 
 from . import db, netutil, dockerapi, icons, iconlib, widgets, registry, cron, version, wanimport, gately
+from . import gw as gw_mod
 from . import compose as compose_mod
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 app = FastAPI(title="NavPage", docs_url=None, redoc_url=None)
+
+# 启动时记录主事件循环，供线程池里的同步端点提交后台任务（见 _run_bg）
+_MAIN_LOOP = None
 
 # 静态资源打包后 1.5MB（element-plus 一个就 936KB），不压缩的话外网/frp 首屏很慢。
 # 实测 gzip 后 1585KB → 473KB（-70%），CPU 开销可忽略（服务端只压一次就进浏览器缓存）。
@@ -60,43 +65,61 @@ def icon_url_for(item):
 def resolve_item(item, mode, ctx=None):
     """按当前模式挑地址，返回附加 url 字段的条目。
 
-    url_lan / url_wan 里可以写 `{host}` `{scheme}` 占位符，按本次请求的实际
-    访问地址展开，这样同一个条目在局域网和公网访问时都能拿到正确链接。
+    url_lan / url_wan / url_frp 里可以写 `{host}` `{scheme}` 占位符，按本次请求的
+    实际访问地址展开，这样同一个条目在局域网和公网访问时都能拿到正确链接。
+
+    2.0.0 起多了两件事：
+      * 第三种地址 `url_frp`（frp 隧道域名），所以 mode 多了 "frp"；
+      * 单卡可以指定 `addr_pref`（inherit/auto/lan/wan/frp），优先于右上角的全局开关。
+        这就是「这张卡走 frp、那张卡走反代」的实现方式，不用来回切全局开关。
     """
     ctx = ctx or {}
     lan_raw = (item.get("url_lan") or "").strip()
     wan_raw = (item.get("url_wan") or "").strip()
+    frp_raw = (item.get("url_frp") or "").strip()
 
     lan = netutil.expand_url(lan_raw, "lan", ctx) if lan_raw else ""
     wan = netutil.expand_url(wan_raw, "wan", ctx) if wan_raw else ""
+    frp = netutil.expand_url(frp_raw, "wan", ctx) if frp_raw else ""
 
-    # 某一侧没配时，用另一侧的模板换主机名兜底
+    # 某一侧没配时，用另一侧的模板换主机名兜底（frp 是完整域名，不参与兜底）
     if not wan and "{host}" in lan_raw:
         wan = netutil.expand_url(lan_raw, "wan", ctx)
     if not lan and "{host}" in wan_raw:
         lan = netutil.expand_url(wan_raw, "lan", ctx)
 
-    if mode == "wan":
-        url = wan or lan
-        prefer = "wan" if wan else ("lan" if lan else "none")
-    else:
-        url = lan or wan
-        prefer = "lan" if lan else ("wan" if wan else "none")
+    pref = (item.get("addr_pref") or "inherit").strip().lower()
+    want = mode if pref in ("inherit", "auto", "") else pref
+    if want not in ("lan", "wan", "frp"):
+        want = "lan"
 
-    if lan and wan:
-        availability = "both"
-    elif lan:
-        availability = "lan"
-    elif wan:
-        availability = "wan"
-    else:
-        availability = "none"
+    chains = {
+        "lan": [(lan, "lan"), (wan, "wan"), (frp, "frp")],
+        "wan": [(wan, "wan"), (frp, "frp"), (lan, "lan")],
+        "frp": [(frp, "frp"), (wan, "wan"), (lan, "lan")],
+    }
+    url, prefer = "", "none"
+    for val, kind in chains[want]:
+        if val:
+            url, prefer = val, kind
+            break
+
+    avail = []
+    if lan:
+        avail.append("lan")
+    if wan:
+        avail.append("wan")
+    if frp:
+        avail.append("frp")
     out = dict(item)
     out["url"] = url
     out["url_lan_view"] = lan
     out["url_wan_view"] = wan
+    out["url_frp_view"] = frp
     out["used"] = prefer
-    out["availability"] = availability
+    out["wanted"] = want
+    out["availability"] = "+".join(avail) if avail else "none"
+    out["has_frp"] = bool(frp)
     out["icon_url"] = icon_url_for(item)
     # 小组件配置里含密码 / API Key，只把类型下发给前端，凭据留在服务端
     w = item.get("widget") or {}
@@ -104,7 +127,6 @@ def resolve_item(item, mode, ctx=None):
     out["widget_type"] = w.get("type") or ""
     out.pop("widget", None)
     return out
-
 
 def auth_token(request: Request):
     auth = request.headers.get("authorization") or ""
@@ -287,7 +309,7 @@ def bootstrap(request: Request, mode: str = ""):
     auto_mode, cip, src = netutil.resolve_mode(request, s)
 
     # mode 只影响「用内网还是外网链接」，与鉴权无关
-    eff = mode if mode in ("lan", "wan") else auto_mode
+    eff = mode if mode in ("lan", "wan", "frp") else auto_mode
 
     authed = is_authed(request)
     if s.get("require_login") and not authed:
@@ -822,6 +844,10 @@ class ItemBody(BaseModel):
     url_visible: int | None = None
     card_size: str | None = None
     auto_created: bool | None = None
+    # 2.0.0 内置网关：FRP 地址 / 反代绑定的域名 / 这张卡片用哪个地址
+    url_frp: str | None = None
+    proxy_domain: str | None = None
+    addr_pref: str | None = None
 
 
 @app.post("/api/admin/items")
@@ -2398,8 +2424,13 @@ def scan_import(request: Request, body: ImportBody, _=Depends(require_admin)):
             _create_from_candidate(cand, host, cat_name)
             added += 1
     proxied, proxy_err = _auto_provision_batch(s, wanted, idx)
+    # 2.0.0 内置网关：开了「自动反代」就把新卡片的域名/地址补上，
+    # 证书在后台签（不能让用户对着「正在导入」转圈等 40 秒）
+    gw_auto = False
+    if s.get("gw_auto_proxy") and s.get("gw_enabled") and gw_mod.instance():
+        gw_auto = bool(_run_bg(_gw_sync_all(issue=bool(s.get("gw_auto_cert", True)))))
     return {"ok": True, "added": added, "updated": updated,
-            "proxied": proxied, "proxy_error": proxy_err}
+            "proxied": proxied, "proxy_error": proxy_err, "gw_auto": gw_auto}
 
 
 def _auto_provision_batch(s, wanted, idx):
@@ -3197,6 +3228,248 @@ def admin_gately_provision(body: GatelyProvisionBody, _=Depends(require_admin)):
     return _provision(it, subdomain=body.subdomain)
 
 
+
+# ---------------------------------------------------------------- 2.0.0 内置网关
+# 反代 / 证书 / DDNS / FRP 都在本进程里，不再依赖 Lucky 或 Gately。
+# 卡片即规则：routes 每次请求都实时从 items 推，所以改卡片不需要 reload 反代。
+
+def _gw_cfg():
+    return db.get_settings()
+
+
+def _gw_items():
+    return db.list_items(include_hidden=False)
+
+
+@app.on_event("startup")
+async def _gw_startup():
+    """网关晚于数据库初始化启动；起不来也不能拖垮整个面板。"""
+    global _MAIN_LOOP
+    _MAIN_LOOP = asyncio.get_running_loop()
+    try:
+        svc = gw_mod.configure(db.DATA_DIR, _gw_cfg, _gw_items)
+        await svc.start()
+    except Exception as e:
+        print(f"[navpage] 网关启动失败（面板其他功能不受影响）：{e}")
+
+
+@app.on_event("shutdown")
+async def _gw_shutdown():
+    svc = gw_mod.instance()
+    if svc:
+        try:
+            await svc.stop()
+        except Exception:
+            pass
+
+
+def _run_bg(coro):
+    """在后台跑协程。
+
+    FastAPI 的同步端点跑在线程池里，拿不到主事件循环，直接 asyncio.create_task
+    会抛 RuntimeError。这里用启动时记下的 loop 提交，扫完容器自动反代这类
+    「不该让用户等」的活儿都走这条路。
+    """
+    try:
+        if _MAIN_LOOP:
+            asyncio.run_coroutine_threadsafe(coro, _MAIN_LOOP)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _gw_or_404():
+    svc = gw_mod.instance()
+    if not svc:
+        raise HTTPException(503, "网关未启动")
+    return svc
+
+
+@app.get("/api/admin/gw/status")
+def gw_status(_=Depends(require_admin)):
+    return {"ok": True, **gw_status_only()}
+
+
+def gw_status_only():
+    svc = _gw_or_404()
+    st = svc.status()
+    st["host_ip"] = db.detect_host_ip()
+    st["frp_binary"] = svc.frp.status().get("binary") or ""
+    return st
+
+
+class GwSettingsBody(BaseModel):
+    patch: dict = {}
+
+
+@app.put("/api/admin/gw/settings")
+def gw_save_settings(body: GwSettingsBody, _=Depends(require_admin)):
+    """保存网关相关设置并立刻生效（端口变化会重启监听）。"""
+    allowed = {k for k in db.DEFAULT_SETTINGS if k.startswith(("gw_", "dns_", "ddns_", "frp_"))}
+    patch = {k: v for k, v in (body.patch or {}).items() if k in allowed}
+    if not patch:
+        return _err("没有可保存的网关设置")
+    db.update_settings(patch)
+    _run_bg(_gw_or_404().reload_all())
+    return {"ok": True, "saved": list(patch.keys())}
+
+
+@app.post("/api/admin/gw/reload")
+def gw_reload(_=Depends(require_admin)):
+    _run_bg(_gw_or_404().reload_all())
+    return {"ok": True}
+
+
+@app.get("/api/admin/gw/routes")
+def gw_routes(_=Depends(require_admin)):
+    svc = _gw_or_404()
+    return {"ok": True, "routes": svc.routes(), "frp": svc.frp_proxies(),
+            "target_host": svc.target_host()}
+
+
+async def _gw_sync_all(issue: bool = True) -> dict:
+    """把「反代域名 / 外网地址 / FRP 地址」写回所有卡片。
+
+    签名证书很慢（DNS-01 要等 TXT 生效，单个域名 10~40s），所以这里只对
+    **还没有可用证书**的域名签，其余复用通配符；扫描导入后是在后台跑的。
+    """
+    svc = gw_mod.instance()
+    if not svc:
+        return {"ok": False, "error": "网关未启动", "updated": 0}
+    res = await svc.sync_all(issue=issue)
+    n = 0
+    for it in db.list_items(include_hidden=True):
+        r = svc.item_addresses(it)
+        patch = {}
+        for k, v in (("proxy_domain", r["proxy_domain"]), ("url_wan", r["url_wan"]),
+                     ("url_frp", r["url_frp"])):
+            if v and v != (it.get(k) or ""):
+                patch[k] = v
+        if patch:
+            db.update_item(it["id"], patch)
+            n += 1
+    svc.frp.apply(svc.cfg(), svc.frp_proxies())
+    return {"ok": True, "updated": n, "total": len(db.list_items(include_hidden=True)),
+            "certs": res.get("certs") or []}
+
+
+@app.post("/api/admin/gw/sync")
+def gw_sync(body: dict | None = None, _=Depends(require_admin)):
+    """给所有卡片补齐 反代域名 / 外网地址 / FRP 地址（可选顺带签证书）。"""
+    _gw_or_404()
+    issue = True if not body else bool(body.get("issue", True))
+    fut = asyncio.run_coroutine_threadsafe(_gw_sync_all(issue=issue), _MAIN_LOOP)
+    try:
+        return fut.result(timeout=600)
+    except Exception as e:
+        raise HTTPException(400, f"同步失败：{e}")
+
+
+@app.post("/api/admin/gw/item/{iid}/proxy")
+def gw_item_proxy(iid: int, body: dict | None = None, _=Depends(require_admin)):
+    """给单张卡片生成反代地址（写回卡片，随即生效）。"""
+    it = db.get_item(iid)
+    if not it:
+        raise HTTPException(404, "卡片不存在")
+    svc = _gw_or_404()
+    addr = svc.item_addresses(it)
+    if not addr["proxy_domain"]:
+        return _err("先在网关设置里填「根域名」，或者手动给这张卡片填反代域名")
+    patch = {"proxy_domain": addr["proxy_domain"]}
+    if addr["url_wan"]:
+        patch["url_wan"] = addr["url_wan"]
+    if addr["url_frp"]:
+        patch["url_frp"] = addr["url_frp"]
+    db.update_item(iid, patch)
+    issue = True if not body else bool(body.get("issue", True))
+    cert = asyncio.run_coroutine_threadsafe(svc.ensure_cert_for(addr["proxy_domain"]), _MAIN_LOOP).result(timeout=300) if issue else None
+    svc.frp.apply(svc.cfg(), svc.frp_proxies())
+    return {"ok": True, "domain": addr["proxy_domain"], "url_wan": addr["url_wan"],
+            "url_frp": addr["url_frp"], "cert": cert}
+
+
+class GwCertBody(BaseModel):
+    domains: list[str] | None = None
+    name: str = ""
+    force: bool = False
+
+
+@app.post("/api/admin/gw/cert/issue")
+def gw_cert_issue(body: GwCertBody, _=Depends(require_admin)):
+    svc = _gw_or_404()
+    s = db.get_settings()
+    domains = body.domains or []
+    if not domains:
+        root = (s.get("gw_root_domain") or "").strip().strip(".")
+        if not root:
+            return _err("没有域名可签：先在网关设置里填根域名")
+        domains = [f"*.{root}", root] if s.get("gw_wildcard", True) else [root]
+    fut = asyncio.run_coroutine_threadsafe(
+        svc.issue_cert(domains, name=body.name, force=bool(body.force)), _MAIN_LOOP)
+    try:
+        return {"ok": True, "result": fut.result(timeout=300)}
+    except Exception as e:
+        return _err(f"签发失败：{e}", 400)
+
+
+@app.delete("/api/admin/gw/cert/{name}")
+def gw_cert_delete(name: str, _=Depends(require_admin)):
+    svc = _gw_or_404()
+    ok = svc.certs.remove(name)
+    return {"ok": ok}
+
+
+@app.get("/api/admin/gw/cert/{name}/pem")
+def gw_cert_pem(name: str, _=Depends(require_admin)):
+    svc = _gw_or_404()
+    cp, _kp = svc.certs.cert_paths(name)
+    if not os.path.exists(cp):
+        raise HTTPException(404, "证书不存在")
+    return FileResponse(cp, media_type="application/x-pem-file", filename=f"{name}.pem")
+
+
+@app.post("/api/admin/gw/ddns/tick")
+def gw_ddns_tick(_=Depends(require_admin)):
+    svc = _gw_or_404()
+    fut = asyncio.run_coroutine_threadsafe(svc.ddns.tick(force=True), _MAIN_LOOP)
+    try:
+        return {"ok": True, "state": fut.result(timeout=120)}
+    except Exception as e:
+        return _err(f"DDNS 更新失败：{e}", 400)
+
+
+@app.get("/api/admin/gw/ip")
+def gw_public_ip(_=Depends(require_admin)):
+    ip, src = gw_mod.ddns.fetch_public_ip(db.get_settings().get("ddns_ip_sources") or "")
+    return {"ok": bool(ip), "ip": ip, "source": src}
+
+
+class GwDnsTestBody(BaseModel):
+    provider: str = ""
+    creds: dict | None = None
+
+
+@app.post("/api/admin/gw/dns/test")
+def gw_dns_test(body: GwDnsTestBody, _=Depends(require_admin)):
+    s = db.get_settings()
+    provider = body.provider or s.get("dns_provider") or ""
+    creds = body.creds if body.creds is not None else (s.get("dns_creds") or {})
+    try:
+        prov = gw_mod.dnsprov.get_provider(provider, creds)
+        msg = prov.test()
+        return {"ok": True, "message": msg}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+@app.post("/api/admin/gw/frp/apply")
+def gw_frp_apply(_=Depends(require_admin)):
+    svc = _gw_or_404()
+    st = svc.frp.apply(svc.cfg(), svc.frp_proxies())
+    return {"ok": True, "frp": st}
+
+
 # ---------------------------------------------------------------- static (must be last)
 
 if os.path.isdir(STATIC_DIR):
@@ -3210,6 +3483,7 @@ if os.path.isdir(STATIC_DIR):
 
     @app.get("/", include_in_schema=False)
     @app.get("/index.html", include_in_schema=False)
+    @app.get("/settings", include_in_schema=False)   # 设置独立窗口：同一个页面，前端按路径切全屏设置
     def _index_html():
         try:
             html = open(os.path.join(STATIC_DIR, "index.html"), encoding="utf-8").read()
@@ -3227,7 +3501,7 @@ if os.path.isdir(STATIC_DIR):
     async def _cache_headers(request, call_next):
         resp = await call_next(request)
         p = request.url.path
-        if p.endswith(".html") or p in ("", "/"):
+        if p.endswith(".html") or p in ("", "/", "/settings"):
             resp.headers["Cache-Control"] = "no-store, must-revalidate"
             resp.headers["Pragma"] = "no-cache"
         elif p.startswith(("/vendor/", "/js/", "/css/", "/icons/")) or p.endswith(

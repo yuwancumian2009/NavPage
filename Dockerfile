@@ -26,14 +26,19 @@ COPY --from=docker:cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr
 
 # 2.0.0：内置 frpc（FRP 隧道）。官方 release 按 TARGETARCH 取对应架构的包，
 # 只留 frpc 一个二进制（约 15MB），frps 由用户自己的公网服务器跑。
+#
+# 下载顺序有讲究（2026-10-25 在 NAS 上实测）：直连 GitHub release 在国内超时，
+# gh-proxy.com 能拿到完整包，ghfast.top 会返回被截断的文件，所以 直连 -> gh-proxy -> ghfast。
 ARG TARGETARCH
 ARG FRP_VERSION=0.61.1
 RUN set -eux; \
     arch="${TARGETARCH:-amd64}"; \
     url="https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_${arch}.tar.gz"; \
-    (python -c "import urllib.request,sys; urllib.request.urlretrieve(sys.argv[1], '/tmp/frp.tgz')" "$url" \
-     || python -c "import urllib.request,sys; urllib.request.urlretrieve(sys.argv[1], '/tmp/frp.tgz')" "https://ghfast.top/$url" \
-     || python -c "import urllib.request,sys; urllib.request.urlretrieve(sys.argv[1], '/tmp/frp.tgz')" "https://gh-proxy.com/$url"); \
+    dl() { python -c "import urllib.request,sys;urllib.request.urlretrieve(sys.argv[1],'/tmp/frp.tgz')" "$1"; }; \
+    rm -f /tmp/frp.tgz; \
+    dl "$url" || dl "https://gh-proxy.com/$url" || dl "https://ghfast.top/$url"; \
+    size=$(python -c "import os;print(os.path.getsize('/tmp/frp.tgz'))"); \
+    [ "$size" -gt 5000000 ] || { echo "frp 包不完整（$size 字节）"; exit 1; }; \
     tar -xzf /tmp/frp.tgz -C /tmp; \
     mv /tmp/frp_${FRP_VERSION}_linux_${arch}/frpc /usr/local/bin/frpc; \
     chmod +x /usr/local/bin/frpc; rm -rf /tmp/frp.tgz /tmp/frp_${FRP_VERSION}_linux_${arch}; \

@@ -180,6 +180,7 @@ class Gateway:
 
     def frp_proxies(self) -> list[dict]:
         out = []
+        used: set[str] = set()
         cfg = self.cfg()
         sub_host = (cfg.get("frp_subdomain_host") or "").strip()
         for it in self.items_fn() or []:
@@ -190,8 +191,13 @@ class Gateway:
             if not d:
                 continue
             base = d.split(".")[0]
-            p = {"name": slugify(it.get("container_name") or "") or f"app-{it.get('id')}",
-                 "local_ip": host, "local_port": port}
+            # proxy 名必须唯一：同一个容器可能被建了两张卡片（比如内外网分开），
+            # 重名会让 frpc 直接报 "proxy name already exists" 并整份配置失效。
+            name = slugify(it.get("container_name") or "") or f"app-{it.get('id')}"
+            if name in used:
+                name = f"{name}-{it.get('id')}"
+            used.add(name)
+            p = {"name": name, "local_ip": host, "local_port": port}
             if sub_host:
                 p["subdomain"] = base
             else:

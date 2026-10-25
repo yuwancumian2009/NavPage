@@ -285,7 +285,7 @@
                   <td class="np-url" :title="it.url_lan_view || it.url_lan || ''">{{ it.url_lan_view || it.url_lan || '—' }}</td>
                   <td class="np-url" :title="it.url_wan_view || it.url_wan || ''">{{ it.url_wan_view || it.url_wan || '—' }}</td>
                   <td>{{ catName(it.category_id) }}</td>
-                  <td>
+                  <td class="c-op">
                     <el-button size="small" text type="primary" @click="openItem(it)">编辑</el-button>
                     <el-button v-if="gatelyState.configured" size="small" text type="warning"
                                @click="openProxyDlg(it)">反代</el-button>

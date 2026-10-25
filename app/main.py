@@ -2462,6 +2462,26 @@ async def scan_sync(request: Request, _=Depends(require_admin)):
     return {"ok": True, "added": r["added"], "updated": r["updated"], "gw_auto": gw_auto}
 
 
+def _need_addr_sync(s) -> bool:
+    """还有卡片缺「该有的」自动地址吗？恢复卡片、手建卡片、改过端口的卡片都靠它兜住。
+
+    以前自动扫描只在 `added > 0` 时才补 FRP 地址，于是「从排除名单恢复 / 手工新建」
+    的卡片永远拿不到 url_frp（2026-10-26 用户报 gately 没有自动生成 FRP 地址）。
+    """
+    wants_frp = bool(s.get("frp_enabled"))
+    wants_proxy = bool(s.get("gw_enabled")) and bool(s.get("gw_auto_proxy"))
+    if not (wants_frp or wants_proxy):
+        return False
+    for it in db.list_items(include_hidden=True):
+        if not (it.get("url_lan") or "").strip():
+            continue
+        if wants_frp and not (it.get("url_frp") or "").strip():
+            return True
+        if wants_proxy and not (it.get("proxy_domain") or "").strip():
+            return True
+    return False
+
+
 def _gw_should_sync(s) -> bool:
     """扫描/同步后要不要顺带补反代与 FRP 地址。"""
     if s.get("gw_enabled") and s.get("gw_auto_proxy") and gw_mod.instance():
@@ -2500,7 +2520,10 @@ def _sync_containers(ctx):
             except Exception:
                 card_port = 0
             published = set(c.get("public_ports") or [])
-            keep_port = card_port if (card_port and card_port in published) else 0
+            # host 网络容器（gately / 家里那些 network_mode: host 的）没有 ports 映射，
+            # published 是空集：这时不能把卡片上填的端口冲成 0，否则 FRP 目标端口就丢了
+            # （2026-10-26 实测：gately 的 16680 被冲成 0，卡片一直没 FRP 地址）。
+            keep_port = card_port if (card_port and (card_port in published or not published)) else 0
             patch = {"missing": False, "container_image": c.get("image") or "",
                      "container_port": keep_port or (c.get("primary_port") or 0)}
             if cat_name and not old.get("category_id"):
@@ -3312,8 +3335,10 @@ async def _auto_scan_loop():
                 _AUTO_SCAN["error"] = ""
                 r = await loop.run_in_executor(None, _sync_containers, _bg_host_ctx(s))
                 _AUTO_SCAN["added"], _AUTO_SCAN["updated"] = r["added"], r["updated"]
-                if r["added"] and _gw_should_sync(s):
-                    await _gw_sync_all(issue=bool(s.get("gw_auto_cert", True)))
+                # 补地址 ≠ 签证书：只有真的新增了卡片才走 ACME（否则僵尸卡会让每一轮
+                # 都去重试签发，日志全是失败）。补地址本身很便宜，缺就补。
+                if (r["added"] or _need_addr_sync(s)) and _gw_should_sync(s):
+                    await _gw_sync_all(issue=bool(r["added"] and s.get("gw_auto_cert", True)))
                 if r["added"]:
                     print(f"[navpage] 自动扫描：新增 {r['added']} 张卡片")
         except Exception as e:

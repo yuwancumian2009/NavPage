@@ -256,22 +256,97 @@ docker run -d --name navpage -p 8095:8080 \
 
 ---
 
-### FRP 服务端（frps）示例
+### FRP：怎么让自己的机器也自动出地址
 
-面板里只需要填 frps 的地址 / 端口 / token。公网服务器上跑一个 frps 就够了：
+导航页只负责**客户端那一半**（生成隧道、写地址、卡片可切 FRP）。公网那台跑 `frps` 的服务器，
+必须先把两件事准备好，否则隧道一定注册失败：
+
+1. **frps 要开 vhost HTTP 端口**（`vhostHTTPPort` 或 `subDomainHost` 二选一）。
+   只开 `bindPort = 7000` 的 frps 会拒掉所有 `type = "http"` 的隧道，日志里是
+   `type [http] not supported when vhost http port is not set`。
+2. **域名要能解析到 frps**：给 `*.你的后缀` 加一条通配 A 记录（这一步最容易漏，浏览器会直接报 DNS 错误）。
+
+然后按你的网络形态选一种：
+
+#### 场景 A：frps 直接对公网开 7000（最省事）
 
 ```toml
 # /etc/frp/frps.toml
 bindPort = 7000
+vhostHTTPPort = 80                              # HTTP 隧道入口（外面能直连 80 就用它）
+subDomainHost = "frp.example.com"               # DNS: *.frp.example.com → 这台服务器
 auth.method = "token"
 auth.token = "换成你的token"
-vhostHTTPPort = 80          # HTTP 隧道入口
-vhostHTTPSPort = 443        # 需要 https 隧道时再开
-subDomainHost = "frp.example.com"   # DNS 把 *.frp.example.com 解析到这台服务器
 ```
 
-面板「设置 → FRP」里：服务器填 `frps.example.com`、端口 `7000`、Token 同上、
-域名后缀填 `frp.example.com`，保存后每张卡片会得到 `http://容器名.frp.example.com`。
+导航页「设置 → FRP」：服务器 `frps.example.com`、端口 `7000`、Token 同上、
+**域名后缀** `frp.example.com`、协议 `tcp`。保存后每张卡片得到 `http://容器名.frp.example.com`。
+
+#### 场景 B：frps 藏在 443 反代后面（只有 443 出网，最常见于 1Panel/宝塔服务器）
+
+这种形态要用 **wss** 连 443，并用 **customDomains**（不是 subDomainHost），因为域名是反代层接的：
+
+```toml
+# frps.toml
+bindPort = 7000
+vhostHTTPPort = 8080            # 只给本机 nginx 用，防火墙不要放行
+auth.method = "token"
+auth.token = "换成你的token"
+```
+
+```nginx
+# 反代服务器上的通配入口：<任意子域>.frp.example.com → frps 的 vhost 端口
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ~^[a-z0-9][a-z0-9-]*\.frp\.example\.com$;
+    ssl_certificate     /path/fullchain.pem;    # 需要 *.frp.example.com 通配证书
+    ssl_certificate_key /path/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;             # 必须原样带 Host，frps 靠它选隧道
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $http_connection;
+        proxy_http_version 1.1;
+    }
+}
+
+# frpc 的 wss 连接本身也要一条：443 → frps 的 bindPort
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name frp.example.com;
+    # ... ssl 同上 ...
+    location / {
+        proxy_pass http://127.0.0.1:7000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+导航页「设置 → FRP」：服务器 `frp.example.com`、端口 **443**、协议 **wss**、
+Token 同上、**自定义域名根后缀** `frp.example.com`、地址用 **https**、vhost HTTPS 端口 `443`，
+可选「代理名前缀」（同一个 frps 上还有别的 frpc 客户端时必须填，否则 `proxy already exists`）。
+每张卡片得到 `https://容器名.frp.example.com`。
+
+#### 场景 C：没有域名
+
+FRP 这一档只做 `type = "http"` 的隧道，**必须有域名**。没有域名的只能自己手写
+TCP 型隧道（`remotePort`），或者在「设置 → 网关」用反代 + 端口访问。
+
+#### 排错顺序（按这个查，比猜快）
+
+| 现象 | 原因 |
+|---|---|
+| 隧道起不来，日志 `vhost http port is not set` | frps 没配 `vhostHTTPPort` / `subDomainHost`，见上文第 1 条 |
+| 日志 `proxy already exists` | 代理名和同 frps 上别的 frpc 撞了，填「代理名前缀」 |
+| 连接超时 / EOF | 端口填错（443 却用 tcp，或 7000 却用 wss）；容器里若带 `HTTP_PROXY` 环境变量也会把隧道连接塞进代理，务必清掉 |
+| 隧道 online 但访问 404 | 域名没走通配入口（nginx 正则没写或没 reload），或 DNS 没解析到 frps |
+| 访问 502 / 空白 | 隧道通了但目标服务本身没起，先在局域网用 IP:端口 验证 |
+| 某个站点 400（如 Home Assistant） | 上游不认 `X-Forwarded-For`；在通配入口里 `proxy_set_header X-Forwarded-For "";` 清掉，或在应用侧配置可信代理 |
 
 ### 证书申请前提
 

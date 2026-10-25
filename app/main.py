@@ -868,7 +868,7 @@ def update_item(iid: int, body: ItemBody, _=Depends(require_admin)):
 
 
 @app.delete("/api/admin/items/{iid}")
-def delete_item(iid: int, _=Depends(require_admin)):
+def delete_item(iid: int, purge: bool = False, _=Depends(require_admin)):
     """删卡片。容器卡片不是真删，而是留一条隐藏墓碑。
 
     远端采集源每 5 分钟上报一次，真把行删掉的话下一次上报就把它原样重建出来
@@ -877,7 +877,14 @@ def delete_item(iid: int, _=Depends(require_admin)):
     以灰色「已排除」出现，想恢复点一下就行。
     """
     it = db.get_item(iid)
-    if it and (it.get("container_name") or "").strip() and it.get("source") == "docker":
+    if not it:
+        return _err("条目不存在", 404)
+    # 「已消失」列表里点删除 → 前端带 purge=1，直接真删。
+    # 原来一律留墓碑，结果已消失列表永远挂着它，点了删除也像没反应（2026-10-26 用户反馈）。
+    if purge or it.get("missing"):
+        db.delete_item(iid)
+        return {"ok": True, "kept_as_excluded": False, "deleted": True}
+    if (it.get("container_name") or "").strip() and it.get("source") == "docker":
         db.update_item(iid, {"hidden": 1, "missing": 1})
         return {"ok": True, "kept_as_excluded": True}
     db.delete_item(iid)
@@ -897,7 +904,7 @@ def exclude_item(iid: int, body: ExcludeBody, _=Depends(require_admin)):
       2. 容器名写进 `scan_exclude` → 重新扫描 / 全量同步时不会又把它导入回来
 
     只做第 1 步的话，下次点「全量同步」它就复活了；只做第 2 步的话卡片还挂在首页上。
-    手建条目（没有 container_name）只做第 1 步。
+    手建条目（没有 container_name）只做第 1 步；扫描判定「已消失」的卡片直接真删。
     """
     it = db.get_item(iid)
     if not it:
@@ -2329,6 +2336,8 @@ def scan(_=Depends(require_admin)):
         if i.get("source") != "docker" or not i.get("container_name"):
             continue
         host = str(i.get("docker_host") or "")
+        if i.get("hidden"):
+            continue          # 已被排除/删除的卡片不用再提示「已消失」
         if host in ok_hosts and (host, i["container_name"]) not in live:
             missing.append({"name": i["name"], "container_name": i["container_name"],
                             "id": i["id"], "docker_host": host,
@@ -2340,7 +2349,7 @@ def scan(_=Depends(require_admin)):
             v["container_count"] = sum(1 for k in live if k[0] == str(v.get("id") or ""))
     return {"ok": True, "docker": info, "new": new, "existing": existing,
             "missing": missing, "skipped": skipped, "total": len(live),
-            "errors": errors, "sources": views}
+            "errors": errors, "sources": views, "auto": _auto_scan_info()}
 
 
 class ExcludeBody(BaseModel):
@@ -2423,7 +2432,7 @@ def scan_import(request: Request, body: ImportBody, _=Depends(require_admin)):
             cand["icon"] = icon
             _create_from_candidate(cand, host, cat_name)
             added += 1
-    proxied, proxy_err = _auto_provision_batch(s, wanted, idx)
+    proxied, proxy_err = 0, ""      # Gately 面板已下线（2.0.4），反代走内置网关
     # 2.0.0 内置网关：开了「自动反代」就把新卡片的域名/地址补上，
     # 证书在后台签（不能让用户对着「正在导入」转圈等 40 秒）
     gw_auto = False
@@ -2433,41 +2442,33 @@ def scan_import(request: Request, body: ImportBody, _=Depends(require_admin)):
             "proxied": proxied, "proxy_error": proxy_err, "gw_auto": gw_auto}
 
 
-def _auto_provision_batch(s, wanted, idx):
-    """扫描导入后，给带 nav.proxy.domain 标签的容器自动建反代（失败不影响导入）。"""
-    if not s.get("gately_auto"):
-        return 0, ""
-    if not ((s.get("gately_url") or "").strip() and (s.get("gately_token") or "").strip()
-            and (s.get("gately_domain") or "").strip()):
-        return 0, "Gately 未配置完整（地址/令牌/根域名）"
-    done, errs = 0, []
-    for host, name in wanted:
-        if host:
-            continue    # 远端采集源的容器：反代要指向远端机器，模板地址不可靠，留给用户手动建
-        pair = idx.get((host, name))
-        if not pair:
-            continue
-        _src, c = pair
-        sub = (c.get("nav_proxy_domain") or "").strip()
-        if not sub:
-            continue
-        it = db.find_item_by_container(name, host)
-        if not it:
-            continue
-        try:
-            _provision(it, s, subdomain=sub)
-            done += 1
-        except HTTPException as e:
-            errs.append("%s: %s" % (name, e.detail))
-        except Exception as e:
-            errs.append("%s: %s" % (name, e))
-    return done, "；".join(errs[:3])
-
-
 @app.post("/api/admin/scan/sync")
-def scan_sync(request: Request, _=Depends(require_admin)):
+async def scan_sync(request: Request, _=Depends(require_admin)):
     s = db.get_settings()
     ctx = netutil.host_context(request, s)
+    r = _sync_containers(ctx)
+    # 全量同步也要补反代 / FRP 地址（2026-10-26 修：以前只有「导入选中」才补，
+    # 用户点全量同步后新卡片的外网地址一直是空的）。
+    gw_auto = False
+    if _gw_should_sync(s):
+        gw_auto = bool(_run_bg(_gw_sync_all(issue=bool(s.get("gw_auto_cert", True)))))
+    return {"ok": True, "added": r["added"], "updated": r["updated"], "gw_auto": gw_auto}
+
+
+def _gw_should_sync(s) -> bool:
+    """扫描/同步后要不要顺带补反代与 FRP 地址。"""
+    if s.get("gw_enabled") and s.get("gw_auto_proxy") and gw_mod.instance():
+        return True
+    # 只开了 FRP 没开内置反代：也要把 FRP 地址写回卡片
+    return bool(s.get("frp_enabled")) and bool(gw_mod.instance())
+
+
+def _sync_containers(ctx):
+    """容器同步主体：新容器建卡、已有卡片刷新模板地址与「已消失」标记。
+
+    手动「全量同步」和后台「自动扫描」共用这一份逻辑，避免两边行为不一致。
+    """
+    s = db.get_settings()
     pairs, _errors = _collect(s)
     added, updated = 0, 0
     names_by_host = {}
@@ -2502,7 +2503,7 @@ def scan_sync(request: Request, _=Depends(require_admin)):
             added += 1
     for host, names in names_by_host.items():
         db.mark_missing(names, host)
-    return {"ok": True, "added": added, "updated": updated}
+    return {"added": added, "updated": updated}
 
 
 @app.post("/api/admin/scan/autocat")
@@ -3253,6 +3254,59 @@ async def _gw_startup():
         print(f"[navpage] 网关启动失败（面板其他功能不受影响）：{e}")
 
 
+_AUTO_SCAN = {"ts": 0.0, "added": 0, "updated": 0, "error": ""}
+
+
+def _bg_host_ctx(s):
+    """后台任务没有请求头，用设置里的内网地址兜底；只影响 favicon 抓取。"""
+    lan = (s.get("host_lan_ip") or "").strip()
+    return {"host": lan, "host_is_ip": True, "host_private": True, "lan_base": lan,
+            "wan_base": (s.get("host_wan") or "").strip(),
+            "wan_scheme": s.get("wan_scheme") or "https"}
+
+
+def _auto_scan_info():
+    s = db.get_settings()
+    mins = int(s.get("auto_scan_min") or 0)
+    return {"min": mins, "last": _AUTO_SCAN["ts"], "added": _AUTO_SCAN["added"],
+            "updated": _AUTO_SCAN["updated"], "error": _AUTO_SCAN["error"]}
+
+
+async def _auto_scan_loop():
+    """「自动扫描」：按设置间隔跑一次容器同步，新容器自动建卡并补地址。
+
+    2026-10-26 用户问「新容器会不会自己冒出来」——以前只有手动点扫描才会，
+    这里补上后台循环。默认关闭（auto_scan_min=0），设置里填分钟数即启用。
+    """
+    await asyncio.sleep(30)          # 让网关和数据库先就绪
+    loop = asyncio.get_running_loop()
+    while True:
+        try:
+            s = db.get_settings()
+            mins = int(s.get("auto_scan_min") or 0)
+            if mins > 0 and (time.time() - _AUTO_SCAN["ts"]) >= mins * 60:
+                _AUTO_SCAN["ts"] = time.time()
+                _AUTO_SCAN["error"] = ""
+                r = await loop.run_in_executor(None, _sync_containers, _bg_host_ctx(s))
+                _AUTO_SCAN["added"], _AUTO_SCAN["updated"] = r["added"], r["updated"]
+                if r["added"] and _gw_should_sync(s):
+                    await _gw_sync_all(issue=bool(s.get("gw_auto_cert", True)))
+                if r["added"]:
+                    print(f"[navpage] 自动扫描：新增 {r['added']} 张卡片")
+        except Exception as e:
+            _AUTO_SCAN["error"] = str(e)
+            print(f"[navpage] 自动扫描失败（不影响面板）：{e}")
+        await asyncio.sleep(60)
+
+
+@app.on_event("startup")
+async def _auto_scan_startup():
+    try:
+        asyncio.create_task(_auto_scan_loop())
+    except Exception as e:
+        print(f"[navpage] 自动扫描任务没起来：{e}")
+
+
 @app.on_event("shutdown")
 async def _gw_shutdown():
     svc = gw_mod.instance()
@@ -3307,6 +3361,7 @@ class GwSettingsBody(BaseModel):
 def gw_save_settings(body: GwSettingsBody, _=Depends(require_admin)):
     """保存网关相关设置并立刻生效（端口变化会重启监听）。"""
     allowed = {k for k in db.DEFAULT_SETTINGS if k.startswith(("gw_", "dns_", "ddns_", "frp_"))}
+    allowed.add("auto_scan_min")      # 「扫描行为」里的自动扫描间隔也在这一页保存
     patch = {k: v for k, v in (body.patch or {}).items() if k in allowed}
     if not patch:
         return _err("没有可保存的网关设置")

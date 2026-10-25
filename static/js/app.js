@@ -55,13 +55,6 @@
       const wanSelectedCount = computed(function () {
         return wanRows.value.filter(function (r) { return !!r.item_id; }).length;
       });
-      // 反代面板联动（Gately）：可读规则映射回卡片，也可给卡片直接建规则
-      const gatelyState = ref({ configured: false, ok: false, version: '', rules: 0, error: '' });
-      const gatelyBusy = ref(false);
-      const proxyDlg = ref({ open: false, item: null, subdomain: '', busy: false });
-      const gatelyScheme = computed(function () {
-        return (s.value.gately_tls === false) ? 'http' : 'https';
-      });
       const newCat = ref('');
       const selCats = ref([]);   // 分类页勾选的分类 id
       const newPw = ref('');
@@ -870,7 +863,7 @@
         await loadWallpapers();
         // 角标先发（只是个轻量 GET），再等 reload 把卡片拉回来 —— 否则卡片多的时候
         // 角标要等 reload 完才出现，顶栏会先空一下（2026-10-18 实测 1.2s 内还没渲染）
-        if (token.value) { loadImgBadge(); await reload(); loadGatelyState(); loadGw(); loadNodes(); }
+        if (token.value) { loadImgBadge(); await reload(); loadGw(); loadNodes(); }
         // 深链 /?settings=1&tab=gw 直接打开设置页（同一个页面里的居中大窗口，不再新开浏览器窗口）
         const q0 = new URLSearchParams(location.search);
         if (q0.get('settings') || location.pathname.replace(/\/+$/, '') === '/settings') {
@@ -1123,7 +1116,6 @@
           loadImgBadge();       // 登录后才知道有没有可更新镜像（不等 reload，先把角标点亮）
           await reload();
           recheckLan(false);    // 登录后才知道内网地址，这次补上探测
-          loadGatelyState();    // 登录后才读得到反代面板状态（决定「反代」按钮显不显示）
         } catch (e) { apiErr(e); }
         busy.value = false;
       }
@@ -1454,8 +1446,20 @@
 
       async function delItemById(id) {
         try {
-          await api.delete('/api/admin/items/' + id);
+          // 已消失列表里删除 = 真删（不留墓碑），否则列表永远挂着这张卡片
+          const res = await api.delete('/api/admin/items/' + id, { params: { purge: 1 } });
+          // 删除后要把它从「已消失」列表里摘掉，否则表格原样留着，
+          // 看起来就像点了没反应（2026-10-26 用户反馈）。
+          const sr = scanResult.value;
+          if (sr) {
+            if (sr.missing) sr.missing = sr.missing.filter(function (c) { return c.id !== id; });
+            if (sr.existing) sr.existing = sr.existing.filter(function (c) { return c.id !== id; });
+          }
           await reload(); await loadBootstrap();
+          const r = res && res.data;
+          ElMessage.success(r && r.kept_as_excluded
+            ? '卡片已隐藏（同名容器再出现也不会重新导入）'
+            : '已删除');
         } catch (e) { apiErr(e); }
       }
 
@@ -1643,100 +1647,6 @@
         } catch (e) { apiErr(e); }
         wanApplying.value = false;
       }
-      /* ---------------- 反代面板联动（Gately） ---------------- */
-      async function loadGatelyState() {
-        try {
-          const r = await api.get('/api/admin/gately/state');
-          gatelyState.value = r.data;
-        } catch (e) { gatelyState.value = { configured: false, ok: false, error: '读取状态失败', rules: 0, version: '' }; }
-      }
-      async function gatelyPull() {
-        gatelyBusy.value = true;
-        try {
-          const r = await api.post('/api/admin/gately/preview', {});
-          const rows = r.data.rows || [];
-          wanRows.value = rows.map(function (x) {
-            return Object.assign({}, x, { scheme: x.scheme || 'https' });
-          });
-          wanItems.value = r.data.items || [];
-          const matched = wanRows.value.filter(function (x) { return !!x.item_id; }).length;
-          if (!rows.length) ElMessage.warning('Gately 里还没有反代规则');
-          else ElMessage.success('拉到 ' + rows.length + ' 条规则，匹配到 ' + matched + ' 张卡片');
-        } catch (e) { apiErr(e); }
-        gatelyBusy.value = false;
-      }
-      /* 子域名智能缩写：2-4 个字母（与后端 _abbr 保持一致） */
-      const ABBR_ALIAS = {
-        emby: 'emby', jellyfin: 'jf', jelly: 'jf', plex: 'plex',
-        qbittorrent: 'qb', qbit: 'qb', transmission: 'tr', deluge: 'dg',
-        moviepilot: 'mp', moviepilotv2: 'mp', moviepilotv3: 'mp',
-        navpage: 'np', gately: 'gt', lucky: 'lucky',
-        familytree: 'ft', liveposter: 'lp',
-        xhsautodeliver: 'xhs', wechatautopost: 'wx',
-        autospeed: 'spd', speedtest: 'spd', sunpanel: 'sun',
-        lunatvdl: 'ltv', lunatv: 'ltv', qinglong: 'ql',
-        wbapihub: 'wb', alist: 'al', openlist: 'ol',
-        immich: 'im', photoprism: 'pp', navidrome: 'nd',
-        audiobookshelf: 'ab', homeassistant: 'ha', vaultwarden: 'vw',
-        portainer: 'pt', codeserver: 'cs', uptimekuma: 'uk',
-        syncthing: 'st', filebrowser: 'fb', cloudreve: 'cv'
-      };
-      const ABBR_NOISE = ['auto', 'web', 'app', 'apps', 'server', 'srv', 'panel', 'service',
-        'docker', 'ui', 'pro', 'hub', 'box', 'dl', 'the', 'my', 'new', 'test'];
-      function shortName(text) {
-        const t = (text || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-        if (!t) return '';
-        const key = t.replace(/-/g, '');
-        const tries = [t, t.replace(/-?v?\d+$/, ''), key, key.replace(/v?\d+$/, '')];
-        for (const c of tries) { if (c && ABBR_ALIAS[c]) return ABBR_ALIAS[c]; }
-        let toks = t.split('-').filter(function (x) {
-          return x && ABBR_NOISE.indexOf(x) < 0 && !/^v?\d+$/.test(x);
-        });
-        if (!toks.length) toks = t.split('-').filter(function (x) { return !!x; });
-        if (!toks.length) return '';
-        let out;
-        if (toks.length >= 2) {
-          for (let k = toks.length - 1; k >= 0; k--) {
-            if (ABBR_ALIAS[toks[k]]) return ABBR_ALIAS[toks[k]];
-          }
-          out = toks.map(function (x) { return x[0]; }).join('');
-        }
-        else if (toks[0].length <= 4) out = toks[0];
-        else {
-          const w = toks[0];
-          out = w[0] + w.slice(1).replace(/[aeiou]/g, '');
-          if (out.length < 2) out = w.slice(0, 3);
-          out = out.slice(0, 3);
-        }
-        return (out.replace(/[^a-z0-9]/g, '').slice(0, 4)) || toks[0].slice(0, 3);
-      }
-      const wanPortSuffix = computed(function () {
-        const port = Number(s.value.gately_listener_port || 443);
-        const scheme = gatelyScheme.value;
-        if (!port) return '';
-        if ((scheme === 'https' && port === 443) || (scheme === 'http' && port === 80)) return '';
-        return ':' + port;
-      });
-      function openProxyDlg(it) {
-        const sub = shortName(it.container_name || it.name || '');
-        proxyDlg.value = { open: true, item: it, subdomain: sub, busy: false };
-      }
-      async function doProvision() {
-        const d = proxyDlg.value;
-        if (!d.item) return;
-        d.busy = true;
-        try {
-          const r = await api.post('/api/admin/gately/provision', {
-            item_id: d.item.id, subdomain: d.subdomain
-          });
-          ElMessage.success((r.data.action === 'unchanged' ? '规则已存在，' : '已生成反代，')
-            + '卡片外网地址：' + r.data.url);
-          d.open = false;
-          await reload();
-          await loadGatelyState();
-        } catch (e) { apiErr(e); }
-        d.busy = false;
-      }
       /* ---------------- 采集源（本机 + 远端 Agent） ---------------- */
       function agoText(sec) {
         if (sec === null || sec === undefined) return '';
@@ -1912,7 +1822,6 @@
           await api.put('/api/admin/settings', body);
           syncWallInput();
           await loadBootstrap();
-          loadGatelyState();
           ElMessage.success('设置已保存');
         } catch (e) { apiErr(e); }
         busy.value = false;
@@ -2124,7 +2033,6 @@
         // 2026-10-25 用户要求：设置就在当前页面，屏幕正中的整块页面（不是新窗口、也不是右侧抽屉）
         adminOpen.value = true;
         collapseAllSec();  // 每次打开设置页：所有卡片回到收起状态
-        loadGatelyState();
         // 支持直接跳到某个 tab（顶栏「可更新镜像」角标点进来就是 images）
         if (tabName) tab.value = tabName;
         nextTick(function () { initTabsScroll(); bindCellTitle(); });
@@ -3319,7 +3227,6 @@
         selCats, catAllChecked, catIndeterminate,
         onCatCheck, toggleAllCats, doScan, selectAllNew, importSelected, excludeCand, syncAll, autocatAll, autoSaveAt, flushAutoSave,
         wanText, wanRows, wanItems, wanParsing, wanApplying, wanOverwrite, wanSelectedCount, wanPreview, wanApply,
-        gatelyState, gatelyBusy, gatelyScheme, wanPortSuffix, proxyDlg, loadGatelyState, gatelyPull, openProxyDlg, doProvision,
         gw, gwBusy, gwProxying, loadGw, gwSave, gwReload, gwIssue, gwCertDel, gwSyncAll,
         gwNodes, nodeBusy, nodeSteps, nodeForm, loadNodes, nodeLogText,
         gwNodeTest, gwNodeDeploy, gwNodeEdit, gwNodeReset, gwNodeUse, gwNodeCert, gwNodeDel,

@@ -289,8 +289,6 @@
                   <td>{{ catName(it.category_id) }}</td>
                   <td class="c-op">
                     <el-button size="small" text type="primary" @click="openItem(it)">编辑</el-button>
-                    <el-button v-if="gatelyState.configured" size="small" text type="warning"
-                               @click="openProxyDlg(it)">反代</el-button>
                     <el-button v-if="it.hidden" size="small" text @click="setExcluded(it, false)">恢复</el-button>
                     <el-button v-else size="small" text @click="setExcluded(it, true)">排除</el-button>
                     <el-button size="small" text type="danger" @click="delItem(it)">删除</el-button>
@@ -360,6 +358,14 @@
             <el-button type="primary" size="small" :loading="scanning" @click="doScan">扫描容器</el-button>
             <el-button size="small" :loading="scanning" @click="syncAll">全量同步（保留我的修改）</el-button>
             <el-button size="small" :loading="autocatting" @click="autocatAll">按服务类型归类</el-button>
+            <span class="np-bar-tip" v-if="scanResult && scanResult.auto">
+              自动扫描：<b>{{ scanResult.auto.min ? '每 ' + scanResult.auto.min + ' 分钟' : '关闭' }}</b>
+              <template v-if="scanResult.auto.min && scanResult.auto.last">
+                · 上次 {{ agoText(Math.max(0, Math.round(Date.now() / 1000 - scanResult.auto.last))) }}
+                （新增 {{ scanResult.auto.added }} / 刷新 {{ scanResult.auto.updated }}）
+              </template>
+              <template v-else-if="scanResult.auto.min">· 还没跑过</template>
+            </span>
           </div>
           <div class="np-scroll">
           <div class="np-scan-sec">
@@ -495,13 +501,6 @@
             <div class="np-scan-head">
               <b>导入外网地址</b>
               <span class="np-bar-tip">把 Lucky「Web服务」的规则复制粘贴进来，按后端端口 / 卡片名自动匹配</span>
-            </div>
-            <div class="np-bar" style="margin: 0 0 8px">
-              <el-button size="small" type="success" :loading="gatelyBusy"
-                         :disabled="!gatelyState.configured" @click="gatelyPull">从 Gately 拉取规则</el-button>
-              <span class="np-bar-tip" v-if="gatelyState.configured && gatelyState.ok">已连上 {{ gatelyState.version }} · 现有 {{ gatelyState.rules }} 条规则</span>
-              <span class="np-bar-tip" v-else-if="gatelyState.configured">连接异常：{{ gatelyState.error }}</span>
-              <span class="np-bar-tip" v-else>未配置：设置 → 反代面板填地址和令牌后可用</span>
             </div>
             <el-input v-model="wanText" class="np-wan-paste" type="textarea" :rows="4" resize="vertical"
                       placeholder="每行有域名和内网地址就行，可以直接粘贴 Lucky 的表格：&#10;emby.example.com        192.168.1.109:8096&#10;jellyfin.example.com  -&gt; 192.168.1.109:8096"></el-input>
@@ -797,58 +796,6 @@
             </div>
           </div>
 
-          <div class="np-sec foldable" :class="{ folded: !secFold['net:proxy'] }">
-            <div class="np-sec-head" @click="toggleSec('net:proxy')">
-              <span class="np-sec-title-txt">反代面板（Gately，旧版外挂）</span>
-              <span class="np-sec-sum">{{ s.gately_domain ? (s.gately_tls ? 'https://' : 'http://') + s.gately_domain + (s.gately_listener_port && [80, 443].indexOf(+s.gately_listener_port) < 0 ? ':' + s.gately_listener_port : '') : '未启用' }}</span>
-              <i class="np-sec-caret">▾</i>
-            </div>
-            <div class="np-sec-body" v-show="secFold['net:proxy']">
-            <div class="np-hint" style="margin-bottom:8px">
-              2.0.0 起推荐用内置网关（上面的「网关」页签），不需要再单独跑 Gately；这一页只是兼容旧配置。
-            </div>
-            <div class="np-field">
-              <label>面板地址</label>
-              <el-input v-model="s.gately_url" size="small" placeholder="http://192.168.1.109:16680"></el-input>
-              <div class="np-hint">Gately 管理界面地址（默认 16680 端口）。</div>
-            </div>
-            <div class="np-field">
-              <label>API 令牌</label>
-              <el-input v-model="s.gately_token" size="small" type="password" show-password
-                        placeholder="在 Gately「API 令牌」页新建，勾 webservice 读写"></el-input>
-              <div class="np-hint">只需要 Web 服务的读 + 写权限，别给它 Docker / 终端权限。</div>
-            </div>
-            <div class="np-field">
-              <label>根域名</label>
-              <el-input v-model="s.gately_domain" size="small" placeholder="如 example.com"></el-input>
-              <div class="np-hint">给卡片生成反代时拼成 <code>emby.example.com</code> 这种。</div>
-            </div>
-            <div class="np-field row">
-              <label>监听端口</label>
-              <div class="np-2col">
-                <el-input v-model.number="s.gately_listener_port" size="small" placeholder="443"></el-input>
-                <el-switch v-model="s.gately_tls" active-text="HTTPS"></el-switch>
-              </div>
-              <div class="np-hint">规则写进哪个监听端口。家里宽带上不了 80/443 就填非标端口（如 666），生成的外网地址会自动带端口；证书在 Gately 的 SSL 里签。</div>
-            </div>
-            <div class="np-field">
-              <label>自动建反代</label>
-              <el-switch v-model="s.gately_auto"></el-switch>
-              <div class="np-hint">容器打标签 <code>nav.proxy.domain=emby</code>，扫描导入后自动建 <code>emby.根域名</code> 的反代并写回卡片。</div>
-            </div>
-            
-            <div class="np-field">
-              <label>连接状态</label>
-              <div class="np-2col">
-                <el-button size="small" @click="loadGatelyState">测试连接</el-button>
-                <span class="np-hint" v-if="gatelyState.ok" style="color:#30a46c">正常 · {{ gatelyState.version }} · {{ gatelyState.rules }} 条规则</span>
-                <span class="np-hint" v-else-if="gatelyState.error" style="color:#e5484d">{{ gatelyState.error }}</span>
-                <span class="np-hint" v-else>未测试</span>
-              </div>
-            </div>
-            </div>
-          </div>
-
           <div class="np-sec foldable" :class="{ folded: !secFold['net:switch'] }">
             <div class="np-sec-head" @click="toggleSec('net:switch')">
               <span class="np-sec-title-txt">切换与访问</span>
@@ -891,6 +838,15 @@
               <label>跳过无端口映射的容器</label>
               <el-switch v-model="s.scan_hide_no_port"></el-switch>
               <div class="np-hint">默认关闭：这类容器也会生成卡片，地址留空，到「项目」里手动补端口。</div>
+            </div>
+            <div class="np-field">
+              <label>自动扫描新容器</label>
+              <div class="np-ctlrow">
+                <el-input v-model.number="s.auto_scan_min" size="small" style="max-width:110px"
+                          placeholder="0"></el-input>
+                <span class="np-hint">分钟，填 0 = 关闭</span>
+              </div>
+              <div class="np-hint">开启后后台按这个间隔扫一遍 Docker：新容器自动建卡，并按网关设置补齐反代 / FRP 地址（手填过的地址不会被覆盖）。</div>
             </div>
             </div>
           </div>
@@ -1136,7 +1092,7 @@
                 <div class="np-field row">
                   <label>扫描导入后自动反代</label>
                   <el-switch v-model="s.gw_auto_proxy"></el-switch>
-                  <div class="np-hint">新导入的容器自动生成 <code>容器名.根域名</code> 的反代地址并写进卡片；开了自动签发就顺带签证书。</div>
+                  <div class="np-hint">扫描导入 / 全量同步 / 自动扫描时，给新卡片补 <code>容器名.根域名</code> 的反代地址、外网地址；开了 FRP 就一起补 FRP 地址，开了自动签发就顺带签证书。手填过的地址不会被覆盖。</div>
                 </div>
                 <div class="np-field">
                   <el-button size="small" :loading="gwBusy === 'sync'" @click="gwSyncAll">同步所有卡片</el-button>
@@ -2137,32 +2093,6 @@
       <el-button size="small" @click="tokenDlg = false">关闭</el-button>
       <el-button size="small" @click="copyAgentCmd">复制命令</el-button>
       <el-button size="small" type="warning" v-if="tokenSrcId" @click="rotateSource(tokenSrcId)">轮换令牌</el-button>
-    </template>
-  </el-dialog>
-
-  <!-- 生成反代：给这张卡片在 Gately 上建规则，并把外网地址写回卡片 -->
-  <el-dialog v-model="proxyDlg.open" title="生成反代地址" width="460px" append-to-body>
-    <div class="np-field">
-      <label>卡片</label>
-      <div class="np-muted">{{ proxyDlg.item && proxyDlg.item.name }} · 内网 {{ proxyDlg.item && proxyDlg.item.url_lan }}</div>
-    </div>
-    <div class="np-field">
-      <label>子域名</label>
-      <el-input v-model="proxyDlg.subdomain" size="small" placeholder="emby"></el-input>
-      <div class="np-hint">
-        生成的地址：<code>{{ gatelyScheme }}://{{ proxyDlg.subdomain }}{{ s.gately_domain ? '.' + s.gately_domain : '' }}{{ wanPortSuffix }}</code>
-        ，规则写进 gately 的 {{ s.gately_listener_port }} 端口
-      </div>
-      <div class="np-hint" v-if="proxyDlg.item && proxyDlg.item.url_wan" style="color:#e6a23c">
-        注意：这张卡片当前外网地址是 <code>{{ proxyDlg.item.url_wan }}</code>，生成后会被覆盖（原地址不保留）。
-        <template v-if="proxyDlg.item.url_wan.indexOf('.o.' + (s.gately_domain || '')) > -1">
-          它现在走的是甲骨文反代，覆盖后家里这条路不通时就没有备用入口了。
-        </template>
-      </div>
-    </div>
-    <template #footer>
-      <el-button size="small" @click="proxyDlg.open = false">取消</el-button>
-      <el-button size="small" type="primary" :loading="proxyDlg.busy" @click="doProvision">生成并写入卡片</el-button>
     </template>
   </el-dialog>
 

@@ -288,6 +288,7 @@
                   <td class="np-url" :title="it.url_wan_view || it.url_wan || ''">{{ it.url_wan_view || it.url_wan || '—' }}</td>
                   <td>{{ catName(it.category_id) }}</td>
                   <td class="c-op">
+                    <el-button size="small" text @click="openGwDlg(it)">反代</el-button>
                     <el-button size="small" text type="primary" @click="openItem(it)">编辑</el-button>
                     <el-button v-if="it.hidden" size="small" text @click="setExcluded(it, false)">恢复</el-button>
                     <el-button v-else size="small" text @click="setExcluded(it, true)">排除</el-button>
@@ -1683,7 +1684,7 @@
                   <th style="width:96px">服务</th>
                   <th>容器</th>
                   <th style="width:190px">文件</th>
-                  <th style="width:110px">操作</th>
+                  <th style="width:150px">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -1866,7 +1867,33 @@
     </template>
   </el-dialog>
 
-  <!-- 图标选择器：本地图标（含上传）+ 在线图标库 -->
+  <!-- ============ 单张卡片的反代（与内置网关联动，可手改域名） ============ -->
+  <el-dialog v-model="gwDlg.open" title="反代域名" width="540px" class="np-dlg" append-to-body>
+    <div class="np-field">
+      <label>反代域名</label>
+      <el-input v-model="gwDlg.domain" size="small" placeholder="emby.example.com（留空 = 容器名.根域名）"
+                @keyup.enter="saveGwDlg(true)"></el-input>
+      <div class="np-hint">
+        {{ gwDlg.name }} 转发到 <code>{{ gwDlg.target || '卡片没填内网地址' }}</code>。这里改的域名就是内置网关里的那条路由，保存后立即重载生效。
+      </div>
+    </div>
+    <div class="np-field">
+      <label>证书</label>
+      <el-checkbox v-model="gwDlg.issue" label="同时签发 / 续期证书"></el-checkbox>
+      <div class="np-hint">不勾也能用（浏览器会提示证书不匹配）；配好 DNS 凭据后可自动签通配符证书。</div>
+    </div>
+    <div class="np-hint" v-if="!gwDlg.gwEnabled" style="margin-top:6px">
+      内置反代现在是关闭状态：域名会照常写进卡片，外网要等「设置 → 网关」里开启并配好端口才生效。
+    </div>
+    <div class="np-ok-txt" v-if="gwDlg.msg">{{ gwDlg.msg }}</div>
+    <div class="np-err-txt" v-if="gwDlg.err">{{ gwDlg.err }}</div>
+    <template #footer>
+      <el-button size="small" @click="gwDlg.open = false">关闭</el-button>
+      <el-button size="small" :loading="gwDlg.busy" @click="saveGwDlg(false)">只保存域名</el-button>
+      <el-button size="small" type="primary" :loading="gwDlg.busy" @click="saveGwDlg(true)">保存并签发证书</el-button>
+    </template>
+  </el-dialog>
+
   <el-dialog v-model="iconDlg" title="选择图标" width="680px" class="np-icon-dlg" append-to-body>
     <el-tabs v-model="iconTab">
       <el-tab-pane label="我的图标" name="local">

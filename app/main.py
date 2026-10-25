@@ -3418,27 +3418,68 @@ def gw_sync(body: dict | None = None, _=Depends(require_admin)):
         raise HTTPException(400, f"同步失败：{e}")
 
 
+def _norm_domain(raw: str) -> str:
+    """把用户填的东西洗成裸域名：去掉协议、路径、端口、首尾点。"""
+    d = (raw or "").strip().lower()
+    d = re.sub(r"^[a-z][a-z0-9+.-]*://", "", d)
+    d = d.split("/")[0].split("?")[0].split(":")[0].strip().strip(".")
+    if not d:
+        return ""
+    if not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+", d):
+        raise HTTPException(400, "域名格式不对（示例：emby.example.com）")
+    return d
+
+
 @app.post("/api/admin/gw/item/{iid}/proxy")
 def gw_item_proxy(iid: int, body: dict | None = None, _=Depends(require_admin)):
-    """给单张卡片生成反代地址（写回卡片，随即生效）。"""
+    """给单张卡片配反代：可手填域名，写回卡片后立刻重载路由 / 隧道 / 证书。
+
+    body: {domain?: "emby.example.com"（留空=按规则自动推导）, issue?: bool}
+    """
     it = db.get_item(iid)
     if not it:
         raise HTTPException(404, "卡片不存在")
     svc = _gw_or_404()
+    body = body or {}
+
+    # 1) 手填域名优先（卡片上的 proxy_domain 就是规则本身，domain_for() 会先认它）
+    if "domain" in body:
+        custom = _norm_domain(str(body.get("domain") or ""))
+        db.update_item(iid, {"proxy_domain": custom})
+        it = db.get_item(iid) or it
+
     addr = svc.item_addresses(it)
     if not addr["proxy_domain"]:
-        return _err("先在网关设置里填「根域名」，或者手动给这张卡片填反代域名")
+        return _err("先在网关设置里填「根域名」，或者在这张卡片上手动填反代域名")
+    host, port = svc.item_target(it)
+    if not (host and port):
+        return _err("这张卡片没有内网地址（或端口），反代不知道转发到哪")
+
     patch = {"proxy_domain": addr["proxy_domain"]}
     if addr["url_wan"]:
         patch["url_wan"] = addr["url_wan"]
     if addr["url_frp"]:
         patch["url_frp"] = addr["url_frp"]
     db.update_item(iid, patch)
-    issue = True if not body else bool(body.get("issue", True))
-    cert = asyncio.run_coroutine_threadsafe(svc.ensure_cert_for(addr["proxy_domain"]), _MAIN_LOOP).result(timeout=300) if issue else None
-    svc.frp.apply(svc.cfg(), svc.frp_proxies())
-    return {"ok": True, "domain": addr["proxy_domain"], "url_wan": addr["url_wan"],
-            "url_frp": addr["url_frp"], "cert": cert}
+
+    # 2) 签发/续期证书（没配 DNS 凭据时不要整单失败，把错误带回去给前端显示）
+    cert, cert_err = None, ""
+    if bool(body.get("issue", True)):
+        try:
+            cert = asyncio.run_coroutine_threadsafe(
+                svc.ensure_cert_for(addr["proxy_domain"]), _MAIN_LOOP).result(timeout=300)
+        except Exception as e:
+            cert_err = str(e)[:300]
+
+    # 3) 路由 / frpc 立刻按新域名重来（不重载的话新域名要等重启才生效）
+    try:
+        asyncio.run_coroutine_threadsafe(svc.reload_all(), _MAIN_LOOP).result(timeout=90)
+    except Exception as e:
+        cert_err = cert_err or ("重载网关失败：" + str(e)[:200])
+
+    return {"ok": True, "id": iid, "domain": addr["proxy_domain"], "url_wan": addr["url_wan"],
+            "url_frp": addr["url_frp"], "target": f"{host}:{port}", "cert": cert,
+            "cert_error": cert_err, "gw_enabled": bool(svc.cfg().get("gw_enabled"))}
 
 
 class GwCertBody(BaseModel):

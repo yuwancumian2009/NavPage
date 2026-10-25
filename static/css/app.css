@@ -1119,7 +1119,7 @@ body {
   .ep-table.np-items-table .c-wan { width: 176px; }
 }
 .ep-table.np-items-table .c-cat { width: 76px; }
-.ep-table.np-items-table .c-op { width: 192px; white-space: nowrap; overflow: visible; }
+.ep-table.np-items-table .c-op { width: 236px; white-space: nowrap; overflow: visible; }
 /* 名称 / 地址：允许折行，全文可见（hover 另有 title 提示） */
 .ep-table.np-items-table tbody td:nth-child(2),
 .ep-table.np-items-table tbody td.np-url { white-space: normal; word-break: break-all; overflow: visible; text-overflow: clip; }
@@ -1299,6 +1299,11 @@ body {
 
 /* ---- Compose 管理（2026-10-19） ---- */
 .np-cmp-table td { vertical-align: top; }
+/* 操作列必须能完整放下「编辑 / 重构」两个按钮：
+   .ep-table td 默认 overflow:hidden + text-overflow:ellipsis，110px 宽时第二个按钮
+   会被裁成「…」，那块被裁掉的区域点不动（2026-10-25 实测）。 */
+.ep-table.np-cmp-table th:last-child { width: 150px; }
+.ep-table.np-cmp-table td:last-child { width: 150px; overflow: visible; text-overflow: clip; white-space: nowrap; }
 .np-cmp-table .np-mono { font-size: 10px; }
 .np-cmp-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
 .np-cmp-meta code { font-size: 10px; color: #909399; word-break: break-all; }

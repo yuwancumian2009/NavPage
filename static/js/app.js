@@ -990,6 +990,41 @@
         } catch (e) { apiErr(e); }
         gwProxying.value = 0;
       }
+      // ---- 单张卡片的反代（与内置网关联动，可手改域名）----
+      const gwDlg = ref({ open: false, id: 0, name: '', domain: '', issue: true, gwEnabled: false,
+                          target: '', busy: false, msg: '', err: '' });
+      function openGwDlg(it) {
+        if (!it || !it.id) return;
+        gwDlg.value = {
+          open: true, id: it.id, name: it.name || ('#' + it.id),
+          domain: it.proxy_domain || '', issue: true,
+          gwEnabled: !!(s.value && s.value.gw_enabled),
+          target: (it.url_lan || '').replace('{host}', '本机'),
+          busy: false, msg: '', err: ''
+        };
+      }
+      async function saveGwDlg(issue) {
+        const d = gwDlg.value;
+        if (!d.id || d.busy) return;
+        d.busy = true; d.msg = ''; d.err = '';
+        try {
+          const r = await api.post('/api/admin/gw/item/' + d.id + '/proxy',
+            { domain: (d.domain || '').trim(), issue: !!issue }, { timeout: 300000 });
+          const res = r.data || {};
+          if (res.ok) {
+            d.msg = '已生效：' + (res.url_wan || res.domain || '');
+            if (res.cert_error) d.err = '证书没签成：' + res.cert_error;
+            ElMessage.success('反代已更新');
+            await reload(); await loadBootstrap(); await loadGw();
+          } else {
+            d.err = res.error || '保存失败';
+          }
+        } catch (e) {
+          const dd = e && e.response && e.response.data && e.response.data.detail;
+          d.err = (typeof dd === 'string' && dd) || (e && e.message) || '请求失败';
+        }
+        d.busy = false;
+      }
       function gwCopy(t) {
         const txt = String(t || '');
         if (!txt) return;
@@ -3230,7 +3265,7 @@
         gw, gwBusy, gwProxying, loadGw, gwSave, gwReload, gwIssue, gwCertDel, gwSyncAll,
         gwNodes, nodeBusy, nodeSteps, nodeForm, loadNodes, nodeLogText,
         gwNodeTest, gwNodeDeploy, gwNodeEdit, gwNodeReset, gwNodeUse, gwNodeCert, gwNodeDel,
-        gwDdnsNow, gwFrpApply, gwDnsTest, gwProxyItem, gwCopy, closeAdmin,
+        gwDdnsNow, gwFrpApply, gwDnsTest, gwProxyItem, gwDlg, openGwDlg, saveGwDlg, gwCopy, closeAdmin,
         refreshIcons, saveSettings, uploadWall, pickWall, useWallUrl, clearWall,
         delWall, openAdmin,
         iconDlg, iconTab, iconList, iconLoading, iconQ, iconResults, iconSearching,

@@ -20,7 +20,7 @@ from concurrent.futures import as_completed
 warnings.filterwarnings("ignore")
 
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Depends
-from fastapi.responses import JSONResponse, FileResponse, Response
+from fastapi.responses import JSONResponse, FileResponse, Response, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
@@ -3151,6 +3151,27 @@ def admin_gately_provision(body: GatelyProvisionBody, _=Depends(require_admin)):
 # ---------------------------------------------------------------- static (must be last)
 
 if os.path.isdir(STATIC_DIR):
+    def _asset_ver(rel):
+        """静态资源版本号 = 文件内容哈希，改了就变，不用再手改 index.html 里的 ?v=N。"""
+        try:
+            with open(os.path.join(STATIC_DIR, rel), "rb") as f:
+                return hashlib.md5(f.read()).hexdigest()[:8]
+        except OSError:
+            return ""
+
+    @app.get("/", include_in_schema=False)
+    @app.get("/index.html", include_in_schema=False)
+    def _index_html():
+        try:
+            html = open(os.path.join(STATIC_DIR, "index.html"), encoding="utf-8").read()
+        except OSError:
+            raise HTTPException(404, "index.html missing")
+        for rel in ("js/app.js", "css/app.css"):
+            v = _asset_ver(rel)
+            if v:
+                html = re.sub(r"(/%s\?v=)[0-9a-f]+" % re.escape(rel), r"\g<1>" + v, html)
+        return HTMLResponse(html)
+
     # index.html 自身没有版本号：被浏览器缓存会导致「服务端已更新、用户看到的还是旧界面」
     # （2026-10-16 实际踩到）。html 一律 no-store，app.js/app.css 靠 ?v=N 区分，不禁。
     @app.middleware("http")

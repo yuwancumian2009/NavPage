@@ -335,7 +335,12 @@ class Gateway:
         wan = ""
         if domain:
             scheme = (cfg.get("gw_wan_scheme") or "https").lower()
-            port = int(cfg.get("gw_https_port") or 443)
+            # 端口要跟协议配套：http 用 gw_http_port，https 用 gw_https_port。
+            # （2026-10-25 实测踩到：选 http 却拼了 18443，链接直接打不开）
+            if scheme == "https":
+                port = int(cfg.get("gw_https_port") or 443)
+            else:
+                port = int(cfg.get("gw_http_port") or 80)
             suffix = "" if (scheme == "https" and port == 443) or (scheme == "http" and port == 80) else f":{port}"
             wan = f"{scheme}://{domain}{suffix}"
         return {"proxy_domain": domain, "url_wan": wan, "url_frp": frp_url}

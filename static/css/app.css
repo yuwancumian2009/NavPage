@@ -615,12 +615,23 @@ body {
 .np-tabs .el-tabs__nav-prev, .np-tabs .el-tabs__nav-next { display: none; }
 .np-tabs .el-tabs__nav-wrap::after { height: 1px; background: #eef0f3; }
 /* 高亮块：EP 的 active-bar 自带位置过渡，做成圆角药丸就成了「左右滑动」的效果 */
-.np-tabs .el-tabs__active-bar {
-  height: 30px; top: 4px; border-radius: 9px; background: #eaf2ff;
-  transition: transform .32s cubic-bezier(.4, 0, .2, 1), width .32s cubic-bezier(.4, 0, .2, 1);
+/* 选中态底色：不用 EP 的 active-bar（它的宽度只等于文字宽度，胶囊会把字箍住），
+   改成每个页签自己的 ::before 药丸，宽度跟着 padding 走。 */
+.np-tabs .el-tabs__active-bar { display: none; }
+.np-tabs .el-tabs__item::before {
+  content: ""; position: absolute; left: 1px; right: 1px; top: 3px; height: 32px;
+  border-radius: 999px; z-index: -1; pointer-events: none;
+  background: transparent; box-shadow: inset 0 0 0 1px transparent;
+  transition: background .18s ease, box-shadow .18s ease;
+}
+.np-tabs .el-tabs__item.is-active::before {
+  background: linear-gradient(180deg, #eff5ff 0%, #dfeaff 100%);
+  box-shadow: inset 0 0 0 1px rgba(47, 111, 208, .14), 0 1px 3px rgba(47, 111, 208, .12);
 }
 .np-tabs .el-tabs__item { height: 38px; line-height: 38px; font-size: 13px; color: #606266; padding: 0 14px; position: relative; z-index: 1; }
-.np-tabs .el-tabs__item.is-active { color: #2f6fd0; font-weight: 600; }
+.np-tabs .el-tabs__item { transition: color .16s ease, opacity .16s ease; }
+.np-tabs .el-tabs__item:not(.is-active):hover { color: #3f7fdd; }
+.np-tabs .el-tabs__item.is-active { color: #1f5fc2; font-weight: 600; }
 /* 两端渐隐：只在还能滑动的一侧出现 */
 .np-tabs > .el-tabs__header::before, .np-tabs > .el-tabs__header::after {
   content: ''; position: absolute; top: 0; bottom: 0; width: 20px; z-index: 2;

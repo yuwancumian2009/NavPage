@@ -1083,16 +1083,16 @@ body {
 .ep-table .c-ver { width: 130px; }
 .ep-table .c-auto { width: 92px; }
 /* ---- 项目表专用：长地址/长名称折行显示全文，操作列按钮紧凑排满 ----
-   列宽 48+132+148+148+76+192 = 744，正好等于设置面板内容宽（多出来的宽按比例摊）。
+   列宽 52+180+230+230+80+172 = 944，对应桌面抽屉 980px 的内容宽（多出来的宽按比例摊）。
    之前沿用通用单行省略规则：地址列被截成「http://192.168.1.1…」，
    操作列的「排除」只剩一个省略号、点都点不到。 */
 .ep-table.np-items-table { table-layout: fixed; }
-.ep-table.np-items-table .c-icon { width: 48px; }
-.ep-table.np-items-table .c-name { width: 132px; }
+.ep-table.np-items-table .c-icon { width: 52px; }
+.ep-table.np-items-table .c-name { width: 180px; }
 .ep-table.np-items-table .c-lan,
-.ep-table.np-items-table .c-wan { width: 148px; }
-.ep-table.np-items-table .c-cat { width: 76px; }
-.ep-table.np-items-table .c-op { width: 192px; white-space: nowrap; overflow: visible; }
+.ep-table.np-items-table .c-wan { width: 230px; }
+.ep-table.np-items-table .c-cat { width: 80px; }
+.ep-table.np-items-table .c-op { width: 172px; white-space: nowrap; overflow: visible; }
 /* 名称 / 地址：允许折行，全文可见（hover 另有 title 提示） */
 .ep-table.np-items-table tbody td:nth-child(2),
 .ep-table.np-items-table tbody td.np-url { white-space: normal; word-break: break-all; overflow: visible; text-overflow: clip; }

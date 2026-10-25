@@ -566,7 +566,8 @@
         return out;
       });
 
-      const drawerSize = computed(function () { return isMobile.value ? '100%' : '780px'; });
+      // 桌面 980px：项目表 6 列（名称 + 内外网地址）需要宽度，780px 时地址只能折成两三行
+      const drawerSize = computed(function () { return isMobile.value ? '100%' : (window.innerWidth >= 1200 ? '980px' : '84vw'); });
 
       /* ---------------- 小工具 ---------------- */
       function initial(name) {

@@ -86,6 +86,7 @@ class Gateway:
         self.started = False
         self._issue_lock = threading.Lock()
         self._renew_task: asyncio.Task | None = None
+        self._frp_task: asyncio.Task | None = None
         self._last_issue: dict[str, dict] = {}
 
     # ---------------------------------------------------------------- 日志
@@ -221,6 +222,7 @@ class Gateway:
         if cfg.get("ddns_enabled"):
             self.ddns.start()
         self._renew_task = asyncio.create_task(self._renew_loop())
+        self._frp_task = asyncio.create_task(self._frp_loop())
         self.log("网关服务已就绪")
 
     async def stop(self):
@@ -228,6 +230,13 @@ class Gateway:
         await self.proxy.stop()
         await self.ddns.stop()
         self.frp.stop()
+        if self._frp_task:
+            self._frp_task.cancel()
+            try:
+                await self._frp_task
+            except BaseException:
+                pass
+            self._frp_task = None
         if self._renew_task:
             self._renew_task.cancel()
             try:
@@ -317,6 +326,29 @@ class Gateway:
         if cfg.get("gw_wildcard", True) and root and domain.endswith("." + root):
             return await self.issue_cert([f"*.{root}", root], name=safe_name([f"*.{root}"]))
         return await self.issue_cert([domain])
+
+    async def _frp_loop(self):
+        """frpc 自愈：进程挂了或者卡片/端口变了，45 秒内自己纠正回来。
+
+        为什么需要它（2026-10-26 的真实事故）：容器刚重建时 docker inspect 还没
+        把端口映射全部吐出来，自动扫描把「导航页」自己的卡片读成了网关端口，
+        frpc 配置跟着写成 172.28.0.1:8081 —— 而网关当时没开，8081 没人监听，
+        于是 https://navpage.o.hhxin.top 直接 404。卡片随后被扫描修正，但 frpc
+        配置只在有人点「重载」时才重写，隧道就一直是坏的。
+        现在每 45 秒对比一次「按当前卡片生成的配置」和「已生效的配置」，
+        不一致就重写并重启 frpc（apply 内部只在文本变了或进程死了才动它）。
+        """
+        await asyncio.sleep(45)
+        while True:
+            try:
+                cfg = self.cfg()
+                if cfg.get("frp_enabled"):
+                    self.frp.apply(cfg, self.frp_proxies())
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                self.log(f"frpc 自愈循环异常：{e}")
+            await asyncio.sleep(45)
 
     async def _renew_loop(self):
         await asyncio.sleep(30)

@@ -193,7 +193,9 @@ class Gateway:
             base = d.split(".")[0]
             # proxy 名必须唯一：同一个容器可能被建了两张卡片（比如内外网分开），
             # 重名会让 frpc 直接报 "proxy name already exists" 并整份配置失效。
+            prefix = (cfg.get("frp_name_prefix") or "").strip()
             name = slugify(it.get("container_name") or "") or f"app-{it.get('id')}"
+            name = f"{prefix}{name}"
             if name in used:
                 name = f"{name}-{it.get('id')}"
             used.add(name)

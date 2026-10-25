@@ -895,7 +895,7 @@
         'gw_acme_insecure', 'gw_cert_days', 'gw_dns_wait',
         'dns_provider', 'dns_creds',
         'ddns_enabled', 'ddns_record', 'ddns_interval', 'ddns_ip_sources',
-        'frp_enabled', 'frp_server', 'frp_port', 'frp_protocol', 'frp_token', 'frp_scheme',
+        'frp_enabled', 'frp_server', 'frp_port', 'frp_protocol', 'frp_name_prefix', 'frp_token', 'frp_scheme',
         'frp_vhost_http_port', 'frp_vhost_https_port', 'frp_subdomain_host', 'frp_domain'
       ];
       async function loadGw() {

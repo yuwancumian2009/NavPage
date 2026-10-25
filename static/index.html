@@ -1234,6 +1234,11 @@
                   <div class="np-hint">frps 挂在 nginx/OpenResty 后面、对外只有 443 时选 <code>wss</code>，端口填 443。</div>
                 </div>
                 <div class="np-field">
+                  <label>代理名前缀</label>
+                  <el-input v-model="s.frp_name_prefix" size="small" style="width:220px" placeholder="np-"></el-input>
+                  <div class="np-hint">同一个 frps 上还有别的 frpc（比如你原来的图形客户端）时，前缀能避免「proxy already exists」重名报错。</div>
+                </div>
+                <div class="np-field">
                   <label>Token</label>
                   <el-input v-model="s.frp_token" size="small" type="password" show-password></el-input>
                 </div>

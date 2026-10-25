@@ -160,6 +160,7 @@ DEFAULT_SETTINGS = {
     "frp_enabled": False,
     "frp_server": "",
     "frp_port": 7000,
+    "frp_name_prefix": "np-",    # 代理名前缀：同一个 frps 上还有别的 frpc 时避免重名冲突
     "frp_protocol": "tcp",      # tcp / websocket / wss（frps 藏在 443 反代后面时用 wss）
     "frp_token": "",
     "frp_vhost_http_port": 80,

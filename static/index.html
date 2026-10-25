@@ -1344,7 +1344,7 @@
                     <el-option label="Caddy 自动 HTTPS（占 80/443，推荐）" value="caddy"></el-option>
                     <el-option label="纯 HTTP（frps 直接占 80，不要证书）" value="http"></el-option>
                   </el-select>
-                  <div class="np-hint">Caddy 形态 = frpc 走 <code>wss:443</code>；纯 HTTP 形态 = <code>tcp:7000</code> + <code>http:80</code>。</div>
+                  <div class="np-hint">Caddy 形态：站点走 <code>https:443</code>，frpc 直连 <code>tcp:7000</code>（TLS）；纯 HTTP 形态：全走 <code>http:80</code> + <code>tcp:7000</code>。</div>
                 </div>
                 <div class="np-field">
                   <label>FRP 域名后缀</label>

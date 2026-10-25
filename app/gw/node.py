@@ -129,7 +129,8 @@ def node_ports(node: dict) -> dict:
         return {"mode": "http", "bind": bind_port,
                 "vhost": int(node.get("vhost_port") or 80), "public": int(node.get("vhost_port") or 80)}
     return {"mode": "caddy", "bind": bind_port,
-            "vhost": int(node.get("vhost_port") or 8080), "public": 443}
+            "vhost": int(node.get("vhost_port") or 8080),
+            "public": int(node.get("https_port") or 443)}
 
 
 def render_frps(node: dict) -> str:
@@ -193,13 +194,13 @@ def render_caddyfile(node: dict) -> str:
 }}
 
 # frpc 的 wss 握手走这里 → frps 的 bindPort
-{root} {{
+{root}:{p['public']} {{
 	tls /certs/cert.pem /certs/key.pem
 	reverse_proxy 127.0.0.1:{p['bind']}
 }}
 
 # 各容器的 HTTP 隧道 → frps 的 vhost HTTP 端口（Host 头必须原样带）
-*.{root} {{
+*.{root}:{p['public']} {{
 	tls /certs/cert.pem /certs/key.pem
 	reverse_proxy 127.0.0.1:{p['vhost']} {{
 		header_up Host {{host}}
@@ -369,7 +370,7 @@ def preflight(node: dict) -> dict:
         used = set((o or "").split())
         need = [p["bind"], p["vhost"]]
         if p["mode"] == "caddy":
-            need += [80, 443]
+            need += [p["public"]]
         busy = [str(x) for x in need if str(x) in used]
         ours = "navpage-node" in out["existing"]
         if busy and ours:
@@ -405,6 +406,15 @@ def deploy(node: dict, log_fn=None) -> dict:
             if log:
                 _step(log, "仪表盘端口", True, f"{dash}（7500 被占用，已自动改用 {dash}）")
 
+        # 端口被别人的服务占着时早失败，别等容器起来再靠日志猜
+        rc, o = sh.run("docker ps -a --filter name=navpage-node- --format '{{.Names}}'")
+        ours = "navpage-node" in (o or "")
+        need = [p["bind"], p["vhost"]] + ([p["public"]] if p["mode"] == "caddy" else [])
+        busy = [str(x) for x in need if str(x) in used]
+        if busy and not ours:
+            raise NodeError("端口被占用：" + ", ".join(busy) +
+                            "。换一个端口再部署（vhost/HTTPS 端口或 frps 端口），或先停掉占用它的服务。")
+
         rc, o = sh.run("mkdir -p %s/certs && echo ok" % NODE_DIR)
         _step(log, "创建目录", rc == 0, NODE_DIR)
         say("目录就绪")
@@ -425,7 +435,10 @@ def deploy(node: dict, log_fn=None) -> dict:
         _step(log, "上传配置", True, "、".join(os.path.basename(x) for x in files))
         say("配置已上传")
 
-        cmd = f"cd {NODE_DIR} && docker compose -p {COMPOSE_PROJECT} up -d --remove-orphans 2>&1 | tail -20"
+        # --force-recreate：只改了挂载进去的配置（端口、token、Caddyfile）时，
+        # compose 认为服务没变不会重建容器，新配置就白写了。
+        cmd = (f"cd {NODE_DIR} && docker compose -p {COMPOSE_PROJECT} up -d "
+               f"--force-recreate --remove-orphans 2>&1 | tail -20")
         rc, o = sh.run(cmd, timeout=600)
         _step(log, "拉起容器", rc == 0, (o or "").replace("\n", " ")[:400])
         if rc != 0:
@@ -451,8 +464,18 @@ def deploy(node: dict, log_fn=None) -> dict:
         say("frps 已应答")
 
         if p["mode"] == "caddy":
-            rc, o = sh.run(f"curl -sk -o /dev/null -w '%{{http_code}}' -m 10 -H 'Host: probe.{root}' https://127.0.0.1/__navpage_probe")
-            _step(log, "Caddy TLS 应答", rc == 0, f"HTTP {o}（占位自签证书阶段也算通过）")
+            # 必须用真域名访问：直接连 IP 时 SNI 是 IP，Caddy 找不到匹配站点会直接 TLS alert
+            code = ""
+            for _i in range(10):
+                rc, o = sh.run(f"curl -sk -o /dev/null -w '%{{http_code}}' -m 8 "
+                               f"--resolve probe.{root}:{p['public']}:127.0.0.1 "
+                               f"https://probe.{root}:{p['public']}/__navpage_probe")
+                code = (o or "").strip()
+                if rc == 0 and code and code != "000":
+                    break
+                time.sleep(2)
+            _step(log, "Caddy TLS 应答", rc == 0 and code not in ("", "000"),
+                  f"HTTP {code}（占位自签证书阶段也算通过）")
             rc, o = sh.run("docker logs navpage-node-caddy 2>&1 | tail -5")
             if rc == 0 and "error" in (o or "").lower():
                 _step(log, "Caddy 日志", False, (o or "").replace("\n", " ")[:300])
@@ -480,7 +503,7 @@ def deploy(node: dict, log_fn=None) -> dict:
             _step(log, "本机防火墙", False, f"检测失败（不影响，手动放行端口即可）：{e}")
 
         # 云厂商安全组改不了，只能提醒（Oracle/AWS/阿里云都拦在 VPC 层，本机 ufw 开了也没用）
-        need_pub = sorted({p["bind"], 443, 80} if p["mode"] == "caddy" else {p["bind"], p["vhost"]})
+        need_pub = sorted({p["bind"], p["public"]} if p["mode"] == "caddy" else {p["bind"], p["vhost"]})  # caddy: 7000 给 frpc，443 给站点
         _step(log, "云安全组", True,
               "安全组要放行 TCP " + "/".join(str(x) for x in need_pub) + "（云控制台那条入站规则，本工具改不了）")
 
@@ -502,9 +525,12 @@ def suggest_client(node: dict, host_ip: str = "") -> dict:
         return {**base, "frp_server": (node.get("host") or "").strip(), "frp_port": p["bind"],
                 "frp_protocol": "tcp", "frp_scheme": "http",
                 "frp_vhost_http_port": p["vhost"], "frp_vhost_https_port": p["vhost"]}
-    return {**base, "frp_server": root or (node.get("host") or "").strip(), "frp_port": 443,
-            "frp_protocol": "wss", "frp_scheme": "https",
-            "frp_vhost_http_port": 80, "frp_vhost_https_port": 443}
+    # 控制连接直连 frps 的 bindPort 走 TLS（实测最稳）。wss 那套只在
+    # 「443 是唯一出网端口 + 前面有 nginx/Caddy 反代」时才需要，本工具部署的节点
+    # 自己控制防火墙，直连省掉一层，少一处故障点。
+    return {**base, "frp_server": (node.get("host") or "").strip(), "frp_port": p["bind"],
+            "frp_protocol": "tcp", "frp_scheme": "https",
+            "frp_vhost_http_port": p["public"], "frp_vhost_https_port": p["public"]}
 
 
 # --------------------------------------------------------------------- 证书
@@ -532,16 +558,28 @@ def sync_cert(node: dict, svc, force: bool = False) -> dict:
     except Exception as e:
         raise NodeError(f"读本地证书失败：{e}") from e
 
+    pushed = push_cert(node, cert_pem, key_pem)
+    log.extend(pushed["steps"])
+    return {"ok": pushed["ok"], "steps": log, "domains": domains, "not_after": res.get("not_after")}
+
+
+def push_cert(node: dict, cert_pem: str, key_pem: str) -> dict:
+    """把证书文件推到节点并让 Caddy 重新加载（不负责签发）。"""
+    p = node_ports(node)
+    root = (node.get("root_domain") or "").strip().strip(".").lower()
+    log: list[dict] = []
     with Ssh(node) as sh:
         sh.put(f"{NODE_DIR}/certs/cert.pem", cert_pem, 0o644)
         sh.put(f"{NODE_DIR}/certs/key.pem", key_pem, 0o600)
-        _step(log, "上传证书", True, " → ".join(domains))
+        _step(log, "上传证书", True, f"{root} / *.{root}")
         # 宿主机文件变了，容器里的 bind mount 会跟着变，reload 一下让 Caddy 重新读
-        rc, o = sh.run("docker exec navpage-node-caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1 | tail -3")
+        rc, o = sh.run("docker exec navpage-node-caddy caddy reload --force "
+                       "--config /etc/caddy/Caddyfile --adapter caddyfile 2>&1 | tail -3")
         _step(log, "Caddy reload", rc == 0, (o or "").replace("\n", " ")[:200])
-        rc, o = sh.run("echo | openssl s_client -connect 127.0.0.1:443 -servername %s 2>/dev/null | openssl x509 -noout -issuer -dates" % root)
-        _step(log, "实测线上证书", "Let's Encrypt" in (o or "") or "R" in (o or ""), (o or "").replace("\n", " ")[:200])
-    return {"ok": True, "steps": log, "domains": domains, "not_after": res.get("not_after")}
+        rc, o = sh.run(f"echo | openssl s_client -connect 127.0.0.1:{p['public']} -servername {root} 2>/dev/null "
+                       "| openssl x509 -noout -issuer -dates")
+        _step(log, "实测线上证书", "CN" in (o or "") or "notAfter" in (o or ""), (o or "").replace("\n", " ")[:200])
+    return {"ok": all(s["ok"] for s in log), "steps": log}
 
 
 def safe_cert_name(root: str) -> str:

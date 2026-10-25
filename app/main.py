@@ -3492,6 +3492,7 @@ def _node_norm(raw: dict) -> dict:
     n["root_domain"] = (n.get("root_domain") or "").strip().strip(".").lower()
     n["frps_bind_port"] = int(n.get("frps_bind_port") or 7000)
     n["vhost_port"] = int(n.get("vhost_port") or 0)
+    n["https_port"] = int(n.get("https_port") or 0)
     n["auth"] = "key" if (n.get("key") or "").strip() else "password"
     if not (n.get("token") or "").strip() or n.get("token") == "***":
         old = node_mod.get_node(n.get("id") or "")

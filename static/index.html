@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/vendor/element-plus.css?v=1">
-<link rel="stylesheet" href="/css/app.css?v=81">
+<link rel="stylesheet" href="/css/app.css?v=83">
 </head>
 <body>
 <div id="app" v-cloak :class="{ 'np-settings-win': settingsWin }">
@@ -509,60 +509,6 @@
           </template>
           <div class="np-empty-sm" v-else>点「扫描容器」列出 NAS 上的所有容器（含无端口映射的）</div>
 
-          <!-- ---------- 导入外网地址：从 Lucky 粘贴规则，自动匹配卡片 ---------- -->
-          <div class="np-scan-sec">
-            <div class="np-scan-head">
-              <b>导入外网地址</b>
-              <span class="np-bar-tip">把 Lucky「Web服务」的规则复制粘贴进来，按后端端口 / 卡片名自动匹配</span>
-            </div>
-            <el-input v-model="wanText" class="np-wan-paste" type="textarea" :rows="4" resize="vertical"
-                      placeholder="每行有域名和内网地址就行，可以直接粘贴 Lucky 的表格：&#10;emby.example.com        192.168.1.109:8096&#10;jellyfin.example.com  -&gt; 192.168.1.109:8096"></el-input>
-            <div class="np-bar" style="margin: 8px 0 0">
-              <el-button type="primary" size="small" :loading="wanParsing"
-                         :disabled="!wanText.trim()" @click="wanPreview">解析预览</el-button>
-              <el-checkbox v-if="wanRows.length" v-model="wanOverwrite" size="small">覆盖已有外网地址</el-checkbox>
-              <el-button v-if="wanRows.length" size="small" @click="wanRows = []">清空结果</el-button>
-            </div>
-            <table class="ep-table np-wan-tab" v-if="wanRows.length">
-              <!-- 4 列：协议并进域名格（点 https 前缀切换）。列宽写在单元格类上，
-                   不用 colgroup —— 手机上隐藏整列时宽度才会一起消失 -->
-              <thead><tr>
-                <th>域名</th>
-                <th class="col-back hide-sm">解析到的后端</th>
-                <th class="col-card">匹配卡片</th>
-                <th class="col-wan hide-sm">当前外网地址</th>
-              </tr></thead>
-              <tbody>
-                <tr v-for="r in wanRows" :key="r.domain">
-                  <td class="np-url">
-                    <button class="np-scheme" :title="'点击切换 ' + (r.scheme === 'https' ? 'http' : 'https')"
-                            @click="r.scheme = (r.scheme === 'https' ? 'http' : 'https')">{{ r.scheme }}</button><span class="np-slash">://</span><span :title="r.domain">{{ r.domain }}</span>
-                  </td>
-                  <td class="np-muted col-back hide-sm"
-                      :title="r.backend_host ? r.backend_host + ':' + r.backend_port : ''">
-                    <template v-if="r.backend_host">{{ r.backend_host }}:{{ r.backend_port }}</template>
-                    <template v-else>—</template>
-                    <span v-if="r.match_by" class="np-chip">{{ r.match_by }}</span>
-                  </td>
-                  <td class="col-card">
-                    <el-select v-model="r.item_id" size="small" filterable clearable
-                               placeholder="不写入" style="width: 100%">
-                      <el-option v-for="it in wanItems" :key="it.id"
-                                 :label="it.name + (it.port ? ' · ' + it.port : '')" :value="it.id"></el-option>
-                    </el-select>
-                  </td>
-                  <td class="np-url np-muted col-wan hide-sm" :title="r.current_wan">{{ r.current_wan ? r.current_wan.replace(/^https?:\/\//, '') : '—' }}</td>
-                </tr>
-              </tbody>
-            </table>
-            <div class="np-bar" v-if="wanRows.length" style="margin-top: 8px">
-              <el-button type="primary" size="small" :loading="wanApplying"
-                         :disabled="!wanSelectedCount" @click="wanApply">
-                写入 {{ wanSelectedCount }} 张卡片
-              </el-button>
-              <span class="np-bar-tip">只改外网地址，内网地址不动</span>
-            </div>
-          </div>
           </div>
         </el-tab-pane>
 
@@ -2275,6 +2221,6 @@
 <script src="/vendor/element-plus.min.js"></script>
 <script src="/vendor/element-icons.min.js"></script>
 <script src="/vendor/axios.min.js"></script>
-<script src="/js/app.js?v=96"></script>
+<script src="/js/app.js?v=97"></script>
 </body>
 </html>

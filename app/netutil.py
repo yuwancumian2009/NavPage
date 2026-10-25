@@ -255,3 +255,9 @@ def pick_primary_port(ports):
         if p["public"] in DEFAULT_PORTS:
             return p["public"]
     return tcp[0]["public"]
+
+
+def norm_name(s: str) -> str:
+    """名字归一化：只留字母数字，用于域名首段 ↔ 容器名/卡片名的模糊比对。"""
+    import re as _re
+    return _re.sub(r"[^a-z0-9]", "", (s or "").lower())

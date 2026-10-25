@@ -1846,6 +1846,7 @@
 
       function openAdmin(tabName) {
         adminOpen.value = true;
+        collapseAllSec();  // 每次打开设置页：所有卡片回到收起状态
         loadGatelyState();
         // 支持直接跳到某个 tab（顶栏「可更新镜像」角标点进来就是 images）
         if (tabName) tab.value = tabName;
@@ -2211,22 +2212,17 @@
         return imgRows.value.filter(function (r) { return r.status === 'outdated'; }).length;
       });
 
-      /* ---- 镜像页卡片的收起状态（记在 localStorage，刷新后保持） ---- */
-      const IMG_SEC_KEY = 'navpage_img_sec';
-      function readImgSec() {
-        const base = { upd: false, chk: false, prune: false };
-        try {
-          const raw = JSON.parse(localStorage.getItem(IMG_SEC_KEY) || '{}') || {};
-          Object.keys(base).forEach(function (k) { if (raw[k] === true) base[k] = true; });
-        } catch (e) { /* 忽略坏值 */ }
-        return base;
+      /* ---- 设置页卡片收起状态（2026-10-25 用户要求）----
+         外观 / 网络与安全 / 镜像 三个页签里的卡片全部可收起，且每次打开设置页都默认全收起：
+         secFold 里只有值为 true 的键才算「展开」，openAdmin 每次都把它清空。
+         不再写 localStorage —— 记状态反而会让下次打开还停在上次展开的那张。 */
+      const secFold = ref({});
+      function toggleSec(k) {
+        const o = Object.assign({}, secFold.value);
+        o[k] = !o[k];
+        secFold.value = o;
       }
-      const imgSec = ref(readImgSec());
-      function toggleImgSec(k) {
-        if (!(k in imgSec.value)) return;
-        imgSec.value[k] = !imgSec.value[k];
-        try { localStorage.setItem(IMG_SEC_KEY, JSON.stringify(imgSec.value)); } catch (e) { /* 隐私模式忽略 */ }
-      }
+      function collapseAllSec() { secFold.value = {}; }
 
       /* ---- 定时自动检查 / 自动更新（2026-10-16 用户要求）----
          cron 解析和「下次运行」都在服务端算（app/cron.py），前端只负责显示和改设置。 */
@@ -3032,7 +3028,7 @@
         imgBadge, imgCheckedText, loadImgBadge, openImagesPage,
         imgAuto, cronPresets, cronPreset, autoNames, autoLastText, isAutoName, toggleAutoName, fmtTs, loadAuto,
         logoUrl, logoUrlInput, uploadLogo, useLogoUrl, clearLogo,
-        pruneSt, pruneModes, prunePreset, keepInput, keepList, addKeep, delKeep, imgSec, toggleImgSec,
+        pruneSt, pruneModes, prunePreset, keepInput, keepList, addKeep, delKeep, secFold, toggleSec,
         pruneBusy, prunePrev, pruneNames, pruneLastText, previewPrune, runPrune,
         loadBootstrap, loadWallpapers, reload, boot, doLogin, logout, changePw,
         setMode, onEnter, openItem, saveItem, delItem, delItemById, setExcluded,

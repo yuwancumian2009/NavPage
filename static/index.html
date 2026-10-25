@@ -555,8 +555,13 @@
         <!-- ---------------- 外观 ---------------- -->
         <el-tab-pane label="外观" name="look">
           <div class="np-scroll">
-          <div class="np-sec">
-            <div class="np-sec-head">站点信息</div>
+          <div class="np-sec foldable" :class="{ folded: !secFold['look:site'] }">
+            <div class="np-sec-head" @click="toggleSec('look:site')">
+              <span class="np-sec-title-txt">站点信息</span>
+              <span class="np-sec-sum">{{ s.site_title || '未命名' }}</span>
+              <i class="np-sec-caret">▾</i>
+            </div>
+            <div class="np-sec-body" v-show="secFold['look:site']">
             <div class="np-field"><label>站点标题</label><el-input v-model="s.site_title" size="small"></el-input></div>
             <div class="np-field">
               <label>左上角图标</label>
@@ -576,9 +581,15 @@
             </div>
             <div class="np-field"><label>副标题</label><el-input v-model="s.site_subtitle" size="small"></el-input></div>
             <div class="np-field"><label>页脚文字</label><el-input v-model="s.footer_text" size="small" placeholder="可留空"></el-input></div>
+            </div>
           </div>
-          <div class="np-sec">
-            <div class="np-sec-head">壁纸 <span>可存多张，点缩略图切换</span></div>
+          <div class="np-sec foldable" :class="{ folded: !secFold['look:wall'] }">
+            <div class="np-sec-head" @click="toggleSec('look:wall')">
+              <span class="np-sec-title-txt">壁纸</span>
+              <span class="np-sec-sum">{{ s.wallpaper ? '已自定义' : '默认渐变' }}{{ s.wallpaper_random ? ' · 每次随机' : '' }}</span>
+              <i class="np-sec-caret">▾</i>
+            </div>
+            <div class="np-sec-body" v-show="secFold['look:wall']">
           <div class="np-field">
             <label>当前壁纸</label>
             <div class="np-wall">
@@ -627,9 +638,15 @@
             <el-switch v-model="s.wallpaper_random"></el-switch>
             <div class="np-hint">每次刷新随机换一张。</div>
           </div>
+            </div>
           </div>
-          <div class="np-sec">
-            <div class="np-sec-head">卡片 <span>首页卡片的外观与信息量</span></div>
+          <div class="np-sec foldable" :class="{ folded: !secFold['look:card'] }">
+            <div class="np-sec-head" @click="toggleSec('look:card')">
+              <span class="np-sec-title-txt">卡片</span>
+              <span class="np-sec-sum">卡片风格与信息量</span>
+              <i class="np-sec-caret">▾</i>
+            </div>
+            <div class="np-sec-body" v-show="secFold['look:card']">
             <div class="np-field">
             <label>卡片风格</label>
             <div class="np-seg">
@@ -691,6 +708,7 @@
                 <span class="np-hint">毫秒，超过显示黄点</span>
               </div>
             </div>
+            </div>
           </div>
           </div>
           <div class="np-savebar">
@@ -702,8 +720,13 @@
         <!-- ---------------- 网络与安全 ---------------- -->
         <el-tab-pane label="网络与安全" name="net">
           <div class="np-scroll">
-          <div class="np-sec">
-            <div class="np-sec-head">地址与域名 <span>决定卡片链接怎么拼</span></div>
+          <div class="np-sec foldable" :class="{ folded: !secFold['net:addr'] }">
+            <div class="np-sec-head" @click="toggleSec('net:addr')">
+              <span class="np-sec-title-txt">地址与域名</span>
+              <span class="np-sec-sum">外网域名 {{ s.host_wan || '未填' }}</span>
+              <i class="np-sec-caret">▾</i>
+            </div>
+            <div class="np-sec-body" v-show="secFold['net:addr']">
             <div class="np-field">
               <label>内网地址</label>
               <el-input v-model="s.host_lan_ip" size="small" placeholder="留空即按浏览器访问地址自动推导"></el-input>
@@ -727,10 +750,16 @@
               <el-input v-model="s.lan_cidrs" type="textarea" :rows="3" size="small"></el-input>
               <div class="np-hint">逗号分隔，用于判定「内网访问」。</div>
             </div>
+            </div>
           </div>
 
-          <div class="np-sec">
-            <div class="np-sec-head">网络判定 <span>服务端怎么认内网 / 外网</span></div>
+          <div class="np-sec foldable" :class="{ folded: !secFold['net:detect'] }">
+            <div class="np-sec-head" @click="toggleSec('net:detect')">
+              <span class="np-sec-title-txt">网络判定</span>
+              <span class="np-sec-sum">服务端怎么认内网 / 外网</span>
+              <i class="np-sec-caret">▾</i>
+            </div>
+            <div class="np-sec-body" v-show="secFold['net:detect']">
             <div class="np-field">
               <label>外网访问域名</label>
               <el-input v-model="s.wan_hosts" size="small"
@@ -755,10 +784,16 @@
               <el-switch v-model="s.trust_proxy"></el-switch>
               <div class="np-hint">反向代理后面才需要开。</div>
             </div>
+            </div>
           </div>
 
-          <div class="np-sec">
-            <div class="np-sec-head">反代面板（Gately） <span>规则可读可写，卡片外网地址自动跟着变</span></div>
+          <div class="np-sec foldable" :class="{ folded: !secFold['net:proxy'] }">
+            <div class="np-sec-head" @click="toggleSec('net:proxy')">
+              <span class="np-sec-title-txt">反代面板（Gately）</span>
+              <span class="np-sec-sum">{{ s.gately_domain ? (s.gately_tls ? 'https://' : 'http://') + s.gately_domain : '未启用' }}</span>
+              <i class="np-sec-caret">▾</i>
+            </div>
+            <div class="np-sec-body" v-show="secFold['net:proxy']">
             <div class="np-field">
               <label>面板地址</label>
               <el-input v-model="s.gately_url" size="small" placeholder="http://192.168.1.109:16680"></el-input>
@@ -797,10 +832,16 @@
                 <span class="np-hint" v-else>未测试</span>
               </div>
             </div>
+            </div>
           </div>
 
-          <div class="np-sec">
-            <div class="np-sec-head">切换与访问</div>
+          <div class="np-sec foldable" :class="{ folded: !secFold['net:switch'] }">
+            <div class="np-sec-head" @click="toggleSec('net:switch')">
+              <span class="np-sec-title-txt">切换与访问</span>
+              <span class="np-sec-sum">{{ s.auto_switch ? '自动内网/外网切换' : ('固定' + (s.default_mode === 'wan' ? '外网' : '内网')) }}</span>
+              <i class="np-sec-caret">▾</i>
+            </div>
+            <div class="np-sec-body" v-show="secFold['net:switch']">
             <div class="np-field">
               <label>自动内网 / 外网切换</label>
               <el-switch v-model="s.auto_switch"></el-switch>
@@ -817,10 +858,16 @@
               <label>打开首页需要登录</label>
               <el-switch v-model="s.require_login"></el-switch>
             </div>
+            </div>
           </div>
 
-          <div class="np-sec">
-            <div class="np-sec-head">扫描行为</div>
+          <div class="np-sec foldable" :class="{ folded: !secFold['net:scan'] }">
+            <div class="np-sec-head" @click="toggleSec('net:scan')">
+              <span class="np-sec-title-txt">扫描行为</span>
+              <span class="np-sec-sum">扫描排除与空端口容器</span>
+              <i class="np-sec-caret">▾</i>
+            </div>
+            <div class="np-sec-body" v-show="secFold['net:scan']">
             <div class="np-field">
               <label>扫描排除的容器名</label>
               <el-input v-model="s.scan_exclude" size="small" placeholder="如 redis-mp,lunatv-redis（逗号分隔）"></el-input>
@@ -831,10 +878,16 @@
               <el-switch v-model="s.scan_hide_no_port"></el-switch>
               <div class="np-hint">默认关闭：这类容器也会生成卡片，地址留空，到「项目」里手动补端口。</div>
             </div>
+            </div>
           </div>
 
-          <div class="np-sec">
-            <div class="np-sec-head">管理员密码</div>
+          <div class="np-sec foldable" :class="{ folded: !secFold['net:pw'] }">
+            <div class="np-sec-head" @click="toggleSec('net:pw')">
+              <span class="np-sec-title-txt">管理员密码</span>
+              <span class="np-sec-sum">修改登录密码</span>
+              <i class="np-sec-caret">▾</i>
+            </div>
+            <div class="np-sec-body" v-show="secFold['net:pw']">
             <div class="np-field row">
               <label>新密码</label>
               <div class="np-ctlrow">
@@ -843,10 +896,16 @@
                 <el-button size="small" @click="changePw">修改</el-button>
               </div>
             </div>
+            </div>
           </div>
 
-          <div class="np-sec">
-            <div class="np-sec-head">当前判定 <span>排查内外网判断问题时看这里</span></div>
+          <div class="np-sec foldable" :class="{ folded: !secFold['net:now'] }">
+            <div class="np-sec-head" @click="toggleSec('net:now')">
+              <span class="np-sec-title-txt">当前判定</span>
+              <span class="np-sec-sum">排查内外网判断问题时看这里</span>
+              <i class="np-sec-caret">▾</i>
+            </div>
+            <div class="np-sec-body" v-show="secFold['net:now']">
             <div class="np-kv">
               <span>模式</span><b>{{ network.mode }}（服务端判定 {{ network.auto_mode }}）</b>
               <span>切换模式</span>
@@ -854,6 +913,7 @@
               <span>客户端 IP</span><b>{{ network.client_ip }} · 来源 {{ network.source }}</b>
               <span>局域网探测</span><b>{{ probeText }}</b>
               <span>探测地址</span><b class="mono">{{ probeUrlText }}</b>
+            </div>
             </div>
           </div>
 
@@ -884,15 +944,15 @@
               要看最新状态点左上「检查更新」，一次检查的结果缓存 {{ Math.round((s.image_check_cache || 3600) / 60) }} 分钟。
               Docker Hub 按 IP 限流匿名查询，一次扫几十个很容易整片 429（现象就是「一直显示不出来更新」），填镜像源可绕开。
             </div>
-            <div class="np-sec foldable" :class="{ folded: imgSec.upd }">
-              <div class="np-sec-head" @click="toggleImgSec('upd')">
+            <div class="np-sec foldable" :class="{ folded: !secFold['img:upd'] }">
+              <div class="np-sec-head" @click="toggleSec('img:upd')">
                 <span class="np-sec-title-txt">更新设置</span>
                 <span class="np-sec-sum">
                   镜像源 <b>{{ s.image_mirror ? '已配置' : '直连' }}</b> · 缓存 {{ Math.round((s.image_check_cache || 3600) / 60) }} 分钟
                 </span>
                 <i class="np-sec-caret">▾</i>
               </div>
-              <div class="np-sec-body" v-show="!imgSec.upd">
+              <div class="np-sec-body" v-show="secFold['img:upd']">
               <div class="np-field">
                 <label>镜像源</label>
                 <el-input v-model="s.image_mirror" size="small"
@@ -923,8 +983,8 @@
               </div>
               </div>
             </div>
-            <div class="np-sec foldable" :class="{ folded: imgSec.chk }">
-              <div class="np-sec-head" @click="toggleImgSec('chk')">
+            <div class="np-sec foldable" :class="{ folded: !secFold['img:chk'] }">
+              <div class="np-sec-head" @click="toggleSec('img:chk')">
                 <span class="np-sec-title-txt">定时自动检查</span>
                 <span class="np-sec-sum" v-if="s.image_auto_check">
                   到点检查 <b>{{ (imgAuto && imgAuto.desc) || s.image_auto_cron }}</b>
@@ -933,7 +993,7 @@
                 <span class="np-sec-sum" v-else>已关闭</span>
                 <i class="np-sec-caret">▾</i>
               </div>
-              <div class="np-sec-body" v-show="!imgSec.chk">
+              <div class="np-sec-body" v-show="secFold['img:chk']">
               <div class="np-field row">
                 <label>定时检查</label>
                 <div class="np-ctlrow">
@@ -983,8 +1043,8 @@
             </div>
             <!-- ---------------- 定时清理未使用镜像（2026-10-16 用户要求） ----------------
                  和上面的「定时自动检查」并列，但开关/cron 完全独立（后端也是两个独立任务）。 -->
-            <div class="np-sec foldable" :class="{ folded: imgSec.prune }">
-              <div class="np-sec-head" @click="toggleImgSec('prune')">
+            <div class="np-sec foldable" :class="{ folded: !secFold['img:prune'] }">
+              <div class="np-sec-head" @click="toggleSec('img:prune')">
                 <span class="np-sec-title-txt">定时清理未使用镜像</span>
                 <span class="np-sec-sum" v-if="s.image_auto_prune">
                   清理 <b>{{ (pruneSt && pruneSt.desc) || s.image_auto_prune_cron }}</b>
@@ -993,7 +1053,7 @@
                 <span class="np-sec-sum" v-else>已关闭</span>
                 <i class="np-sec-caret">▾</i>
               </div>
-              <div class="np-sec-body" v-show="!imgSec.prune">
+              <div class="np-sec-body" v-show="secFold['img:prune']">
               <div class="np-field row">
                 <label>定时清理</label>
                 <div class="np-ctlrow">
@@ -1083,8 +1143,14 @@
               </div>
             </div>
             <!-- 日志放在表格「上方」：表格有几十行，放下面等于用户看不见 -->
-            <div class="np-sec" v-if="imgLog.length || imgUpdatingName || imgLast">
-              <div class="np-sec-title">更新日志</div>
+            <div class="np-sec foldable" v-if="imgLog.length || imgUpdatingName || imgLast"
+                 :class="{ folded: !secFold['img:log'] }">
+              <div class="np-sec-head" @click="toggleSec('img:log')">
+                <span class="np-sec-title-txt">更新日志</span>
+                <span class="np-sec-sum">{{ imgLog.length ? imgLog.length + ' 条' : '暂无' }}</span>
+                <i class="np-sec-caret">▾</i>
+              </div>
+              <div class="np-sec-body" v-show="secFold['img:log']">
               <pre class="np-log" v-if="imgLog.length">{{ imgLog.join('\n') }}</pre>
               <div class="np-last" v-if="imgLast && !imgUpdatingName">
                 上次：{{ imgLast.container }}
@@ -1092,6 +1158,7 @@
                   imgLast.success === true ? '成功' : (imgLast.success === false ? '失败' : '结果未知') }}</b>
                 （{{ ago(imgLast.ts) }}<span v-if="imgLast.elapsed"> · 用时 {{ imgLast.elapsed }}s</span>）
                 <span v-if="!imgLast.success" class="np-muted">{{ imgLast.message }}</span>
+              </div>
               </div>
             </div>
             <!-- np-img-table：角标点进来时用它精确滚动定位（页面里有多张 ep-table） -->

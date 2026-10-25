@@ -1441,7 +1441,12 @@
         if (!toks.length) toks = t.split('-').filter(function (x) { return !!x; });
         if (!toks.length) return '';
         let out;
-        if (toks.length >= 2) out = toks.map(function (x) { return x[0]; }).join('');
+        if (toks.length >= 2) {
+          for (let k = toks.length - 1; k >= 0; k--) {
+            if (ABBR_ALIAS[toks[k]]) return ABBR_ALIAS[toks[k]];
+          }
+          out = toks.map(function (x) { return x[0]; }).join('');
+        }
         else if (toks[0].length <= 4) out = toks[0];
         else {
           const w = toks[0];

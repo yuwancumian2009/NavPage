@@ -3075,7 +3075,8 @@ def _slug_wan_host(url_wan):
 
 def _abbr(text):
     """把容器/项目名压成 2-4 个字母：family-tree→ft，qbittorrent→qb，moviepilotv2→mp。"""
-    t = re.sub(r"[^a-z0-9]+", "-", wanimport.norm_name(text or "")).strip("-")
+    # 注意：不能用 wanimport.norm_name —— 它会去掉连字符，family-tree 就拆不开段了
+    t = re.sub(r"[^a-z0-9]+", "-", (text or "").strip().lower()).strip("-")
     if not t:
         return ""
     key = t.replace("-", "")
@@ -3088,6 +3089,10 @@ def _abbr(text):
     if not toks:
         return ""
     if len(toks) >= 2:
+        # 优先用里面有意义的别名段：amilys-emby → emby、lunatv-core → ltv
+        for x in reversed(toks):
+            if x in _ABBR_ALIAS:
+                return _ABBR_ALIAS[x]
         out = "".join(x[0] for x in toks)
     else:
         w = toks[0]

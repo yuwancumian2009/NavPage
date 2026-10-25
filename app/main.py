@@ -2505,6 +2505,11 @@ def refresh_icons(request: Request, body: RefreshIconsBody, _=Depends(require_ad
     if explicit:
         want = {int(x) for x in body.ids}
         items = [i for i in items if i["id"] in want]
+    total = len(items)
+    if not explicit:
+        # 先把已有图标的一律剔掉再抓，别让它们白占网络请求（之前会先抓完再跳过）。
+        items = [i for i in items if not (i.get("icon") or "").strip()]
+    pre_skipped = total - len(items)
     # 并发 8 路：单个站点最坏要等十几秒（被墙站点要先超时再兜底），
     # 70 多条串行会等到浏览器先超时。
     online_ok = bool(s.get("icon_online_fallback", True))
@@ -2543,7 +2548,8 @@ def refresh_icons(request: Request, body: RefreshIconsBody, _=Depends(require_ad
             else:
                 fail += 1
                 misses.append({"name": it.get("name") or str(it["id"]), "why": why})
-    return {"ok": True, "done": done, "fail": fail, "skipped": skipped, "misses": misses[:8]}
+    return {"ok": True, "done": done, "fail": fail, "skipped": skipped + pre_skipped,
+            "misses": misses[:8]}
 
 
 

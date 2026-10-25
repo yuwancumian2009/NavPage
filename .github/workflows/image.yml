@@ -40,6 +40,10 @@ jobs:
             # 部署端可以钉死到某个版本（image: .../navpage:1.0.0）而不用跟着 latest 漂。
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            # 大版本浮标：v1.4.30 → 同时推 1 和 v1，v2.0.0 → 2 和 v2。
+            # 想停在「最后一个 1.x」就用 yuwancumian2009/navpage:v1。
+            type=semver,pattern={{major}}
+            type=semver,pattern=v{{major}}
             type=ref,event=tag
             type=sha,format=short
 

@@ -1101,9 +1101,9 @@ body {
 /* 名称下的 docker 标签行仍单行省略：它挤着两个 chip + 镜像名，允许折行会把行高撑到 69px */
 .ep-table.np-items-table tbody td:nth-child(2) > div.np-muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; }
 .ep-table.np-items-table tbody td.np-url { font-size: 11.5px; line-height: 1.35; }
-/* 操作按钮：4 个文字按钮压到 4px 7px 内边距，总共约 172px，稳稳放进 192px */
+/* 操作按钮：4 个文字按钮压到 4px 7px 内边距 + 6px 间距，共约 170px，放进 192px（padding 20）的内容宽 */
 .ep-table.np-items-table .c-op .el-button { padding: 4px 7px; margin-left: 0; }
-.ep-table.np-items-table .c-op .el-button + .el-button { margin-left: 4px; }
+.ep-table.np-items-table .c-op .el-button + .el-button { margin-left: 6px; }
 .ep-table tbody td.c-center { text-align: center; }
 .ep-table tbody tr:hover td { background: #f5f7fa; }
 .ep-table tbody tr.sel td { background: #ecf5ff; }

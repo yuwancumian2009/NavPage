@@ -274,7 +274,7 @@
                   </td>
                   <td>
                     <div class="np-strong" :title="it.name">{{ it.name }}</div>
-                    <div class="np-muted">
+                    <div class="np-muted" :title="it.container_image || ''">
                       <span v-if="it.source === 'docker'" class="np-chip">docker</span>
                       <span v-if="it.missing" class="np-chip warn">容器已消失</span>
                       <span v-if="it.hidden" class="np-chip warn">已排除</span>

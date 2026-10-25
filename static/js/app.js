@@ -569,13 +569,8 @@
         return out;
       });
 
-      // 桌面 980px：项目表 6 列（名称 + 内外网地址）需要宽度，780px 时地址只能折成两三行
-      // 设置独立窗口：/settings 打开时抽屉铺满整个窗口（没有主页面在后面）
-      const settingsWin = ref(location.pathname.replace(/\/+$/, '') === '/settings');
-      const drawerSize = computed(function () {
-        if (settingsWin.value) return '100%';
-        return isMobile.value ? '100%' : (window.innerWidth >= 1200 ? '980px' : '84vw');
-      });
+      // 设置是「屏幕正中的整块页面」：尺寸交给 CSS（.np-settings-dialog），
+      // 这里不再算抽屉宽度，也不再有独立窗口的判断
 
       /* ---------------- 小工具 ---------------- */
       function initial(name) {
@@ -876,11 +871,11 @@
         // 角标先发（只是个轻量 GET），再等 reload 把卡片拉回来 —— 否则卡片多的时候
         // 角标要等 reload 完才出现，顶栏会先空一下（2026-10-18 实测 1.2s 内还没渲染）
         if (token.value) { loadImgBadge(); await reload(); loadGatelyState(); loadGw(); }
-        // 独立设置窗口（/settings）：直接铺开设置面板，按 ?tab= 定位到具体页签
-        if (settingsWin.value) {
-          const q = new URLSearchParams(location.search);
+        // 深链 /?settings=1&tab=gw 直接打开设置页（同一个页面里的居中大窗口，不再新开浏览器窗口）
+        const q0 = new URLSearchParams(location.search);
+        if (q0.get('settings') || location.pathname.replace(/\/+$/, '') === '/settings') {
           adminOpen.value = true;
-          if (q.get('tab')) tab.value = q.get('tab');
+          if (q0.get('tab')) tab.value = q0.get('tab');
           collapseAllSec();
           loadGw();
         }
@@ -2011,19 +2006,18 @@
       }
 
       function closeAdmin() {
-        // 独立设置窗口里「关闭」应该是关窗口（adminOpen=false 会让窗口一片空白）
-        if (settingsWin.value) { try { window.close(); } catch (e) {} }
+        try { flushAutoSave(); } catch (e) {}
         adminOpen.value = false;
       }
+      // Esc 关闭不会走 closeAdmin，这里兜一层自动保存
+      watch(adminOpen, function (v) { if (!v) { try { flushAutoSave(); } catch (e) {} } });
+      // 设置页打开时 Esc 直接关闭（焦点不一定在弹窗上，EP 自带的只在焦点内部生效）
+      window.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && adminOpen.value) { e.preventDefault(); closeAdmin(); }
+      });
 
       function openAdmin(tabName) {
-        // 桌面端默认开独立窗口（2.0.0 设置页签变多，抽屉里挤）；
-        // 被浏览器拦截或手机端 -> 退回抽屉，功能一样。
-        if (!settingsWin.value && !isMobile.value) {
-          const url = '/settings' + (tabName ? '?tab=' + encodeURIComponent(tabName) : '');
-          const w = window.open(url, 'navpage_settings', 'width=1180,height=900');
-          if (w) { try { w.focus(); } catch (e) {} adminOpen.value = false; return; }
-        }
+        // 2026-10-25 用户要求：设置就在当前页面，屏幕正中的整块页面（不是新窗口、也不是右侧抽屉）
         adminOpen.value = true;
         collapseAllSec();  // 每次打开设置页：所有卡片回到收起状态
         loadGatelyState();
@@ -3195,7 +3189,7 @@
         showAgentCmd, rotateSource, copyAgentCmd,
         modeChoice, modeOptions, lanProbe, reprobeLan, probeText, probeUrlText, themeOptions, sizeOptions, schemeOptions, isMobile, centerTab,
         sizeOptionsCat, sizeOptionsItem, sizeOf, spanOf, cardStyle, setCatSize,
-        clock, dateStr, wallpaperUrl, bgStyle, cardMin, groupStyle, filteredGroups, drawerSize,
+        clock, dateStr, wallpaperUrl, bgStyle, cardMin, groupStyle, filteredGroups,
         initial, colorOf, hostOf, onIconError, onCardClick, catName, countInCat, cardTitle,
         wdg, widgetProviders, wdgFields, wdgHint, wdgTesting, wdgResult,
         wpop, wpopShow, wpopHide, wpopHold,
@@ -3223,7 +3217,7 @@
         wanText, wanRows, wanItems, wanParsing, wanApplying, wanOverwrite, wanSelectedCount, wanPreview, wanApply,
         gatelyState, gatelyBusy, gatelyScheme, wanPortSuffix, proxyDlg, loadGatelyState, gatelyPull, openProxyDlg, doProvision,
         gw, gwBusy, gwProxying, loadGw, gwSave, gwReload, gwIssue, gwCertDel, gwSyncAll,
-        gwDdnsNow, gwFrpApply, gwDnsTest, gwProxyItem, gwCopy, settingsWin, closeAdmin,
+        gwDdnsNow, gwFrpApply, gwDnsTest, gwProxyItem, gwCopy, closeAdmin,
         refreshIcons, saveSettings, uploadWall, pickWall, useWallUrl, clearWall,
         delWall, openAdmin,
         iconDlg, iconTab, iconList, iconLoading, iconQ, iconResults, iconSearching,

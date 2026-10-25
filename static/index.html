@@ -228,7 +228,9 @@
   </div>
 
   <!-- ============ 管理抽屉 ============ -->
-  <el-drawer v-model="adminOpen" :size="drawerSize" :with-header="false" class="np-drawer">
+  <!-- 设置：屏幕正中的整块页面（不是浏览器新窗口，也不是右侧抽屉） -->
+  <el-dialog v-model="adminOpen" class="np-settings-dialog" :show-close="false" :with-header="false"
+             :close-on-click-modal="false" append-to-body>
     <div class="np-admin">
       <div class="np-admin-head">
         <span class="np-admin-title">管理控制台</span>
@@ -1616,7 +1618,7 @@
         </el-tab-pane>
       </el-tabs>
     </div>
-  </el-drawer>
+  </el-dialog>
 
   <!-- ============ 条目编辑弹窗 ============ -->
   <el-dialog v-model="itemDlg" :title="editItem.id ? '编辑条目' : '新增条目'" width="560px" class="np-dlg">

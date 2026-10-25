@@ -1358,3 +1358,28 @@ th.c-src-op { width: 208px; }
   line-height: 1.5; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; margin: 0; }
 /* 设置页里独占一格的按钮别被 grid 拉满整列（2.0.0 网关/证书页签会用到） */
 .np-field > .el-button { justify-self: start; }
+
+/* 设置：屏幕正中的整块页面（2026-10-25 用户要求，替代右侧抽屉与独立浏览器窗口） */
+.np-settings-dialog {
+  width: min(1240px, 94vw) !important;
+  height: min(92vh, 1040px);
+  margin: 4vh auto 4vh !important;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 30px 80px rgba(15, 23, 42, .30);
+  display: flex; flex-direction: column;
+}
+.np-settings-dialog .el-dialog__header { display: none; }
+.np-settings-dialog .el-dialog__body {
+  padding: 0 18px 12px; flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+/* 遮罩带一点模糊，主页面退到后面（视觉上就是「一整块设置页面」） */
+.el-overlay:has(> .np-settings-dialog) { backdrop-filter: blur(3px); }
+@media (max-width: 768px) {
+  .np-settings-dialog {
+    width: 100vw !important; height: 100vh; margin: 0 !important;
+    border-radius: 0; box-shadow: none;
+  }
+  .np-settings-dialog .el-dialog__body { padding: 0 12px 8px; }
+}

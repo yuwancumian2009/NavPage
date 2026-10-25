@@ -22,7 +22,7 @@ from concurrent.futures import as_completed
 warnings.filterwarnings("ignore")
 
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Depends
-from fastapi.responses import JSONResponse, FileResponse, Response, HTMLResponse
+from fastapi.responses import JSONResponse, FileResponse, Response, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
@@ -3484,7 +3484,6 @@ if os.path.isdir(STATIC_DIR):
 
     @app.get("/", include_in_schema=False)
     @app.get("/index.html", include_in_schema=False)
-    @app.get("/settings", include_in_schema=False)   # 设置独立窗口：同一个页面，前端按路径切全屏设置
     def _index_html():
         try:
             html = open(os.path.join(STATIC_DIR, "index.html"), encoding="utf-8").read()
@@ -3495,6 +3494,11 @@ if os.path.isdir(STATIC_DIR):
             if v:
                 html = re.sub(r"(/%s\?v=)[0-9a-f]+" % re.escape(rel), r"\g<1>" + v, html)
         return HTMLResponse(html)
+
+    # 2.0.0 起设置不再独立成页（是主页面里居中的整块页面），旧链接跳过去自动打开
+    @app.get("/settings", include_in_schema=False)
+    def _settings_redirect(q: str = ""):
+        return RedirectResponse("/?settings=1" + (("&tab=" + q) if q else ""), status_code=307)
 
     # index.html 自身没有版本号：被浏览器缓存会导致「服务端已更新、用户看到的还是旧界面」
     # （2026-10-16 实际踩到）。html 一律 no-store，app.js/app.css 靠 ?v=N 区分，不禁。

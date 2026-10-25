@@ -2501,7 +2501,8 @@ def refresh_icons(request: Request, body: RefreshIconsBody, _=Depends(require_ad
     s = db.get_settings()
     ctx = netutil.host_context(request, s)
     items = db.list_items()
-    if body.ids:
+    explicit = bool(body.ids)          # 勾选了具体条目 = 用户明确要重抓，允许覆盖
+    if explicit:
         want = {int(x) for x in body.ids}
         items = [i for i in items if i["id"] in want]
     # 并发 8 路：单个站点最坏要等十几秒（被墙站点要先超时再兜底），
@@ -2522,13 +2523,19 @@ def refresh_icons(request: Request, body: RefreshIconsBody, _=Depends(require_ad
             return it, icons.make_letter_icon(it.get("name") or "", base), "首字母占位图（" + why[:60] + "）", True
         return it, f, why, False
 
-    done, fail = 0, 0
+    done, fail, skipped = 0, 0, 0
     misses = []
     with ThreadPoolExecutor(max_workers=8) as pool:
         for it, f, why, is_letter in pool.map(one, items):
+            has_icon = bool((it.get("icon") or "").strip())
             # 首字母图只是兜底：条目本来就有（真）图标时绝不覆盖，避免批量重抓把好图标冲掉
-            if is_letter and (it.get("icon") or "").strip():
-                done += 1
+            if is_letter and has_icon:
+                skipped += 1
+                continue
+            # 未勾选具体条目（「补齐缺失图标」）时，已有图标的一律不动 ——
+            # 之前全量重抓把图标库里的矢量图标换成了站点小 favicon，视觉反而变差。
+            if has_icon and not explicit:
+                skipped += 1
                 continue
             if f:
                 db.update_item(it["id"], {"icon": f})
@@ -2536,7 +2543,7 @@ def refresh_icons(request: Request, body: RefreshIconsBody, _=Depends(require_ad
             else:
                 fail += 1
                 misses.append({"name": it.get("name") or str(it["id"]), "why": why})
-    return {"ok": True, "done": done, "fail": fail, "misses": misses[:8]}
+    return {"ok": True, "done": done, "fail": fail, "skipped": skipped, "misses": misses[:8]}
 
 
 

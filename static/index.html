@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/vendor/element-plus.css?v=1">
-<link rel="stylesheet" href="/css/app.css?v=73">
+<link rel="stylesheet" href="/css/app.css?v=74">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -256,7 +256,7 @@
         <el-tab-pane label="项目" name="items">
           <div class="np-bar">
             <el-button type="primary" size="small" @click="openItem(null)">新增条目</el-button>
-            <el-button size="small" @click="refreshIcons()">重抓图标</el-button>
+            <el-button size="small" @click="refreshIcons()">补齐缺失图标</el-button>
             <span class="np-bar-tip">共 {{ items.length }} 条</span>
           </div>
           <div class="np-scroll np-no-x">
@@ -1694,6 +1694,6 @@
 <script src="/vendor/element-plus.min.js"></script>
 <script src="/vendor/element-icons.min.js"></script>
 <script src="/vendor/axios.min.js"></script>
-<script src="/js/app.js?v=88"></script>
+<script src="/js/app.js?v=89"></script>
 </body>
 </html>

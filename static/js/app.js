@@ -1637,7 +1637,8 @@
         busy.value = true;
         try {
           const r = await api.post('/api/admin/refresh-icons', { ids: ids || null });
-          ElMessage.success('图标抓取完成：成功 ' + r.data.done + '，失败 ' + r.data.fail);
+          ElMessage.success('图标抓取完成：成功 ' + r.data.done + '，失败 ' + r.data.fail
+            + (r.data.skipped ? '，跳过已有图标的 ' + r.data.skipped + ' 个' : ''));
           // 失败原因摊开给用户看（HTTP 404 / 403 要登录 / 内网不通，处理方式完全不同）
           const misses = r.data.misses || [];
           if (misses.length) {

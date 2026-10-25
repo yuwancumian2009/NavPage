@@ -256,6 +256,29 @@ docker run -d --name navpage -p 8095:8080 \
 
 ---
 
+### FRP 服务端（frps）示例
+
+面板里只需要填 frps 的地址 / 端口 / token。公网服务器上跑一个 frps 就够了：
+
+```toml
+# /etc/frp/frps.toml
+bindPort = 7000
+auth.method = "token"
+auth.token = "换成你的token"
+vhostHTTPPort = 80          # HTTP 隧道入口
+vhostHTTPSPort = 443        # 需要 https 隧道时再开
+subDomainHost = "frp.example.com"   # DNS 把 *.frp.example.com 解析到这台服务器
+```
+
+面板「设置 → FRP」里：服务器填 `frps.example.com`、端口 `7000`、Token 同上、
+域名后缀填 `frp.example.com`，保存后每张卡片会得到 `http://容器名.frp.example.com`。
+
+### 证书申请前提
+
+- 在「设置 → 网关 → DNS 凭据」填一个 DNS 服务商的 Token（Cloudflare / 阿里云 / DNSPod / webhook 任选）
+- 根域名填你要用的域名（例如 `example.com`），开启「通配符证书」就只签一张 `*.example.com`
+- 证书走 DNS-01，只改 TXT 记录，**不需要 80 端口**，也不影响现有网站
+
 ## 参数说明
 
 ### 1. compose 环境变量

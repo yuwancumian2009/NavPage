@@ -2515,17 +2515,21 @@ def refresh_icons(request: Request, body: RefreshIconsBody, _=Depends(require_ad
         if not base:
             # 连地址都没有（纯内网/无前端服务）：照样给一张首字母图
             if letter_ok:
-                return it, icons.make_letter_icon(it.get("name") or ""), "首字母占位图（无可用地址）"
-            return it, None, "地址展开不出来（模板占位符没配）"
+                return it, icons.make_letter_icon(it.get("name") or ""), "首字母占位图（无可用地址）", True
+            return it, None, "地址展开不出来（模板占位符没配）", False
         f, why = icons.fetch_favicon(base, online=online_ok)
         if not f and letter_ok:
-            return it, icons.make_letter_icon(it.get("name") or "", base), "首字母占位图（" + why[:60] + "）"
-        return it, f, why
+            return it, icons.make_letter_icon(it.get("name") or "", base), "首字母占位图（" + why[:60] + "）", True
+        return it, f, why, False
 
     done, fail = 0, 0
     misses = []
     with ThreadPoolExecutor(max_workers=8) as pool:
-        for it, f, why in pool.map(one, items):
+        for it, f, why, is_letter in pool.map(one, items):
+            # 首字母图只是兜底：条目本来就有（真）图标时绝不覆盖，避免批量重抓把好图标冲掉
+            if is_letter and (it.get("icon") or "").strip():
+                done += 1
+                continue
             if f:
                 db.update_item(it["id"], {"icon": f})
                 done += 1

@@ -428,6 +428,29 @@ frps 这边把 `vhostHTTPPort = 8080`（只给本机 Caddy 用，不对外），
 FRP 这一档只做 `type = "http"` 的隧道，**必须有域名**。没有域名的只能自己手写
 TCP 型隧道（`remotePort`），或者在「设置 → 网关」用反代 + 端口访问。
 
+#### 场景 E：交给导航页自动部署（2.0.2 起，推荐）
+
+设置 → **远程节点** → 填一台裸 VPS 的 SSH → 点「部署 / 更新」，剩下的它来做：
+
+| 步骤 | 做了什么 |
+|---|---|
+| 体检 | SSH 登录、root/docker 权限、`docker compose` 版本、公网出口 IP、端口占用 |
+| 落文件 | `/opt/navpage-node/`：`frps.toml` + `docker-compose.yml`（Caddy 形态另有 `Caddyfile`、`certs/`） |
+| 起服务 | `docker compose -p navpage-node up -d`，容器 `restart: always` |
+| 探活 | 从 VPS 本机 `curl` vhost 端口，返回 404 = frps 活着（没有匹配的隧道） |
+| DNS | 用「设置 → 网关 → DNS 凭据」自动补 `<域名后缀>` 与 `*.<域名后缀>` 的 A 记录 |
+| 证书 | Caddy 形态下用内置 ACME 签 `*.<域名后缀>`，推到节点 `certs/` 并 reload Caddy |
+
+要填的只有：服务器 IP、SSH 端口/用户、密码或私钥、接入形态（Caddy / 纯 HTTP）、FRP 域名后缀。
+
+**必须自己做的两件事**（工具改不了）：
+
+1. 云厂商安全组放行端口 —— Caddy 形态 `22 + 80 + 443 + 7000`；纯 HTTP 形态 `22 + 80 + 7000`（填了非标准 vhost 端口就换成那个）。
+2. 域名 NS 已指向「DNS 凭据」里那个服务商，否则自动补的记录不生效。
+
+部署完点卡片上的「用这个节点」：serverAddr / 端口 / 协议 / token / 域名后缀一次性写进 FRP 客户端并重载。
+重复部署是幂等的（换端口、换 token、换域名都会重建容器）；证书续期后可单独点「同步证书」推一次。
+
 #### 排错顺序（按这个查，比猜快）
 
 | 现象 | 原因 |

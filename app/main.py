@@ -3337,21 +3337,18 @@ async def _gw_sync_all(issue: bool = True) -> dict:
     svc = gw_mod.instance()
     if not svc:
         return {"ok": False, "error": "网关未启动", "updated": 0}
-    res = await svc.sync_all(issue=issue)
-    n = 0
-    for it in db.list_items(include_hidden=True):
-        r = svc.item_addresses(it)
-        patch = {}
-        for k, v in (("proxy_domain", r["proxy_domain"]), ("url_wan", r["url_wan"]),
-                     ("url_frp", r["url_frp"])):
-            if v and v != (it.get(k) or ""):
-                patch[k] = v
-        if patch:
-            db.update_item(it["id"], patch)
+    items = db.list_items(include_hidden=True)
+    n, certs = 0, []
+    # 用 sync_item 逐个算 patch：它只补空字段，不会覆盖手填的外网地址（见 service.py 注释）
+    for it in items:
+        r = await svc.sync_item(it, issue=issue)
+        if r.get("patch"):
+            db.update_item(it["id"], r["patch"])
             n += 1
+        if r.get("cert"):
+            certs.append(r["cert"])
     svc.frp.apply(svc.cfg(), svc.frp_proxies())
-    return {"ok": True, "updated": n, "total": len(db.list_items(include_hidden=True)),
-            "certs": res.get("certs") or []}
+    return {"ok": True, "updated": n, "total": len(items), "certs": certs}
 
 
 @app.post("/api/admin/gw/sync")
@@ -3408,9 +3405,13 @@ def gw_cert_issue(body: GwCertBody, _=Depends(require_admin)):
     fut = asyncio.run_coroutine_threadsafe(
         svc.issue_cert(domains, name=body.name, force=bool(body.force)), _MAIN_LOOP)
     try:
-        return {"ok": True, "result": fut.result(timeout=300)}
+        res = fut.result(timeout=300)
     except Exception as e:
         return _err(f"签发失败：{e}", 400)
+    # 把结果平铺返回：前端要的是 {ok, domains, days_left, error}
+    out = dict(res or {})
+    out.setdefault("ok", True)
+    return out
 
 
 @app.delete("/api/admin/gw/cert/{name}")

@@ -341,15 +341,26 @@ class Gateway:
         return {"proxy_domain": domain, "url_wan": wan, "url_frp": frp_url}
 
     async def sync_item(self, item: dict, issue: bool = True) -> dict:
-        """给一张卡片补齐反代域名 / 外网地址 / FRP 地址。"""
+        """给一张卡片补齐反代域名 / 外网地址 / FRP 地址。
+
+        **只补空，不覆盖用户已有的地址**（2026-10-25 关键修正）：
+        线上很多卡片的外网地址是手填的（比如 *.o.hhxin.top 走甲骨文的反代），
+        如果同步时无条件重写，一开「自动反代」就会把这 70 多条全冲掉。
+        只有当已有外网地址的主机名正好等于我们要生成的那个域名（说明它本来就是自动生成的）
+        时，才允许更新（比如根域名改了端口）。
+        """
         addr = self.item_addresses(item)
+        cur_wan = (item.get("url_wan") or "").strip()
+        cur_frp = (item.get("url_frp") or "").strip()
         patch = {}
-        if addr["proxy_domain"] and addr["proxy_domain"] != (item.get("proxy_domain") or ""):
+        if addr["proxy_domain"] and not (item.get("proxy_domain") or "").strip():
             patch["proxy_domain"] = addr["proxy_domain"]
-        if addr["url_wan"] and addr["url_wan"] != (item.get("url_wan") or ""):
-            patch["url_wan"] = addr["url_wan"]
-        if addr["url_frp"] and addr["url_frp"] != (item.get("url_frp") or ""):
-            patch["url_frp"] = addr["url_frp"]
+        if addr["url_wan"] and (not cur_wan or url_host(cur_wan) == addr["proxy_domain"]):
+            if addr["url_wan"] != cur_wan:
+                patch["url_wan"] = addr["url_wan"]
+        if addr["url_frp"] and (not cur_frp or url_host(cur_frp) == url_host(addr["url_frp"])):
+            if addr["url_frp"] != cur_frp:
+                patch["url_frp"] = addr["url_frp"]
         out = {"id": item.get("id"), "patch": patch, "cert": None}
         if issue and addr["proxy_domain"]:
             out["cert"] = await self.ensure_cert_for(addr["proxy_domain"])

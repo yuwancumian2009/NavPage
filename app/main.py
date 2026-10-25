@@ -3471,6 +3471,166 @@ def gw_frp_apply(_=Depends(require_admin)):
     return {"ok": True, "frp": st}
 
 
+# ---------------------------------------------------------------- 远程 FRP 节点（2.1.0）
+# 把 frps（+ 可选 Caddy）部署到任意裸 VPS：SSH + Docker，不依赖 1Panel/宝塔。
+from .gw import node as node_mod  # noqa: E402
+
+
+class NodeBody(BaseModel):
+    node: dict = {}
+
+
+def _node_norm(raw: dict) -> dict:
+    """补齐默认值 + 生成 token，避免前端漏字段。"""
+    n = dict(raw or {})
+    n["host"] = (n.get("host") or "").strip()
+    n["ssh_user"] = (n.get("ssh_user") or "root").strip()
+    n["ssh_port"] = int(n.get("ssh_port") or 22)
+    n["mode"] = (n.get("mode") or "caddy").lower()
+    if n["mode"] not in ("http", "caddy"):
+        n["mode"] = "caddy"
+    n["root_domain"] = (n.get("root_domain") or "").strip().strip(".").lower()
+    n["frps_bind_port"] = int(n.get("frps_bind_port") or 7000)
+    n["vhost_port"] = int(n.get("vhost_port") or 0)
+    n["auth"] = "key" if (n.get("key") or "").strip() else "password"
+    if not (n.get("token") or "").strip() or n.get("token") == "***":
+        old = node_mod.get_node(n.get("id") or "")
+        n["token"] = (old or {}).get("token") or uuid.uuid4().hex[:24]
+    return n
+
+
+def _node_cfg(raw: dict) -> dict:
+    """带密钥的完整节点：前端传 *** 时用库里存的真值。"""
+    n = _node_norm(raw)
+    old = node_mod.get_node(n.get("id") or "")
+    if old:
+        for k in ("password", "key", "token"):
+            if n.get(k) in (None, "", "***"):
+                n[k] = old.get(k, "")
+    return n
+
+
+@app.get("/api/admin/gw/nodes")
+def gw_nodes(_=Depends(require_admin)):
+    svc = _gw_or_404()
+    cfg = svc.cfg()
+    nodes = [node_mod.mask_node(n) for n in node_mod.load_nodes()]
+    for n in nodes:
+        n["ports"] = node_mod.node_ports(n)
+    return {"ok": True, "nodes": nodes,
+            "dns_provider": cfg.get("dns_provider") or "",
+            "acme_email": cfg.get("gw_acme_email") or "",
+            "acme_env": cfg.get("gw_acme_env") or "letsencrypt",
+            "frp": {"server": cfg.get("frp_server") or "", "port": cfg.get("frp_port"),
+                    "protocol": cfg.get("frp_protocol") or "", "domain": cfg.get("frp_domain") or ""}}
+
+
+@app.post("/api/admin/gw/nodes/test")
+def gw_node_test(body: NodeBody, _=Depends(require_admin)):
+    try:
+        node = _node_cfg(body.node)
+        info = node_mod.preflight(node)
+        return {"ok": True, **info}
+    except node_mod.NodeError as e:
+        return {"ok": False, "error": str(e)[:400], "checks": []}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:400], "checks": []}
+
+
+@app.post("/api/admin/gw/nodes/deploy")
+def gw_node_deploy(body: NodeBody, _=Depends(require_admin)):
+    """体检 → 上传 → compose up → 回环验证 → 补 DNS → 签证书推证书。"""
+    svc = _gw_or_404()
+    steps: list[dict] = []
+    try:
+        node = _node_norm(_node_cfg(body.node))
+        if not node["root_domain"]:
+            return {"ok": False, "error": "必须填 FRP 域名后缀，例如 frp.example.com", "steps": steps}
+        node = node_mod.upsert_node(node)
+
+        info = node_mod.preflight(node)
+        steps += [{"step": "体检 · " + c["name"], "ok": c["ok"], "msg": c["msg"]} for c in info["checks"]]
+        if not info["ok"]:
+            bad = [c for c in info["checks"] if not c["ok"] and c["name"] in ("Docker", "docker compose")]
+            if bad:
+                return {"ok": False, "error": "目标机不满足前置条件：" + bad[0]["msg"], "steps": steps,
+                        "checks": info["checks"]}
+
+        res = node_mod.deploy(node)
+        steps += res["steps"]
+        host_ip = res.get("host_ip") or info.get("host_ip") or ""
+
+        dns = node_mod.ensure_wildcard_dns(node, host_ip)
+        steps.append({"step": "DNS 通配记录", "ok": bool(dns.get("ok")),
+                      "msg": dns.get("msg") or "、".join(f"{k} → {v}" for k, v in (dns.get("records") or {}).items())})
+
+        cert = {"ok": False, "steps": []}
+        try:
+            cert = node_mod.sync_cert(node, _gw_or_404())
+            steps += cert.get("steps") or []
+        except Exception as e:
+            steps.append({"step": "证书", "ok": False, "msg": f"{type(e).__name__}: {e}"[:300]})
+
+        ok = all(s["ok"] for s in steps if s["step"] in
+                 ("拉起容器", "frps vhost 应答")) and bool(res.get("ok"))
+        node = node_mod.get_node(node["id"]) or node
+        node.update(res.get("node_patch") or {})
+        node["last"] = {"at": int(time.time()), "ok": ok, "host_ip": host_ip,
+                        "cert_ok": bool(cert.get("ok")), "mode": res["ports"]["mode"]}
+        node_mod.upsert_node(node)
+
+        return {"ok": ok, "steps": steps, "host_ip": host_ip,
+                "suggest": res["suggest"], "node": node_mod.mask_node(node),
+                "cert_domains": cert.get("domains") or []}
+    except node_mod.NodeError as e:
+        return {"ok": False, "error": str(e)[:400], "steps": steps}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:400], "steps": steps}
+
+
+@app.post("/api/admin/gw/nodes/{nid}/cert")
+def gw_node_cert(nid: str, _=Depends(require_admin)):
+    try:
+        node = node_mod.get_node(nid)
+        if not node:
+            return {"ok": False, "error": "节点不存在"}
+        res = node_mod.sync_cert(node, _gw_or_404(), force=True)
+        return {"ok": bool(res.get("ok")), "steps": res.get("steps") or [],
+                "error": "" if res.get("ok") else "签发或推送失败，看步骤日志"}
+    except node_mod.NodeError as e:
+        return {"ok": False, "error": str(e)[:400], "steps": []}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:400], "steps": []}
+
+
+@app.post("/api/admin/gw/nodes/{nid}/dns")
+def gw_node_dns(nid: str, _=Depends(require_admin)):
+    node = node_mod.get_node(nid)
+    if not node:
+        return {"ok": False, "error": "节点不存在"}
+    ip = ((node.get("last") or {}).get("host_ip") or "").strip()
+    res = node_mod.ensure_wildcard_dns(node, ip)
+    return {"ok": bool(res.get("ok")), **res}
+
+
+@app.post("/api/admin/gw/nodes/{nid}/use")
+def gw_node_use(nid: str, _=Depends(require_admin)):
+    """把某个节点的参数写进 FRP 客户端设置，并立刻应用。"""
+    svc = _gw_or_404()
+    node = node_mod.get_node(nid)
+    if not node:
+        return {"ok": False, "error": "节点不存在"}
+    sug = node_mod.suggest_client(node, ((node.get("last") or {}).get("host_ip") or ""))
+    db.update_settings(sug)
+    _run_bg(svc.reload_all())
+    return {"ok": True, "saved": sug}
+
+
+@app.delete("/api/admin/gw/nodes/{nid}")
+def gw_node_del(nid: str, _=Depends(require_admin)):
+    return {"ok": node_mod.delete_node(nid)}
+
+
 # ---------------------------------------------------------------- static (must be last)
 
 if os.path.isdir(STATIC_DIR):

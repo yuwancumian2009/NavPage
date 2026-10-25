@@ -1403,3 +1403,9 @@ th.c-src-op { width: 208px; }
   }
   .np-settings-dialog .el-dialog__body { padding: 0 12px 8px; }
 }
+
+/* 2.1.0 远程 FRP 节点卡片 */
+.np-nodecard { border: 1px solid var(--np-line, rgba(148,163,184,.25)); border-radius: 8px;
+  padding: 8px 10px; margin-bottom: 8px; background: var(--np-bg2, rgba(148,163,184,.06)); }
+.np-nodecard-hd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.np-nodecard-bd { margin-top: 4px; font-size: 12px; opacity: .75; display: flex; gap: 6px; flex-wrap: wrap; }

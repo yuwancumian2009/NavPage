@@ -6,6 +6,8 @@ python-multipart==0.0.20
 pyyaml==6.0.2
 # 图标缩略图（上传的大图转 128px webp，首屏省 2MB+）
 pillow==11.1.0
+# 2.1.0 远程 FRP 节点：SSH 部署 frps 到裸 VPS（纯 Python，不依赖系统 ssh 客户端）
+paramiko==3.5.1
 # 2.0.0 内置网关：aiohttp 做反代，cryptography 做 ACME(JWS/CSR/自签)
 aiohttp>=3.9,<4
 cryptography>=42

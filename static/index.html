@@ -1287,6 +1287,135 @@
           </div>
         </el-tab-pane>
 
+        <!-- ---------------- 远程节点（2.1.0）：裸 VPS 一键部署 frps ---------------- -->
+        <el-tab-pane label="远程节点" name="node">
+          <div class="np-scroll">
+            <div class="np-hint">
+              填一台<b>裸 VPS</b>（能 SSH + 装了 Docker 就行，<b>不需要</b> 1Panel / 宝塔），点「部署」会自动：
+              装 frps（可选 Caddy 终止 TLS）、补 <code>*.{{ nodeForm.root_domain || 'frp.你的域名' }}</code> 通配 A 记录、
+              用内置 ACME 签通配证书推过去；之后点「用这个节点」就把参数写进 FRP 客户端。
+              重复部署 = 更新配置，幂等。
+            </div>
+            <div class="np-sec foldable" :class="{ folded: !secFold['node:cfg'] }">
+              <div class="np-sec-head" @click="toggleSec('node:cfg')">
+                <span class="np-sec-title-txt">节点配置</span>
+                <span class="np-sec-sum">{{ nodeForm.root_domain ? (nodeForm.root_domain + ' · ' + nodeForm.host) : '未填写' }}</span>
+                <i class="np-sec-caret">▾</i>
+              </div>
+              <div class="np-sec-body" v-show="secFold['node:cfg']">
+                <div class="np-field">
+                  <label>名称</label>
+                  <el-input v-model="nodeForm.name" size="small" placeholder="甲骨文 / 洛杉矶 / 测试机" style="width:280px"></el-input>
+                </div>
+                <div class="np-field">
+                  <label>服务器 / SSH 端口</label>
+                  <div class="np-2col">
+                    <el-input v-model="nodeForm.host" size="small" placeholder="1.2.3.4 或 vps.example.com"></el-input>
+                    <el-input v-model.number="nodeForm.ssh_port" size="small" placeholder="22"></el-input>
+                  </div>
+                </div>
+                <div class="np-field">
+                  <label>SSH 用户</label>
+                  <el-input v-model="nodeForm.ssh_user" size="small" placeholder="root" style="width:180px"></el-input>
+                  <div class="np-hint">需要 root，或能免密执行 docker 的用户（部署要跑 <code>docker compose</code>）。</div>
+                </div>
+                <div class="np-field">
+                  <label>认证方式</label>
+                  <el-radio-group v-model="nodeForm.auth" size="small">
+                    <el-radio-button label="password">密码</el-radio-button>
+                    <el-radio-button label="key">私钥</el-radio-button>
+                  </el-radio-group>
+                </div>
+                <div class="np-field" v-if="nodeForm.auth === 'password'">
+                  <label>密码</label>
+                  <el-input v-model="nodeForm.password" size="small" type="password" show-password
+                            :placeholder="nodeForm.has_password ? '已保存，留空表示不改' : 'SSH 密码'"></el-input>
+                  <div class="np-hint">只存在本地数据库，接口返回一律打码。</div>
+                </div>
+                <div class="np-field" v-else>
+                  <label>私钥</label>
+                  <el-input v-model="nodeForm.key" size="small" type="textarea" :rows="4"
+                            :placeholder="nodeForm.has_key ? '已保存，留空表示不改' : '-----BEGIN OPENSSH PRIVATE KEY-----'"></el-input>
+                  <div class="np-hint">支持 ed25519 / ecdsa / rsa（OpenSSH 格式）。</div>
+                </div>
+                <div class="np-field">
+                  <label>接入形态</label>
+                  <el-select v-model="nodeForm.mode" size="small" style="width:100%;max-width:420px">
+                    <el-option label="Caddy 自动 HTTPS（占 80/443，推荐）" value="caddy"></el-option>
+                    <el-option label="纯 HTTP（frps 直接占 80，不要证书）" value="http"></el-option>
+                  </el-select>
+                  <div class="np-hint">Caddy 形态 = frpc 走 <code>wss:443</code>；纯 HTTP 形态 = <code>tcp:7000</code> + <code>http:80</code>。</div>
+                </div>
+                <div class="np-field">
+                  <label>FRP 域名后缀</label>
+                  <el-input v-model="nodeForm.root_domain" size="small" placeholder="frp.example.com"></el-input>
+                  <div class="np-hint">卡片地址 = <code>容器名.这个后缀</code>；自动加的记录是 <code>*.{{ nodeForm.root_domain || 'frp.example.com' }}</code>（走「设置 → 证书」里的 DNS 服务商）。</div>
+                </div>
+                <div class="np-field">
+                  <label>frps 端口 / Token</label>
+                  <div class="np-2col">
+                    <el-input v-model.number="nodeForm.frps_bind_port" size="small" placeholder="7000"></el-input>
+                    <el-input v-model="nodeForm.token" size="small" placeholder="留空自动生成"></el-input>
+                  </div>
+                  <div class="np-hint">frps 的 bindPort（frpc 直连用的那个），不是 vhost 端口。</div>
+                </div>
+                <div class="np-field">
+                  <label>vhost 端口</label>
+                  <el-input v-model.number="nodeForm.vhost_port" size="small" placeholder="http 模式默认 80 / caddy 模式默认 8080" style="width:340px"></el-input>
+                  <div class="np-hint">80/443 已被别的服务占用，或者想用非标准端口时填这里（如 8180）。</div>
+                </div>
+                <div class="np-field">
+                  <div class="np-ctlrow">
+                    <el-button size="small" :loading="nodeBusy === 'test'" @click="gwNodeTest">测试连接</el-button>
+                  <el-button size="small" type="primary" :loading="nodeBusy === 'deploy'" @click="gwNodeDeploy">部署 / 更新</el-button>
+                    <el-button size="small" v-if="nodeForm.id" @click="gwNodeReset">新建节点</el-button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="np-sec foldable" :class="{ folded: !secFold['node:list'] }">
+              <div class="np-sec-head" @click="toggleSec('node:list')">
+                <span class="np-sec-title-txt">已部署节点</span>
+                <span class="np-sec-sum">{{ gwNodes.length }} 个</span>
+                <i class="np-sec-caret">▾</i>
+              </div>
+              <div class="np-sec-body" v-show="secFold['node:list']">
+                <div class="np-hint" v-if="!gwNodes.length">还没有节点。上面填好点「部署 / 更新」。</div>
+                <div class="np-nodecard" v-for="n in gwNodes" :key="n.id">
+                  <div class="np-nodecard-hd">
+                    <span :class="['np-dot', (n.last && n.last.ok) ? 'ok' : 'off']"></span>
+                    <b>{{ n.name || n.host }}</b>
+                    <span class="np-tag">{{ n.mode === 'caddy' ? 'Caddy/443' : 'HTTP/' + (n.vhost_port || 80) }}</span>
+                    <span class="np-tag">{{ n.root_domain }}</span>
+                    <span class="np-tag" v-if="n.last && n.last.cert_ok">证书 OK</span>
+                    <span class="np-gwbar-sp"></span>
+                    <el-button link size="small" @click="gwNodeEdit(n)">编辑</el-button>
+                    <el-button link size="small" :loading="nodeBusy === 'cert:' + n.id" @click="gwNodeCert(n)">同步证书</el-button>
+                    <el-button link size="small" type="primary" :loading="nodeBusy === 'use:' + n.id" @click="gwNodeUse(n)">用这个节点</el-button>
+                    <el-button link size="small" type="danger" @click="gwNodeDel(n)">删除</el-button>
+                  </div>
+                  <div class="np-nodecard-bd">
+                    <span>{{ n.ssh_user }}@{{ n.host }}:{{ n.ssh_port }}</span>
+                    <span v-if="n.last && n.last.host_ip">· 公网 {{ n.last.host_ip }}</span>
+                    <span v-if="n.last && n.last.at">· 上次部署 {{ new Date(n.last.at * 1000).toLocaleString() }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="np-sec foldable" :class="{ folded: !secFold['node:log'] }">
+              <div class="np-sec-head" @click="toggleSec('node:log')">
+                <span class="np-sec-title-txt">部署日志</span>
+                <span class="np-sec-sum">{{ nodeSteps.length }} 步</span>
+                <i class="np-sec-caret">▾</i>
+              </div>
+              <div class="np-sec-body" v-show="secFold['node:log']">
+                <pre class="np-gwlog" v-if="nodeSteps.length">{{ nodeLogText() }}</pre>
+                <div class="np-hint" v-else>点「测试连接」或「部署 / 更新」后，每一步的结果会显示在这里。</div>
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>
+
         <!-- ---------------- 镜像更新 ---------------- -->
         <el-tab-pane label="镜像" name="images">
           <div class="np-bar">

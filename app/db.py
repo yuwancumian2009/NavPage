@@ -169,6 +169,7 @@ DEFAULT_SETTINGS = {
     "frp_subdomain_host": "",   # frps 的 subdomainHost；填了就用子域名模式
     "frp_domain": "",           # 不用子域名模式时，卡片 FRP 地址的根域名（*.frp.xx.com 指向 frps）
     "frp_log_level": "info",
+    "frp_nodes": "[]",          # 远程 FRP 节点（JSON 数组）：SSH 一键部署 frps(+Caddy) 的配置与状态
 }
 
 SCHEMA = """

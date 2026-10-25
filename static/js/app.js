@@ -870,7 +870,7 @@
         await loadWallpapers();
         // 角标先发（只是个轻量 GET），再等 reload 把卡片拉回来 —— 否则卡片多的时候
         // 角标要等 reload 完才出现，顶栏会先空一下（2026-10-18 实测 1.2s 内还没渲染）
-        if (token.value) { loadImgBadge(); await reload(); loadGatelyState(); loadGw(); }
+        if (token.value) { loadImgBadge(); await reload(); loadGatelyState(); loadGw(); loadNodes(); }
         // 深链 /?settings=1&tab=gw 直接打开设置页（同一个页面里的居中大窗口，不再新开浏览器窗口）
         const q0 = new URLSearchParams(location.search);
         if (q0.get('settings') || location.pathname.replace(/\/+$/, '') === '/settings') {
@@ -1002,6 +1002,108 @@
         if (!txt) return;
         try { navigator.clipboard.writeText(txt); ElMessage.success('已复制'); }
         catch (e) { ElMessage.warning('复制失败，请手动选中'); }
+      }
+
+      /* ---------------- 远程 FRP 节点（2.1.0）：裸 VPS 一键部署 frps ---------------- */
+      const gwNodes = ref([]);
+      const nodeBusy = ref('');
+      const nodeSteps = ref([]);
+      function blankNode() {
+        return {
+          id: '', name: '', host: '', ssh_port: 22, ssh_user: 'root', auth: 'password',
+          password: '', key: '', mode: 'caddy', root_domain: '', frps_bind_port: 7000, vhost_port: 0,
+          token: '', has_password: false, has_key: false
+        };
+      }
+      const nodeForm = ref(blankNode());
+      async function loadNodes() {
+        if (!token.value) return;
+        try {
+          const r = await api.get('/api/admin/gw/nodes');
+          gwNodes.value = (r.data && r.data.nodes) || [];
+          if (!nodeForm.value.root_domain && r.data && r.data.dns_provider === '') nodeForm.value = nodeForm.value;
+        } catch (e) { /* 老后端没有这个接口，静默 */ }
+      }
+      function nodeLogText() {
+        return nodeSteps.value.map(function (s) {
+          return (s.ok ? '✓ ' : '✗ ') + s.step + (s.msg ? ' — ' + s.msg : '');
+        }).join('\n');
+      }
+      function nodeChecksToSteps(checks) {
+        return (checks || []).map(function (c) { return { step: '体检 · ' + c.name, ok: !!c.ok, msg: c.msg }; });
+      }
+      async function gwNodeTest() {
+        if (!nodeForm.value.host) { ElMessage.warning('先填服务器地址'); return; }
+        nodeBusy.value = 'test';
+        nodeSteps.value = [{ step: '连接 SSH', ok: true, msg: nodeForm.value.ssh_user + '@' + nodeForm.value.host }];
+        try {
+          const r = await api.post('/api/admin/gw/nodes/test', { node: nodeForm.value }, { timeout: 120000 });
+          const d = r.data || {};
+          if (!d.ok && d.error) {
+            nodeSteps.value.push({ step: '连接失败', ok: false, msg: d.error });
+            ElMessage.error(d.error);
+          } else {
+            nodeSteps.value = nodeChecksToSteps(d.checks);
+            const bad = (d.checks || []).filter(function (c) { return !c.ok; });
+            if (bad.length) ElMessage.warning('有 ' + bad.length + ' 项需要处理：' + bad[0].name + ' — ' + bad[0].msg);
+            else ElMessage.success('体检通过，可以部署');
+          }
+        } catch (e) { apiErr(e); }
+        nodeBusy.value = '';
+      }
+      async function gwNodeDeploy() {
+        const f = nodeForm.value;
+        if (!f.host || !f.root_domain) { ElMessage.warning('服务器地址和 FRP 域名后缀都要填'); return; }
+        if (!f.has_password && !f.has_key && !f.password && !f.key) { ElMessage.warning('填 SSH 密码或私钥'); return; }
+        nodeBusy.value = 'deploy';
+        nodeSteps.value = [{ step: '开始部署', ok: true, msg: f.host + ' · ' + (f.mode === 'caddy' ? 'Caddy/443' : 'HTTP/80') }];
+        try {
+          const r = await api.post('/api/admin/gw/nodes/deploy', { node: f }, { timeout: 600000 });
+          const d = r.data || {};
+          nodeSteps.value = d.steps && d.steps.length ? d.steps : nodeSteps.value;
+          if (d.ok) {
+            ElMessage.success('部署完成，证书：' + ((d.cert_domains || []).join(', ') || '已跳过'));
+            if (d.node) { nodeForm.value = Object.assign({}, blankNode(), d.node, { password: '', key: '', token: '***' }); }
+            await loadNodes(); await loadGw();
+          } else {
+            ElMessage.error('部署失败：' + (d.error || '看步骤日志'));
+          }
+        } catch (e) { apiErr(e); }
+        nodeBusy.value = '';
+      }
+      function gwNodeEdit(n) {
+        nodeForm.value = Object.assign({}, blankNode(), n, { password: '', key: '', token: '***' });
+        secFold.value['node:cfg'] = true;
+      }
+      function gwNodeReset() { nodeForm.value = blankNode(); nodeSteps.value = []; }
+      async function gwNodeUse(n) {
+        nodeBusy.value = 'use:' + n.id;
+        try {
+          await api.post('/api/admin/gw/nodes/' + n.id + '/use', {}, { timeout: 60000 });
+          ElMessage.success('已把 ' + (n.name || n.host) + ' 写进 FRP 设置并重载');
+          await loadGw(); await loadNodes();
+        } catch (e) { apiErr(e); }
+        nodeBusy.value = '';
+      }
+      async function gwNodeCert(n) {
+        nodeBusy.value = 'cert:' + n.id;
+        try {
+          const r = await api.post('/api/admin/gw/nodes/' + n.id + '/cert', {}, { timeout: 300000 });
+          const d = r.data || {};
+          nodeSteps.value = d.steps || [];
+          if (d.ok) ElMessage.success('证书已同步到节点');
+          else ElMessage.error('证书同步失败：' + (d.error || '看步骤日志'));
+          secFold.value['node:log'] = true;
+        } catch (e) { apiErr(e); }
+        nodeBusy.value = '';
+      }
+      async function gwNodeDel(n) {
+        try {
+          await ElMessageBox.confirm('删除节点只是从面板里移除记录，VPS 上的容器不会自己停。要清干净就 SSH 上去 docker compose -p navpage-node down。',
+            '删除节点 ' + (n.name || n.host), { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' });
+        } catch (e) { return; }
+        try { await api.delete('/api/admin/gw/nodes/' + n.id); ElMessage.success('已删除'); await loadNodes(); }
+        catch (e) { apiErr(e); }
       }
 
       /* ---------------- 登录 ---------------- */
@@ -1984,7 +2086,9 @@
         tabsFade();
       }
 
-      function centerTab() {
+      function centerTab(name) {
+        // 远程节点列表按需拉一次（登录时拉过也可能服务端数据已变）
+        if (name === 'node') loadNodes();
         if (!tabsSc) initTabsScroll();
         const sc = tabsSc; if (!sc) return;
         nextTick(function () {
@@ -3217,6 +3321,8 @@
         wanText, wanRows, wanItems, wanParsing, wanApplying, wanOverwrite, wanSelectedCount, wanPreview, wanApply,
         gatelyState, gatelyBusy, gatelyScheme, wanPortSuffix, proxyDlg, loadGatelyState, gatelyPull, openProxyDlg, doProvision,
         gw, gwBusy, gwProxying, loadGw, gwSave, gwReload, gwIssue, gwCertDel, gwSyncAll,
+        gwNodes, nodeBusy, nodeSteps, nodeForm, loadNodes, nodeLogText,
+        gwNodeTest, gwNodeDeploy, gwNodeEdit, gwNodeReset, gwNodeUse, gwNodeCert, gwNodeDel,
         gwDdnsNow, gwFrpApply, gwDnsTest, gwProxyItem, gwCopy, closeAdmin,
         refreshIcons, saveSettings, uploadWall, pickWall, useWallUrl, clearWall,
         delWall, openAdmin,

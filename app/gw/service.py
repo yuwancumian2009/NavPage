@@ -289,6 +289,11 @@ class Gateway:
                                       "error": str(e)[:400], "at": int(time.time())}
             return {"ok": False, "name": name, "error": str(e)[:400]}
 
+    def issue_cert_sync(self, domains: list[str], name: str = "", force: bool = False) -> dict:
+        """同步版 issue_cert：给「远程节点部署」这类线程池里的调用方用。"""
+        import asyncio
+        return asyncio.run(self.issue_cert(domains, name=name, force=force))
+
     def cert_for_domain(self, domain: str) -> dict | None:
         for e in self.certs.entries():
             for d in e.get("domains") or []:

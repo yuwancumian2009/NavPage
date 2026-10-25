@@ -272,7 +272,7 @@ def fetch_favicon(base_url, timeout=5.0, online=True):
     tried = []
     # 被墙/黑洞的站点每个请求都要等满 timeout，这里给「站内探测」一个总预算，
     # 用完就提前进入兜底，避免一条卡片卡住几十秒（批量重抓时尤其明显）。
-    budget = max(6.0, timeout * 2)
+    budget = max(6.0, timeout * 1.6)
     deadline = time.time() + budget
 
     def left():
@@ -319,7 +319,10 @@ def fetch_favicon(base_url, timeout=5.0, online=True):
                 note("manifest 图标", why)
 
         # 2) 常见静态路径（站点从本机根本不通就跳过）
-        for path in (() if unreachable else COMMON_PATHS):
+        # 首页就 401/403 的站点（Cloudflare 拦、需登录）静态路径也一定被挡，
+        # 只探 /favicon.ico 就走在线兜底，省掉 6 个必然超时的请求。
+        blocked = root_status in (401, 403)
+        for path in (() if unreachable else (COMMON_PATHS[:1] if blocked else COMMON_PATHS)):
             if deadline - time.time() < 0.8:
                 note("站内探测", "超时预算用完")
                 break

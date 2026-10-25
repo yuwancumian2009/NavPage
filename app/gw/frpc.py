@@ -100,7 +100,15 @@ class FrpManager:
             self.error = "镜像里没有 frpc 二进制（构建时未下载成功）"
             return self.status()
         text = self.build_config(cfg, proxies)
-        changed = text != self.last_cfg or not self._alive()
+        # 判「变没变」要比磁盘上的真内容，不能只比内存里的 last_cfg：
+        # 容器重建后拿到的可能是上一轮留在卷里的旧配置（端口是错的），
+        # 而 last_cfg 是空的/旧的，只比内存会得出「没变」→ 永远不修。
+        try:
+            with open(self.cfg_path, "r", encoding="utf-8") as f:
+                disk = f.read()
+        except Exception:
+            disk = ""
+        changed = text != disk or not self._alive()
         if changed:
             try:
                 with open(self.cfg_path, "w", encoding="utf-8") as f:

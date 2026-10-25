@@ -1442,9 +1442,22 @@
         if (!toks.length) return '';
         let out;
         if (toks.length >= 2) out = toks.map(function (x) { return x[0]; }).join('');
-        else out = toks[0].length <= 4 ? toks[0] : toks[0].slice(0, 3);
+        else if (toks[0].length <= 4) out = toks[0];
+        else {
+          const w = toks[0];
+          out = w[0] + w.slice(1).replace(/[aeiou]/g, '');
+          if (out.length < 2) out = w.slice(0, 3);
+          out = out.slice(0, 3);
+        }
         return (out.replace(/[^a-z0-9]/g, '').slice(0, 4)) || toks[0].slice(0, 3);
       }
+      const wanPortSuffix = computed(function () {
+        const port = Number(s.value.gately_listener_port || 443);
+        const scheme = gatelyScheme.value;
+        if (!port) return '';
+        if ((scheme === 'https' && port === 443) || (scheme === 'http' && port === 80)) return '';
+        return ':' + port;
+      });
       function openProxyDlg(it) {
         const sub = shortName(it.container_name || it.name || '');
         proxyDlg.value = { open: true, item: it, subdomain: sub, busy: false };
@@ -3022,7 +3035,7 @@
         selCats, catAllChecked, catIndeterminate,
         onCatCheck, toggleAllCats, doScan, selectAllNew, importSelected, excludeCand, syncAll, autocatAll, autoSaveAt, flushAutoSave,
         wanText, wanRows, wanItems, wanParsing, wanApplying, wanOverwrite, wanSelectedCount, wanPreview, wanApply,
-        gatelyState, gatelyBusy, gatelyScheme, proxyDlg, loadGatelyState, gatelyPull, openProxyDlg, doProvision,
+        gatelyState, gatelyBusy, gatelyScheme, wanPortSuffix, proxyDlg, loadGatelyState, gatelyPull, openProxyDlg, doProvision,
         refreshIcons, saveSettings, uploadWall, pickWall, useWallUrl, clearWall,
         delWall, openAdmin,
         iconDlg, iconTab, iconList, iconLoading, iconQ, iconResults, iconSearching,

@@ -1569,7 +1569,7 @@
       <label>子域名</label>
       <el-input v-model="proxyDlg.subdomain" size="small" placeholder="emby"></el-input>
       <div class="np-hint">
-        生成的地址：<code>{{ gatelyScheme }}://{{ proxyDlg.subdomain }}{{ s.gately_domain ? '.' + s.gately_domain : '' }}</code>
+        生成的地址：<code>{{ gatelyScheme }}://{{ proxyDlg.subdomain }}{{ s.gately_domain ? '.' + s.gately_domain : '' }}{{ wanPortSuffix }}</code>
         ，规则写进 gately 的 {{ s.gately_listener_port }} 端口
       </div>
     </div>

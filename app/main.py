@@ -3091,7 +3091,12 @@ def _abbr(text):
         out = "".join(x[0] for x in toks)
     else:
         w = toks[0]
-        out = w[:4] if len(w) <= 4 else w[:3]
+        if len(w) <= 4:
+            out = w
+        else:
+            # 长单词用辅音骨架，避免 peerbanhelper→pee 这类尴尬缩写
+            out = w[0] + re.sub(r"[aeiou]", "", w[1:])
+            out = out[:3] if len(out) >= 2 else w[:3]
     out = re.sub(r"[^a-z0-9]", "", out)[:4]
     return out or toks[0][:3]
 

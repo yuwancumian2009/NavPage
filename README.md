@@ -332,6 +332,97 @@ Token 同上、**自定义域名根后缀** `frp.example.com`、地址用 **http
 可选「代理名前缀」（同一个 frps 上还有别的 frpc 客户端时必须填，否则 `proxy already exists`）。
 每张卡片得到 `https://容器名.frp.example.com`。
 
+#### 场景 D：裸 VPS，不装 1Panel / 宝塔（frps + Caddy 两个容器）
+
+**导航页这条链路不依赖任何面板**：它只管两件事 —— 用 token 连上 frps，再提交
+`type="http"` + `customDomains` 的隧道。真正需要的只有三样：frps 开了 vhost HTTP 端口、
+DNS 有通配记录、80/443 上有个「按 Host 转发」的入口。这个入口是 nginx、Caddy、Traefik 还是
+1Panel 都无所谓。
+
+**D1 · 最省事：让 frps 自己占 80，不要证书**
+
+```toml
+# frps.toml
+bindPort = 7000
+vhostHTTPPort = 80          # 直接对公网开 80，省掉反代和证书
+auth.method = "token"
+auth.token = "换成你的token"
+webServer.addr = "127.0.0.1"
+webServer.port = 7500
+webServer.user = "admin"
+webServer.password = "换一个"
+```
+
+```yaml
+# docker-compose.yml
+services:
+  frps:
+    image: fatedier/frps:v0.61.1
+    network_mode: host
+    restart: always
+    volumes: [./frps.toml:/etc/frp/frps.toml]
+    command: ["-c", "/etc/frp/frps.toml"]
+```
+
+防火墙放行 `7000`、`80`；DNS 加 `*.frp.example.com → VPS IP`。
+导航页：端口 `7000`、协议 `tcp`、地址用 **http**、vhost HTTP 端口 `80`、域名后缀 `frp.example.com`。
+得到 `http://容器名.frp.example.com`。缺点：浏览器标「不安全」，个别应用（PWA、剪贴板 API）会受限。
+
+**D2 · 要 https：加一个 Caddy，通配证书自动签、自动续**
+
+Caddy 一个容器顶掉 nginx + certbot，通配证书走 DNS-01（不需要开 80 验证）：
+
+```yaml
+services:
+  frps:
+    image: fatedier/frps:v0.61.1
+    network_mode: host
+    restart: always
+    volumes: [./frps.toml:/etc/frp/frps.toml]
+    command: ["-c", "/etc/frp/frps.toml"]
+
+  caddy:
+    image: caddy:2
+    network_mode: host
+    restart: always
+    environment:
+      CF_API_TOKEN: "你的 Cloudflare Token（Zone.DNS 编辑权限）"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+
+volumes:
+  caddy_data:
+```
+
+```
+# Caddyfile —— 官方 caddy:2 镜像自带 cloudflare 插件
+*.frp.example.com {
+    tls {
+        dns cloudflare {env.CF_API_TOKEN}
+    }
+    reverse_proxy 127.0.0.1:8080 {
+        header_up Host {host}      # frps 靠 Host 选隧道，必须原样带
+        flush_interval -1          # 关缓冲：Emby/Jellyfin 拉流、日志实时输出都要
+    }
+}
+
+# frpc 的 wss 握手也要一条
+frp.example.com {
+    tls {
+        dns cloudflare {env.CF_API_TOKEN}
+    }
+    reverse_proxy 127.0.0.1:7000
+}
+```
+
+frps 这边把 `vhostHTTPPort = 8080`（只给本机 Caddy 用，不对外），`bindPort = 7000`。
+防火墙只放 `80`、`443`、`7000`（用 wss 时 7000 也可以只对本机/内网开）。
+导航页填法同场景 B：端口 `443`、协议 `wss`、地址用 **https**、vhost HTTPS 端口 `443`。
+
+> 别用 frps 自带的 `vhostHTTPSPort = 443` 顶替 Caddy：它用自签证书，浏览器会一直报警，
+> 而且没法塞自己的证书进去。
+
 #### 场景 C：没有域名
 
 FRP 这一档只做 `type = "http"` 的隧道，**必须有域名**。没有域名的只能自己手写

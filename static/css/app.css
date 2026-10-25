@@ -1227,6 +1227,7 @@ body {
   }
   .ep-table.np-items-table tbody td:nth-child(3)::before { content: "内网"; }
   .ep-table.np-items-table tbody td:nth-child(4)::before { content: "外网"; }
+  .ep-table.np-items-table tbody td.c-op { width: auto; }   /* 桌面 192px 固定宽会让卡片按钮换行 */
   .ep-table.np-items-table tbody td:nth-child(6) {
     grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px;
     margin-top: 4px; padding-top: 6px; border-top: 1px dashed #ebeef5;

@@ -827,7 +827,8 @@
       }
 
       const refreshBusy = ref(false);
-      async function reload() {
+      async function reload(opts) {
+        const notify = !!(opts && opts.notify);
         if (refreshBusy.value) return;
         refreshBusy.value = true;
         const t0 = Date.now();
@@ -843,11 +844,12 @@
           s.value = Object.assign({}, s.value, d.settings || {});
           syncWallInput();
           await loadWidgetProviders();
-          const n = items.value.length;
-          const ms = Math.max(1, Math.round(Date.now() - t0));
-          const hhmm = new Date().toTimeString().slice(0, 8);
-          ElMessage({ message: '已刷新 · ' + n + ' 条 · ' + hhmm, type: 'success', duration: 1500 });
-          console.debug('[navpage] reload', n, ms + 'ms');
+          // 只有用户手点「刷新」才提示；打开控制台/增删改后的内部刷新保持静默
+          if (notify) {
+            const n = items.value.length;
+            const hhmm = new Date().toTimeString().slice(0, 8);
+            ElMessage({ message: '已刷新 · ' + n + ' 条 · ' + hhmm, type: 'success', duration: 1600, grouping: true });
+          }
         } catch (e) { apiErr(e); } finally { refreshBusy.value = false; }
         await loadWallpapers();
       }

@@ -233,7 +233,7 @@
       <div class="np-admin-head">
         <span class="np-admin-title">管理控制台</span>
         <span class="np-admin-actions">
-          <el-button v-if="token" size="small" :loading="refreshBusy" @click="reload">刷新</el-button>
+          <el-button v-if="token" size="small" :loading="refreshBusy" @click="reload({ notify: true })">刷新</el-button>
           <el-button v-if="token" size="small" type="danger" plain @click="logout">退出</el-button>
           <el-button size="small" text @click="adminOpen = false">关闭</el-button>
         </span>

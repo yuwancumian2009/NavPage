@@ -260,7 +260,7 @@
             <span class="np-bar-tip">共 {{ items.length }} 条</span>
           </div>
           <div class="np-scroll">
-            <table class="ep-table">
+            <table class="ep-table np-items-table">
               <thead>
                 <tr><th class="c-icon">图标</th><th class="c-name">名称</th><th class="c-lan">内网地址</th><th class="c-wan">外网地址</th><th class="c-cat">分类</th><th class="c-op">操作</th></tr>
               </thead>
@@ -273,7 +273,7 @@
                     </span>
                   </td>
                   <td>
-                    <div class="np-strong">{{ it.name }}</div>
+                    <div class="np-strong" :title="it.name">{{ it.name }}</div>
                     <div class="np-muted">
                       <span v-if="it.source === 'docker'" class="np-chip">docker</span>
                       <span v-if="it.missing" class="np-chip warn">容器已消失</span>
@@ -282,8 +282,8 @@
                       {{ it.container_image }}
                     </div>
                   </td>
-                  <td class="np-url">{{ it.url_lan_view || it.url_lan || '—' }}</td>
-                  <td class="np-url">{{ it.url_wan_view || it.url_wan || '—' }}</td>
+                  <td class="np-url" :title="it.url_lan_view || it.url_lan || ''">{{ it.url_lan_view || it.url_lan || '—' }}</td>
+                  <td class="np-url" :title="it.url_wan_view || it.url_wan || ''">{{ it.url_wan_view || it.url_wan || '—' }}</td>
                   <td>{{ catName(it.category_id) }}</td>
                   <td>
                     <el-button size="small" text type="primary" @click="openItem(it)">编辑</el-button>

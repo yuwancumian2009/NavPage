@@ -46,6 +46,7 @@ class ProxyEngine:
         self.log = log or (lambda *a: None)
         self.http_runner: web.AppRunner | None = None
         self.https_runner: web.AppRunner | None = None
+        self.error = ""
         self.session: ClientSession | None = None
         self.http_port = 0
         self.https_port = 0
@@ -274,6 +275,7 @@ h1{{font-size:20px}}</style>
         return web.Response(status=404, text=html, content_type="text/html")
 
     def status(self) -> dict:
-        return {"http_port": self.http_port, "https_port": self.https_port,
+        return {"running": bool(self.http_runner or self.https_runner),
+                "http_port": self.http_port, "https_port": self.https_port,
                 "started_at": int(self.started_at), "stats": dict(self.stats),
-                "recent": self.recent[:20]}
+                "error": self.error, "recent": self.recent[:20]}

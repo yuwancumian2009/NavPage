@@ -1572,6 +1572,12 @@
         生成的地址：<code>{{ gatelyScheme }}://{{ proxyDlg.subdomain }}{{ s.gately_domain ? '.' + s.gately_domain : '' }}{{ wanPortSuffix }}</code>
         ，规则写进 gately 的 {{ s.gately_listener_port }} 端口
       </div>
+      <div class="np-hint" v-if="proxyDlg.item && proxyDlg.item.url_wan" style="color:#e6a23c">
+        注意：这张卡片当前外网地址是 <code>{{ proxyDlg.item.url_wan }}</code>，生成后会被覆盖（原地址不保留）。
+        <template v-if="proxyDlg.item.url_wan.indexOf('.o.' + (s.gately_domain || '')) > -1">
+          它现在走的是甲骨文反代，覆盖后家里这条路不通时就没有备用入口了。
+        </template>
+      </div>
     </div>
     <template #footer>
       <el-button size="small" @click="proxyDlg.open = false">取消</el-button>

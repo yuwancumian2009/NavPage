@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 
 from . import acme as acme_mod
 from . import ddns as ddns_mod
+from . import waf as waf_mod
 from . import dnsprov, frpc
 from .certs import CertStore, safe_name
 from .proxy import ProxyEngine
@@ -78,7 +79,8 @@ class Gateway:
         self.logs: list[str] = []
         self._log_fn = log_fn
         self.certs = CertStore(data_dir, log=self.log)
-        self.proxy = ProxyEngine(self.routes, self.certs, log=self.log)
+        self.waf = waf_mod.WAF(cfg_fn, log=self.log)
+        self.proxy = ProxyEngine(self.routes, self.certs, log=self.log, waf=self.waf)
         self.frp = frpc.FrpManager(data_dir, log=self.log)
         self.ddns = ddns_mod.DdnsManager(data_dir, cfg_fn, log=self.log)
         self.started = False
@@ -411,6 +413,7 @@ class Gateway:
             "dns_provider": cfg.get("dns_provider") or "",
             "dns_configured": bool((cfg.get("dns_creds") or {}) and cfg.get("dns_provider")),
             "proxy": self.proxy.status(),
+            "waf": self.waf.status(),
             "certs": certs,
             "frp": {**frp_st, "enabled": bool(cfg.get("frp_enabled")),
                     "server": cfg.get("frp_server") or "",

@@ -152,6 +152,16 @@ DEFAULT_SETTINGS = {
     "dns_provider": "",         # cloudflare | alidns | dnspod | webhook
     "dns_creds": {},            # 供应商凭据（JSON）
     "gw_cert_days": 30,         # 剩余天数小于它就自动续期
+    # ---- WAF（内置反代的请求前置检查，对标 Gately 的 WAF 模块）----
+    "waf_enabled": False,
+    "waf_mode": "block",        # block=命中即 403 | monitor=只记日志放行
+    "waf_ip_allow": "",         # 白名单：自己的运维网段，优先于黑名单
+    "waf_ip_deny": "",          # 黑名单：IP 或 CIDR，逗号/换行分隔
+    "waf_ua_block": "",         # 额外要拦的 UA 关键词；留空用内置扫描器基线
+    "waf_path_block": "",       # 额外要拦的路径特征；留空用内置敏感路径基线
+    "waf_block_methods": True,  # 拦 TRACE/TRACK/DEBUG
+    "waf_cc_limit": 0,          # 每 IP 每窗口最多请求数，0=不限速
+    "waf_cc_window": 60,        # CC 窗口秒数
 
     # DDNS
     "ddns_enabled": False,

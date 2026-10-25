@@ -3360,7 +3360,7 @@ class GwSettingsBody(BaseModel):
 @app.put("/api/admin/gw/settings")
 def gw_save_settings(body: GwSettingsBody, _=Depends(require_admin)):
     """保存网关相关设置并立刻生效（端口变化会重启监听）。"""
-    allowed = {k for k in db.DEFAULT_SETTINGS if k.startswith(("gw_", "dns_", "ddns_", "frp_"))}
+    allowed = {k for k in db.DEFAULT_SETTINGS if k.startswith(("gw_", "waf_", "dns_", "ddns_", "frp_"))}
     allowed.add("auto_scan_min")      # 「扫描行为」里的自动扫描间隔也在这一页保存
     patch = {k: v for k, v in (body.patch or {}).items() if k in allowed}
     if not patch:
@@ -3381,6 +3381,43 @@ def gw_routes(_=Depends(require_admin)):
     svc = _gw_or_404()
     return {"ok": True, "routes": svc.routes(), "frp": svc.frp_proxies(),
             "target_host": svc.target_host()}
+
+
+@app.get("/api/admin/gw/waf")
+def gw_waf(_=Depends(require_admin)):
+    """WAF 状态 + 最近的拦截/观察记录。"""
+    svc = _gw_or_404()
+    return {"ok": True, **svc.waf.status()}
+
+
+@app.post("/api/admin/gw/waf/clear")
+def gw_waf_clear(_=Depends(require_admin)):
+    svc = _gw_or_404()
+    return {"ok": True, "cleared": svc.waf.clear()}
+
+
+@app.post("/api/admin/gw/waf/test")
+async def gw_waf_test(request: Request, _=Depends(require_admin)):
+    """拿一条构造出来的假请求跑一遍规则，让人先看清「会不会误伤」再开。
+
+    body: {host, path, ua, ip, method}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    svc = _gw_or_404()
+
+    class _Fake:
+        def __init__(self, b):
+            self.path = b.get("path") or "/"
+            self.method = (b.get("method") or "GET").upper()
+            self.headers = {"User-Agent": b.get("ua") or "Mozilla/5.0 (NavPage WAF test)"}
+            self.remote = b.get("ip") or "203.0.113.7"
+
+    hit = svc.waf.check(_Fake(body or {}), body.get("host") or "test.local", record=False)
+    return {"ok": True, "hit": hit, "verdict": (hit or {}).get("action") or "allow"}
+
 
 
 async def _gw_sync_all(issue: bool = True) -> dict:

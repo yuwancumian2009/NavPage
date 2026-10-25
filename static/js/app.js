@@ -889,7 +889,9 @@
         'dns_provider', 'dns_creds',
         'ddns_enabled', 'ddns_record', 'ddns_interval', 'ddns_ip_sources',
         'frp_enabled', 'frp_server', 'frp_port', 'frp_protocol', 'frp_name_prefix', 'frp_token', 'frp_scheme',
-        'frp_vhost_http_port', 'frp_vhost_https_port', 'frp_subdomain_host', 'frp_domain'
+        'frp_vhost_http_port', 'frp_vhost_https_port', 'frp_subdomain_host', 'frp_domain',
+        'waf_enabled', 'waf_mode', 'waf_ip_allow', 'waf_ip_deny', 'waf_ua_block',
+        'waf_path_block', 'waf_block_methods', 'waf_cc_limit', 'waf_cc_window'
       ];
       async function loadGw() {
         if (!token.value) return;
@@ -909,6 +911,37 @@
         } catch (e) { apiErr(e); }
         gwBusy.value = '';
       }
+      // ---- WAF：规则试跑 / 清空日志 ----
+      const wafT = ref({ path: '/.env', ip: '', ua: '', method: 'GET', busy: false, verdict: '', rule: '' });
+      function hhmmss(ts) {
+        const d = new Date((ts || 0) * 1000);
+        const p = (n) => String(n).padStart(2, '0');
+        return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+      }
+      async function wafTest() {
+        if (wafT.value.busy) return;
+        wafT.value.busy = true; wafT.value.verdict = ''; wafT.value.rule = '';
+        try {
+          const r = await api.post('/api/admin/gw/waf/test', {
+            host: 'test.local', path: wafT.value.path || '/', ip: wafT.value.ip || '',
+            ua: wafT.value.ua || '', method: wafT.value.method || 'GET'
+          });
+          const d = r.data || {};
+          wafT.value.verdict = d.verdict || 'allow';
+          wafT.value.rule = (d.hit && d.hit.rule) || '';
+        } catch (e) { apiErr(e); }
+        wafT.value.busy = false;
+      }
+      async function wafClear() {
+        try { await api.post('/api/admin/gw/waf/clear'); ElMessage.success('已清空'); await loadGw(); }
+        catch (e) { apiErr(e); }
+      }
+      // 打开设置窗口 / 切到「网关」页签时补拉一次网关状态：
+      // 以前只在启动带 token 或深链时 loadGw，从菜单进设置时 gw 是空的，
+      // 证书列表、WAF 统计都显示 0（2026-10-26 浏览器实测发现）。
+      watch(adminOpen, function (v) { if (v) { loadGw(); loadNodes(); } });
+      watch(tab, function (v) { if (v === 'gw' && adminOpen.value) loadGw(); });
+
       async function gwReload() {
         gwBusy.value = 'reload';
         try { await api.post('/api/admin/gw/reload'); ElMessage.success('网关已重载'); await loadGw(); }
@@ -3266,6 +3299,7 @@
         gwNodes, nodeBusy, nodeSteps, nodeForm, loadNodes, nodeLogText,
         gwNodeTest, gwNodeDeploy, gwNodeEdit, gwNodeReset, gwNodeUse, gwNodeCert, gwNodeDel,
         gwDdnsNow, gwFrpApply, gwDnsTest, gwProxyItem, gwDlg, openGwDlg, saveGwDlg, gwCopy, closeAdmin,
+        wafT, wafTest, wafClear, hhmmss,
         refreshIcons, saveSettings, uploadWall, pickWall, useWallUrl, clearWall,
         delWall, openAdmin,
         iconDlg, iconTab, iconList, iconLoading, iconQ, iconResults, iconSearching,

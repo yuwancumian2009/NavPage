@@ -964,6 +964,112 @@
               </div>
             </div>
 
+            <div class="np-sec foldable" :class="{ folded: !secFold['gw:waf'] }">
+              <div class="np-sec-head" @click="toggleSec('gw:waf')">
+                <span class="np-sec-title-txt">WAF 防火墙</span>
+                <span class="np-sec-sum">
+                  {{ s.waf_enabled ? (s.waf_mode === 'monitor' ? '观察模式（只记日志）' : '拦截模式') : '未启用' }}
+                  <template v-if="gw.waf"> · 已拦 {{ gw.waf.counters.blocked }}</template>
+                </span>
+                <i class="np-sec-caret">▾</i>
+              </div>
+              <div class="np-sec-body" v-show="secFold['gw:waf']">
+                <div class="np-field row">
+                  <label>启用 WAF</label>
+                  <el-switch v-model="s.waf_enabled"></el-switch>
+                  <div class="np-hint">
+                    内置反代收到请求后先过一遍下面这些规则；命中就拦（或只记日志）。只作用于经过内置反代的域名。
+                  </div>
+                </div>
+                <div class="np-field row">
+                  <label>工作模式</label>
+                  <div class="np-seg">
+                    <button :class="{ on: s.waf_mode !== 'monitor' }" @click="s.waf_mode = 'block'">拦截</button>
+                    <button :class="{ on: s.waf_mode === 'monitor' }" @click="s.waf_mode = 'monitor'">观察</button>
+                  </div>
+                  <div class="np-hint">先开「观察」跑几天，看下面的日志确认不误伤自己人，再切「拦截」。</div>
+                </div>
+                <div class="np-field">
+                  <label>IP 白名单</label>
+                  <el-input v-model="s.waf_ip_allow" type="textarea" :rows="2" size="small"
+                            placeholder="192.168.1.0/24, 10.0.0.5（优先于黑名单，自己的运维网段放这里）"></el-input>
+                </div>
+                <div class="np-field">
+                  <label>IP 黑名单</label>
+                  <el-input v-model="s.waf_ip_deny" type="textarea" :rows="2" size="small"
+                            placeholder="1.2.3.4, 5.6.7.0/24"></el-input>
+                  <div class="np-hint">支持单个 IP 和 CIDR，逗号或换行分隔。</div>
+                </div>
+                <div class="np-field">
+                  <label>扫描器 UA</label>
+                  <el-input v-model="s.waf_ua_block" size="small"
+                            placeholder="留空 = 用内置基线（sqlmap / nikto / nmap / nuclei …）"></el-input>
+                  <div class="np-hint">填了就只用你填的关键词；想在内置基线外再加，把基线关键词一起写上。</div>
+                </div>
+                <div class="np-field">
+                  <label>敏感路径</label>
+                  <el-input v-model="s.waf_path_block" size="small"
+                            placeholder="留空 = 用内置基线（/.env / .git/ /wp-admin /phpmyadmin …）"></el-input>
+                  <div class="np-hint">按「包含」匹配，不分大小写。</div>
+                </div>
+                <div class="np-field row">
+                  <label>拦 TRACE / DEBUG</label>
+                  <el-switch v-model="s.waf_block_methods"></el-switch>
+                  <div class="np-hint">这类方法正常业务用不到，被探测时常见。</div>
+                </div>
+                <div class="np-field">
+                  <label>CC 限速</label>
+                  <div class="np-2col">
+                    <el-input v-model.number="s.waf_cc_limit" size="small" placeholder="0">
+                      <template #prepend>每 IP 请求数</template>
+                    </el-input>
+                    <el-input v-model.number="s.waf_cc_window" size="small" placeholder="60">
+                      <template #prepend>窗口秒</template>
+                    </el-input>
+                  </div>
+                  <div class="np-hint">每 IP 在窗口内超过这个请求数就拦，0 = 不限速。压测/大流量下载时别开太小。</div>
+                </div>
+
+                <div class="np-ctlrow" style="margin-top:10px">
+                  <b style="font-size:13px">规则试跑</b>
+                  <el-input v-model="wafT.path" size="small" style="width:200px" placeholder="/.env"></el-input>
+                  <el-input v-model="wafT.ip" size="small" style="width:170px" placeholder="来源 IP（可留空）"></el-input>
+                  <el-input v-model="wafT.ua" size="small" style="width:220px" placeholder="User-Agent（可留空）"></el-input>
+                  <el-button size="small" :loading="wafT.busy" @click="wafTest">试跑</el-button>
+                  <span v-if="wafT.verdict" :class="wafT.verdict === 'allow' ? 'np-ok-txt' : 'np-err-txt'">
+                    {{ wafT.verdict === 'allow' ? '放行' : ('命中：' + (wafT.rule || '')) }}
+                  </span>
+                </div>
+
+                <div class="np-ctlrow" style="margin-top:14px">
+                  <b style="font-size:13px">拦截日志</b>
+                  <span class="np-hint">
+                    共检查 {{ (gw.waf && gw.waf.counters.checked) || 0 }} 次 · 拦截 {{ (gw.waf && gw.waf.counters.blocked) || 0 }} · 观察 {{ (gw.waf && gw.waf.counters.monitored) || 0 }}
+                  </span>
+                  <span class="np-gwbar-sp"></span>
+                  <el-button size="small" text @click="loadGw">刷新</el-button>
+                  <el-button size="small" text @click="wafClear">清空</el-button>
+                </div>
+                <table class="ep-table np-waf-table" v-if="gw.waf && (gw.waf.hits || []).length">
+                  <thead>
+                    <tr><th style="width:74px">时间</th><th style="width:120px">来源 IP</th><th style="width:150px">域名</th>
+                        <th>路径</th><th style="width:210px">命中规则</th><th style="width:64px">动作</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(h, i) in gw.waf.hits.slice(0, 30)" :key="i">
+                      <td class="np-muted">{{ hhmmss(h.t) }}</td>
+                      <td><code>{{ h.ip || '-' }}</code></td>
+                      <td class="np-muted">{{ h.host }}</td>
+                      <td class="np-muted" :title="h.path">{{ h.path }}</td>
+                      <td class="np-err-txt">{{ h.rule }}</td>
+                      <td :class="h.action === 'block' ? 'np-err-txt' : 'np-muted'">{{ h.action === 'block' ? '拦截' : '观察' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div class="np-hint" v-else>还没有命中记录。</div>
+              </div>
+            </div>
+
             <div class="np-sec foldable" :class="{ folded: !secFold['gw:cert'] }">
               <div class="np-sec-head" @click="toggleSec('gw:cert')">
                 <span class="np-sec-title-txt">证书（自动申请 / 续期）</span>

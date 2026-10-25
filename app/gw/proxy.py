@@ -39,10 +39,14 @@ def _clean_headers(headers) -> dict:
 
 
 class ProxyEngine:
-    def __init__(self, routes_provider, cert_store=None, log=None):
-        """routes_provider() -> dict[host] = "http://ip:port"（每次请求都会取，天然热更新）"""
+    def __init__(self, routes_provider, cert_store=None, log=None, waf=None):
+        """routes_provider() -> dict[host] = "http://ip:port"（每次请求都会取，天然热更新）
+
+        waf: app.gw.waf.WAF 实例；每个请求进来先过一遍规则，命中 block 直接 403。
+        """
         self.routes_provider = routes_provider
         self.certs = cert_store
+        self.waf = waf
         self.log = log or (lambda *a: None)
         self.http_runner: web.AppRunner | None = None
         self.https_runner: web.AppRunner | None = None
@@ -52,7 +56,7 @@ class ProxyEngine:
         self.https_port = 0
         self.challenges: dict[str, str] = {}
         self.started_at = 0.0
-        self.stats = {"requests": 0, "errors": 0, "bytes": 0}
+        self.stats = {"requests": 0, "errors": 0, "bytes": 0, "waf_blocked": 0}
         # 最近若干条转发记录，设置页里能直接看到「刚才那个请求去哪了」
         self.recent: list[dict] = []
 
@@ -124,6 +128,19 @@ class ProxyEngine:
                 return web.Response(text=self.challenges[token], content_type="text/plain")
             return web.Response(status=404, text="challenge not found")
 
+        # WAF：证书挑战之外的所有请求都要先过规则（拦掉的请求不产生后端流量）
+        waf_hit = None
+        if self.waf is not None:
+            try:
+                waf_hit = self.waf.check(request, host)
+            except Exception as e:      # WAF 自身出错不能把代理打死
+                self.log(f"WAF 检查异常（已放行）：{e}")
+                waf_hit = None
+            if waf_hit and waf_hit.get("action") == "block":
+                self.stats["waf_blocked"] += 1
+                self._note(host, path, "-", 403, 0, "WAF：" + waf_hit.get("rule", ""))
+                return self._waf_block(host, path, waf_hit)
+
         routes = self.routes_provider() or {}
         target = routes.get(host) or routes.get("*")
         if not target:
@@ -134,7 +151,8 @@ class ProxyEngine:
         try:
             resp = await self._forward(request, target, host)
             ms = int((time.time() - started) * 1000)
-            self._note(host, path, target, resp.status, ms)
+            note = ("WAF 观察：" + waf_hit["rule"]) if waf_hit else ""
+            self._note(host, path, target, resp.status, ms, note)
             return resp
         except asyncio.TimeoutError:
             self.stats["errors"] += 1
@@ -262,6 +280,19 @@ h1{{font-size:20px;margin:0 0 12px}}code{{background:#0f1115;padding:2px 6px;bor
 <p style="color:#9aa4b2">常见原因：容器没启动、端口写错、后端只监听 127.0.0.1（容器里要监听 0.0.0.0）、
 或者目标实际是 HTTPS 而这里按 HTTP 连。</p></div>"""
         return web.Response(status=status, text=html, content_type="text/html")
+
+    def _waf_block(self, host, path, hit: dict) -> web.Response:
+        html = f"""<!doctype html><meta charset=utf-8><title>403 · 被 WAF 拦截</title>
+<style>body{{font:15px/1.7 -apple-system,'Segoe UI',sans-serif;background:#0f1115;color:#e6e8ee;
+display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}
+.c{{max-width:560px;padding:32px;background:#171a21;border:1px solid #2a2f3a;border-radius:14px}}
+h1{{font-size:20px;margin:0 0 12px}}code{{background:#0f1115;padding:2px 6px;border-radius:6px;color:#fca5a5}}</style>
+<div class=c><h1>403 · 请求被 WAF 拦截</h1>
+<p>域名 <code>{host}</code>，路径 <code>{path[:120]}</code>。</p>
+<p>命中规则：<code>{hit.get('rule','')}</code>，来源 IP <code>{hit.get('ip','')}</code>。</p>
+<p style="color:#9aa4b2">这是 NavPage 内置反代的防火墙判定，请求没有转发到后端。
+如果是你自己被拦了，到「设置 → 网关 → WAF 防火墙」把这个 IP 加进白名单。</p></div>"""
+        return web.Response(status=403, text=html, content_type="text/html")
 
     def _no_route(self, host, routes: dict) -> web.Response:
         names = "".join(f"<li><code>{h}</code></li>" for h in sorted(routes)[:40])

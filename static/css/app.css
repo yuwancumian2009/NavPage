@@ -1298,7 +1298,10 @@ body {
 .np-theme-dark .np-wpop-v { color: #e6e8eb; }
 
 /* ---- Compose 管理（2026-10-19） ---- */
-.np-cmp-table td { vertical-align: top; }
+.ep-table.np-cmp-table td { vertical-align: top; }
+/* WAF 拦截日志：跟设置项同宽，字号小一号，长路径省略看 title */
+.ep-table.np-waf-table { margin-top: 8px; font-size: 12px; }
+.ep-table.np-waf-table code { font-size: 11.5px; }
 /* 操作列必须能完整放下「编辑 / 重构」两个按钮：
    .ep-table td 默认 overflow:hidden + text-overflow:ellipsis，110px 宽时第二个按钮
    会被裁成「…」，那块被裁掉的区域点不动（2026-10-25 实测）。 */

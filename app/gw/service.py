@@ -28,6 +28,24 @@ from .certs import CertStore, safe_name
 from .proxy import ProxyEngine
 
 
+def _target_listening(host: str, port: int, timeout: float = 0.6) -> bool:
+    """目标端口是否有人监听。
+
+    只把明确的「连接被拒 / 主机不可达 / 域名解析失败」判为死掉；
+    超时、权限之类一律当活着的，宁可多一条隧道也不要误删好用的。
+    """
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            return True
+    except socket.timeout:
+        return True
+    except OSError as e:
+        import errno
+        if getattr(e, "errno", None) in (errno.ECONNREFUSED, errno.EHOSTUNREACH, errno.ENETUNREACH):
+            return False
+        return not isinstance(e, socket.gaierror)
+
+
 def default_gateway_ip() -> str:
     """容器默认网关 = 宿主机在 docker bridge 上的地址。
 
@@ -193,6 +211,11 @@ class Gateway:
         for it in self.items_all_fn() or []:
             host, port = self.item_target(it)
             if not (host and port):
+                continue
+            # 目标端口没人监听就别建隧道：以前容器停了/删了，隧道照样挂着，
+            # 外网访问就是一座「404 墓碑」，用户根本分不清是没配好还是服务挂了。
+            # 只把「连接被拒」当死掉（超时/DNS 抖动不算），服务起来下一轮自动补回。
+            if not _target_listening(host, port):
                 continue
             d = self.frp_domain_for(it)
             if not d:
@@ -413,10 +436,16 @@ class Gateway:
         # 之前照样给它们套 app-68.<根域名> 之类的域名，结果首页挂一堆
         # 永远 404 的 FRP 链接（2026-10-26 实测 26 个 404 全来自这里）。
         thost, tport = self.item_target(item)
+        live = _target_listening(thost, tport) if (thost and tport) else False
         has_target = bool(thost and tport)
-        if addr["url_frp"] and has_target and (not cur_frp or url_host(cur_frp) == url_host(addr["url_frp"])):
+        auto_frp = bool(cur_frp) and url_host(cur_frp) == url_host(addr["url_frp"] or "")
+        if addr["url_frp"] and has_target and live and (not cur_frp or auto_frp):
             if addr["url_frp"] != cur_frp:
                 patch["url_frp"] = addr["url_frp"]
+        # 服务没起来（端口拒绝）→ 把自动生成的 FRP 地址摘掉，别在首页留一座打不开的墓碑。
+        # 手填的地址不动：那是你自己挑的域名，停一会儿服务不该被系统清掉。
+        elif cur_frp and auto_frp and not live:
+            patch["url_frp"] = ""
         out = {"id": item.get("id"), "patch": patch, "cert": None}
         if issue and addr["proxy_domain"]:
             out["cert"] = await self.ensure_cert_for(addr["proxy_domain"])

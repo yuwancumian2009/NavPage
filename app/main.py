@@ -16,7 +16,7 @@ import secrets
 import warnings
 import concurrent.futures
 import asyncio
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from concurrent.futures import as_completed
 
 warnings.filterwarnings("ignore")
@@ -2482,12 +2482,23 @@ def _sync_containers(ctx):
         old = db.find_item_by_container(c["name"], host)
         if old:
             # 保留用户改过的名称/图标/描述；只刷新模板地址与存在性
+            # 端口要尊重卡片现有值：一个容器常同时发布多个端口（nezha 的 5555 和
+            # 8008、navpage 的 8081/18443/8095），按 docker 返回顺序挑「主端口」
+            # 会来回抖，把卡片上本来对的端口覆盖成对外根本不通的那个。
+            old_lan = old.get("url_lan") or ""
+            card_port = 0
+            try:
+                _u = urlsplit(old_lan.replace("{scheme}", "http").replace("{host}", "h"))
+                card_port = int(_u.port or 0)
+            except Exception:
+                card_port = 0
+            published = set(c.get("public_ports") or [])
+            keep_port = card_port if (card_port and card_port in published) else 0
             patch = {"missing": False, "container_image": c.get("image") or "",
-                     "container_port": c.get("primary_port") or 0}
+                     "container_port": keep_port or (c.get("primary_port") or 0)}
             if cat_name and not old.get("category_id"):
                 patch["category_id"] = db.get_or_create_category(cat_name)
-            old_lan = old.get("url_lan") or ""
-            if cand["url_lan"] and (not old_lan or "{host}" in old_lan) and cand["url_lan"] != old_lan:
+            if cand["url_lan"] and not keep_port and (not old_lan or "{host}" in old_lan) and cand["url_lan"] != old_lan:
                 patch["url_lan"] = cand["url_lan"]
             if cand["url_wan"] and not old.get("url_wan"):
                 patch["url_wan"] = cand["url_wan"]

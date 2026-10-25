@@ -10,7 +10,7 @@ CI 用 tag 给 Docker Hub 镜像打版本标签（见 .github/workflows/image.ym
   即 1.1.9 → 1.2.0，**不会出现 1.1.10**。第一位只在重大改版时动。
 """
 
-VERSION = "2.0.8"
+VERSION = "2.1.0"
 PROJECT_URL = "https://github.com/yuwancumian2009/NavPage"
 CHANGELOG_URL = PROJECT_URL + "/blob/main/CHANGELOG.md"
 

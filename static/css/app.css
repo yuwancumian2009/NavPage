@@ -1083,20 +1083,23 @@ body {
 .ep-table .c-ver { width: 130px; }
 .ep-table .c-auto { width: 92px; }
 /* ---- 项目表专用：长地址/长名称折行显示全文，操作列按钮紧凑排满 ----
-   列宽 52+180+230+230+80+172 = 944，对应桌面抽屉 980px 的内容宽（多出来的宽按比例摊）。
+   列宽 52+160+230+230+80+192 = 944，对应桌面抽屉 980px 的内容宽（多出来的宽按比例摊）。
+   注意：td 的 width 含 padding（box-sizing: border-box），操作列 192 - 20 = 172 才装得下 4 个按钮（164）。
    之前沿用通用单行省略规则：地址列被截成「http://192.168.1.1…」，
    操作列的「排除」只剩一个省略号、点都点不到。 */
 .ep-table.np-items-table { table-layout: fixed; }
 .ep-table.np-items-table .c-icon { width: 52px; }
-.ep-table.np-items-table .c-name { width: 180px; }
+.ep-table.np-items-table .c-name { width: 160px; }
 .ep-table.np-items-table .c-lan,
 .ep-table.np-items-table .c-wan { width: 230px; }
 .ep-table.np-items-table .c-cat { width: 80px; }
-.ep-table.np-items-table .c-op { width: 172px; white-space: nowrap; overflow: visible; }
+.ep-table.np-items-table .c-op { width: 192px; white-space: nowrap; overflow: visible; }
 /* 名称 / 地址：允许折行，全文可见（hover 另有 title 提示） */
 .ep-table.np-items-table tbody td:nth-child(2),
 .ep-table.np-items-table tbody td.np-url { white-space: normal; word-break: break-all; overflow: visible; text-overflow: clip; }
-.ep-table.np-items-table tbody td:nth-child(2) > div { white-space: normal; overflow: visible; text-overflow: clip; }
+.ep-table.np-items-table tbody td:nth-child(2) > div.np-strong { white-space: normal; overflow: visible; text-overflow: clip; }
+/* 名称下的 docker 标签行仍单行省略：它挤着两个 chip + 镜像名，允许折行会把行高撑到 69px */
+.ep-table.np-items-table tbody td:nth-child(2) > div.np-muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; }
 .ep-table.np-items-table tbody td.np-url { font-size: 11.5px; line-height: 1.35; }
 /* 操作按钮：4 个文字按钮压到 4px 7px 内边距，总共约 172px，稳稳放进 192px */
 .ep-table.np-items-table .c-op .el-button { padding: 4px 7px; margin-left: 0; }

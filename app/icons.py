@@ -13,6 +13,7 @@ import time
 import hashlib
 import ipaddress
 from urllib.parse import urljoin, urlparse
+from html import escape
 
 import httpx
 
@@ -437,3 +438,44 @@ def thumb_path(name, max_px=THUMB_PX):
         except Exception:
             pass
         return src
+
+
+# ---------------------------------------------------------------- 首字母占位图
+# 抓不到 favicon 的内部 API / 无前端的容器（postgres、redis、纯 API 服务）根本没有图标，
+# 卡片空着很难看。这里本地生成一张首字母 SVG，不联网、不依赖字体文件，浏览器直接渲染。
+LETTER_PALETTE = ("#4c6ef5", "#12b886", "#f76707", "#7048e8", "#0ca678", "#1098ad",
+                  "#d6336c", "#5c7cfa", "#37b24d", "#f59f00", "#e8590c", "#4263eb")
+
+
+def _first_glyph(label):
+    """取名称里第一个有意义的字符：跳过空格、下划线、连字符等。"""
+    for ch in (label or ""):
+        if ch.isalnum():
+            return ch.upper() if ch.isascii() else ch
+    for ch in (label or ""):
+        if not ch.isspace():
+            return ch
+    return "?"
+
+
+_LETTER_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">'
+    '<rect width="64" height="64" rx="15" fill="{color}"/>'
+    '<text x="32" y="{y}" text-anchor="middle" '
+    'font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" '
+    'font-size="{size}" font-weight="600" fill="#ffffff">{ch}</text></svg>'
+)
+
+
+def make_letter_icon(label, sub_label=""):
+    """生成首字母图标（圆角方块 + 白字），返回落盘文件名。"""
+    label = (label or "").strip()
+    src = label or (sub_label or "").strip()
+    ch = _first_glyph(src)
+    color = LETTER_PALETTE[int(hashlib.sha1(src.lower().encode("utf-8")).hexdigest()[:8], 16)
+                           % len(LETTER_PALETTE)]
+    cjk = not ch.isascii()
+    svg = _LETTER_SVG.format(color=color, y=43 if cjk else 45,
+                            size=30 if cjk else 36, ch=escape(ch))
+    return save_bytes(svg.encode("utf-8"), "svg")
+

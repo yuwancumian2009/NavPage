@@ -123,6 +123,8 @@ DEFAULT_SETTINGS = {
     # 抓图标时允许走公共图标库兜底（favicon.im）。关掉后只抓站内图标，
     # 适合完全不希望面板访问外网的场景。
     "icon_online_fallback": True,
+    # 抓不到 favicon（纯 API 容器、没有前端的服务）时，用名称首字母生成占位图。
+    "icon_letter_fallback": True,
 }
 
 SCHEMA = """

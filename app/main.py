@@ -2508,11 +2508,18 @@ def refresh_icons(request: Request, body: RefreshIconsBody, _=Depends(require_ad
     # 70 多条串行会等到浏览器先超时。
     online_ok = bool(s.get("icon_online_fallback", True))
 
+    letter_ok = bool(s.get("icon_letter_fallback", True))
+
     def one(it):
         base = _fetchable_url(it.get("url_lan"), ctx) or _fetchable_url(it.get("url_wan"), ctx)
         if not base:
+            # 连地址都没有（纯内网/无前端服务）：照样给一张首字母图
+            if letter_ok:
+                return it, icons.make_letter_icon(it.get("name") or ""), "首字母占位图（无可用地址）"
             return it, None, "地址展开不出来（模板占位符没配）"
         f, why = icons.fetch_favicon(base, online=online_ok)
+        if not f and letter_ok:
+            return it, icons.make_letter_icon(it.get("name") or "", base), "首字母占位图（" + why[:60] + "）"
         return it, f, why
 
     done, fail = 0, 0
@@ -2778,6 +2785,7 @@ class ItemIconBody(BaseModel):
     url_lan: str = ""
     url_wan: str = ""
     item_id: int = 0
+    name: str = ""          # 抓不到 favicon 时用名称首字母生成占位图
 
 
 @app.post("/api/admin/item/icon")
@@ -2808,9 +2816,18 @@ def admin_item_icon(request: Request, body: ItemIconBody, _=Depends(require_admi
     if not (base.startswith("http://") or base.startswith("https://")):
         return _err("地址要以 http:// 或 https:// 开头（当前是 " + base[:40] + "）")
     f, why = icons.fetch_favicon(base, online=bool(s.get("icon_online_fallback", True)))
+    letter = False
+    if not f and s.get("icon_letter_fallback", True):
+        # 纯 API / 没有前端的容器根本没有 favicon，用名称首字母生成占位图，别让卡片空着
+        label = (body.name or "").strip() or base.split("://", 1)[-1].split("/")[0]
+        f = icons.make_letter_icon(label, base)
+        letter = True
+        if f:
+            return {"ok": True, "icon": f, "from": base,
+                    "source": "首字母占位图（" + why[:80] + "）", "letter": True}
     if not f:
-        return _err(f"没抓到图标：{why}。可手动上传图标，或把该站点图标另存后上传")
-    return {"ok": True, "icon": f, "from": base, "source": why}
+        return _err(f"没抓到图标：{why}。可手动上传图标，或打开「首字母占位」")
+    return {"ok": True, "icon": f, "from": base, "source": why, "letter": letter}
 
 
 # ---------------------------------------------------------------- 外网地址导入（Lucky 等）

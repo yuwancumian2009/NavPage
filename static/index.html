@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/vendor/element-plus.css?v=1">
-<link rel="stylesheet" href="/css/app.css?v=70">
+<link rel="stylesheet" href="/css/app.css?v=71">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -825,7 +825,10 @@
             </div>
             <div class="np-field">
               <label>图标抓取</label>
-              <el-switch v-model="s.icon_online_fallback" active-text="在线图标库兜底"></el-switch>
+              <div class="np-2col">
+                <el-switch v-model="s.icon_online_fallback" active-text="在线图标库兜底"></el-switch>
+                <el-switch v-model="s.icon_letter_fallback" active-text="抓不到时用首字母占位"></el-switch>
+              </div>
               <div class="np-hint">站内抓不到图标时，用公共图标库 <code>favicon.im</code> 按域名再取一次——能救回被 Cloudflare 拦、或只在内网可达的站点。关掉后只抓站内图标，面板不访问任何外部服务。</div>
             </div>
             <div class="np-field">
@@ -1691,6 +1694,6 @@
 <script src="/vendor/element-plus.min.js"></script>
 <script src="/vendor/element-icons.min.js"></script>
 <script src="/vendor/axios.min.js"></script>
-<script src="/js/app.js?v=85"></script>
+<script src="/js/app.js?v=86"></script>
 </body>
 </html>

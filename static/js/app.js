@@ -2703,11 +2703,17 @@
         iconFetching.value = true;
         try {
           const r = await api.post('/api/admin/item/icon',
-                                   { url_lan: url_lan, url_wan: url_wan, item_id: it.id || 0 },
+                                   { url_lan: url_lan, url_wan: url_wan, item_id: it.id || 0,
+                                     name: it.name || '' },
                                    { timeout: 60000 });
           if (r.data && r.data.ok) {
             it.icon = r.data.icon;
-            ElMessage.success('已抓到图标（' + r.data.icon + '），记得保存');
+            if (r.data.letter) {
+              // 站点确实没有 favicon（纯 API/无前端），返回的是本地生成的首字母图
+              ElMessage.warning('站点没有可抓的图标，已生成首字母占位图，记得保存');
+            } else {
+              ElMessage.success('已抓到图标（' + r.data.icon + '），记得保存');
+            }
           } else {
             ElMessage.warning((r.data && r.data.error) || '没抓到图标');
           }

@@ -3242,13 +3242,18 @@ def _gw_items():
     return db.list_items(include_hidden=False)
 
 
+def _gw_items_all():
+    """含隐藏卡片的全集：FRP 隧道的生成用它，首页渲染仍用 _gw_items。"""
+    return db.list_items(include_hidden=True)
+
+
 @app.on_event("startup")
 async def _gw_startup():
     """网关晚于数据库初始化启动；起不来也不能拖垮整个面板。"""
     global _MAIN_LOOP
     _MAIN_LOOP = asyncio.get_running_loop()
     try:
-        svc = gw_mod.configure(db.DATA_DIR, _gw_cfg, _gw_items)
+        svc = gw_mod.configure(db.DATA_DIR, _gw_cfg, _gw_items, items_all_fn=_gw_items_all)
         await svc.start()
     except Exception as e:
         print(f"[navpage] 网关启动失败（面板其他功能不受影响）：{e}")

@@ -72,10 +72,12 @@ def url_port(url: str) -> int:
 
 
 class Gateway:
-    def __init__(self, data_dir: str, cfg_fn, items_fn, log_fn=None):
+    def __init__(self, data_dir: str, cfg_fn, items_fn, log_fn=None, items_all_fn=None):
         self.data_dir = data_dir
         self.cfg_fn = cfg_fn
         self.items_fn = items_fn
+        # 含隐藏卡片的全集：隐藏只表示「首页不显示」，不该把已配好的隧道拆掉。
+        self.items_all_fn = items_all_fn or items_fn
         self.logs: list[str] = []
         self._log_fn = log_fn
         self.certs = CertStore(data_dir, log=self.log)
@@ -186,7 +188,9 @@ class Gateway:
         used: set[str] = set()
         cfg = self.cfg()
         sub_host = (cfg.get("frp_subdomain_host") or "").strip()
-        for it in self.items_fn() or []:
+        # 这里用全集：隐藏卡片往往正是 postgres / redis / 管理口这种「不想上首页
+        # 但需要在外面访问」的服务，之前用可见集合导致它们的隧道被静默拆掉。
+        for it in self.items_all_fn() or []:
             host, port = self.item_target(it)
             if not (host and port):
                 continue
@@ -404,7 +408,13 @@ class Gateway:
         if addr["url_wan"] and (not cur_wan or url_host(cur_wan) == addr["proxy_domain"]):
             if addr["url_wan"] != cur_wan:
                 patch["url_wan"] = addr["url_wan"]
-        if addr["url_frp"] and (not cur_frp or url_host(cur_frp) == url_host(addr["url_frp"])):
+        # FRP 地址只给「真有内网目标」的卡片：
+        # 纯外链书签卡（Github / 淘宝 / DockerHub 这种）url_lan 是空的，
+        # 之前照样给它们套 app-68.<根域名> 之类的域名，结果首页挂一堆
+        # 永远 404 的 FRP 链接（2026-10-26 实测 26 个 404 全来自这里）。
+        thost, tport = self.item_target(item)
+        has_target = bool(thost and tport)
+        if addr["url_frp"] and has_target and (not cur_frp or url_host(cur_frp) == url_host(addr["url_frp"])):
             if addr["url_frp"] != cur_frp:
                 patch["url_frp"] = addr["url_frp"]
         out = {"id": item.get("id"), "patch": patch, "cert": None}
@@ -462,9 +472,9 @@ class Gateway:
 _gw: Gateway | None = None
 
 
-def configure(data_dir: str, cfg_fn, items_fn, log_fn=None) -> Gateway:
+def configure(data_dir: str, cfg_fn, items_fn, log_fn=None, items_all_fn=None) -> Gateway:
     global _gw
-    _gw = Gateway(data_dir, cfg_fn, items_fn, log_fn)
+    _gw = Gateway(data_dir, cfg_fn, items_fn, log_fn, items_all_fn)
     return _gw
 
 

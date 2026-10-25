@@ -120,6 +120,9 @@ DEFAULT_SETTINGS = {
     "gately_listener_port": 443,
     "gately_tls": True,
     "gately_auto": False,
+    # 抓图标时允许走公共图标库兜底（favicon.im）。关掉后只抓站内图标，
+    # 适合完全不希望面板访问外网的场景。
+    "icon_online_fallback": True,
 }
 
 SCHEMA = """

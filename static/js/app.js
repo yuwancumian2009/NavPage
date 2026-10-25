@@ -1638,6 +1638,14 @@
         try {
           const r = await api.post('/api/admin/refresh-icons', { ids: ids || null });
           ElMessage.success('图标抓取完成：成功 ' + r.data.done + '，失败 ' + r.data.fail);
+          // 失败原因摊开给用户看（HTTP 404 / 403 要登录 / 内网不通，处理方式完全不同）
+          const misses = r.data.misses || [];
+          if (misses.length) {
+            ElMessage({ type: 'warning', duration: 7000, showClose: true,
+              dangerouslyUseHTMLString: true,
+              message: '有 ' + r.data.fail + ' 个没抓到：<br>' +
+                misses.map(function (m) { return '· ' + (m.name || '') + '：' + (m.why || ''); }).join('<br>') });
+          }
           await reload();
         } catch (e) { apiErr(e); }
         busy.value = false;

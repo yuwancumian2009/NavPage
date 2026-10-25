@@ -9,6 +9,7 @@
 import os
 import re
 import io
+import time
 import hashlib
 import ipaddress
 from urllib.parse import urljoin, urlparse
@@ -83,78 +84,279 @@ def save_bytes(data, ext):
     return name
 
 
-def _download(client, url):
+HEADERS = {
+    "User-Agent": UA,
+    "Accept": "text/html,application/xhtml+xml,image/avif,image/webp,image/apng,"
+              "image/svg+xml,image/x-icon,image/*,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
+
+# 抓 favicon 时依次尝试的常见路径（很多站点把图标放在静态目录，根 favicon.ico 并没有）
+COMMON_PATHS = ("/favicon.ico", "/favicon.png", "/favicon.svg",
+                "/apple-touch-icon.png", "/static/favicon.ico",
+                "/assets/favicon.ico", "/img/favicon.ico")
+
+# 在线图标库兜底。2026-10-25 在 NAS 上实测：favicon.im 可用（含境外站点，
+# 返回真实图标）；Google s2 / DuckDuckGo / api.iowen.cn 在国内网络全部连接超时。
+ONLINE_ICON_URL = "https://favicon.im/{host}"
+
+# favicon.im 对「取不到图标」的目标（不存在的域名、内网 IP）会返回一张固定的灰色
+# 占位图（灰圆 + 斜体 f），md5 c213d299a2638391440eff20c8cf0b8f。必须识别并丢弃，
+# 否则每张失败的卡片都会挂上一个毫无意义的 f 头像。
+ONLINE_PLACEHOLDER_MD5 = "c213d299a2638391440eff20c8cf0b8f"
+LOCAL_TLDS = (".local", ".lan", ".internal", ".home", ".localdomain", ".localhost")
+
+
+def _get_image(client, url, timeout=None):
+    """抓一个 URL 并返回 (bytes, ext, why)；不是图片/太大/非 200 都算失败。"""
     ok, why = _safe(url)
     if not ok:
-        return None, why
+        return None, None, why
     try:
-        with client.stream("GET", url, follow_redirects=True) as r:
+        with client.stream("GET", url, follow_redirects=True,
+                           timeout=timeout) as r:
             if r.status_code != 200:
-                return None, f"HTTP {r.status_code}"
+                return None, None, "HTTP %d" % r.status_code
             ct = r.headers.get("content-type", "")
             buf = io.BytesIO()
             for chunk in r.iter_bytes():
                 buf.write(chunk)
                 if buf.tell() > MAX_BYTES:
-                    return None, "文件过大"
+                    return None, None, "文件过大"
             data = buf.getvalue()
     except Exception as e:
-        return None, f"{type(e).__name__}"
+        return None, None, type(e).__name__
     if not data:
-        return None, "空响应"
+        return None, None, "空响应"
     ext = _detect_ext(data, ct)
     if not ext:
-        return None, "非图片内容"
+        return None, None, "非图片内容"
+    return data, ext, ""
+
+
+def _download(client, url, timeout=None):
+    data, ext, why = _get_image(client, url, timeout)
+    if not data:
+        return None, why
     return save_bytes(data, ext), ext
 
 
 def fetch_icon_url(url, timeout=6.0):
-    with httpx.Client(timeout=timeout, headers={"User-Agent": UA}) as client:
+    with httpx.Client(timeout=timeout, headers=HEADERS) as client:
         return _download(client, url)
 
 
 LINK_RE = re.compile(r"<link\b[^>]*>", re.I)
 ATTR_RE = re.compile(r"""(\w[\w-]*)\s*=\s*["']([^"']*)["']""")
+SIZE_RE = re.compile(r"(\d+)\s*[xX]\s*(\d+)")
+
+
+def _link_tags(html):
+    for tag in LINK_RE.findall(html[:300000]):
+        yield {k.lower(): v for k, v in ATTR_RE.findall(tag)}
 
 
 def _find_icon_links(html, base):
-    found = []
-    for tag in LINK_RE.findall(html[:200000]):
-        attrs = {k.lower(): v for k, v in ATTR_RE.findall(tag)}
+    """按质量排序的候选图标：矢量/sizes 大的优先，apple-touch-icon 次之。"""
+    scored = []
+    for attrs in _link_tags(html):
         rel = (attrs.get("rel") or "").lower()
-        if "icon" not in rel:
+        href = (attrs.get("href") or "").strip()
+        if not href or "icon" not in rel:
             continue
-        href = attrs.get("href") or ""
+        url = urljoin(base, href)
+        score = 0
+        if "apple-touch-icon" in rel:
+            score = 180                       # 一般是 180x180 png，缩到 48px 也清楚
+        elif "mask-icon" in rel:
+            score = 1                         # 单色 svg，多数场景不好看，排最后
+        else:
+            m = SIZE_RE.search(attrs.get("sizes") or "")
+            if m:
+                score = max(16, min(int(m.group(1)), 512))
+            low = url.lower().split("?")[0]
+            typ = (attrs.get("type") or "").lower()
+            if low.endswith(".svg") or "svg" in typ:
+                score += 64                   # 矢量图任意尺寸都清晰
+            elif low.endswith(".png") or "png" in typ:
+                score += 8
+        scored.append((score, url))
+    scored.sort(key=lambda x: -x[0])
+    seen, out = set(), []
+    for _, url in scored:
+        if url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
+
+def _manifest_icons(html, base, client, timeout=None):
+    """<link rel=manifest> 里的 icons：新版 SPA 面板常常只在这里声明图标。"""
+    out = []
+    for attrs in _link_tags(html):
+        if "manifest" not in (attrs.get("rel") or "").lower():
+            continue
+        href = (attrs.get("href") or "").strip()
         if not href:
             continue
-        found.append((attrs.get("sizes") or "", urljoin(base, href)))
-    # 有 sizes 的（真图标）优先，其次 apple-touch-icon
-    found.sort(key=lambda x: (0 if x[0] else 1))
-    return [u for _, u in found]
+        try:
+            r = client.get(urljoin(base, href), timeout=timeout)
+            if r.status_code != 200:
+                continue
+            data = r.json()
+        except Exception:
+            continue
+        icons = data.get("icons") if isinstance(data, dict) else None
+        if not isinstance(icons, list):
+            continue
+        scored = []
+        for it in icons:
+            if not isinstance(it, dict) or not it.get("src"):
+                continue
+            m = SIZE_RE.search(it.get("sizes") or "")
+            score = int(m.group(1)) if m else 0
+            if str(it.get("src")).lower().split("?")[0].endswith(".svg"):
+                score += 64
+            scored.append((score, urljoin(base, str(it["src"]))))
+        scored.sort(key=lambda x: -x[0])
+        out.extend(u for _, u in scored)
+    return out
 
 
-def fetch_favicon(base_url, timeout=5.0):
-    """返回 (filename, ext) 或 (None, reason)"""
-    base_url = (base_url or "").rstrip("/")
+def _is_public_host(base_url):
+    """内网 IP / 单段主机名 / .lan 之类不走在线图标库（服务端也取不到）。"""
+    host = (urlparse(base_url).hostname or "").lower()
+    if not host or "." not in host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return False                        # 任何字面 IP 都不试
+    except ValueError:
+        pass
+    return not host.endswith(LOCAL_TLDS)
+
+
+def fetch_online_icon(base_url, timeout=8.0):
+    """公共图标库兜底：站点被 Cloudflare 拦 / 只在内网可达时，用域名换图标。"""
+    host = (urlparse(base_url).hostname or "").lower()
+    if not _is_public_host(base_url):
+        return None, "非公网域名，跳过在线图标库"
+    url = ONLINE_ICON_URL.format(host=host)
+    try:
+        with httpx.Client(timeout=timeout, headers=HEADERS, verify=False) as client:
+            data, ext, why = _get_image(client, url)
+    except Exception as e:
+        return None, type(e).__name__
+    if not data:
+        return None, why or "在线图标库无响应"
+    if hashlib.md5(data).hexdigest() == ONLINE_PLACEHOLDER_MD5:
+        return None, "在线图标库只有占位图（说明它也没取到该站图标）"
+    if ext == "svg" and len(data) < 600 and b">f</text>" in data:
+        return None, "在线图标库只有占位图"
+    return save_bytes(data, ext), "在线图标库 favicon.im"
+
+
+def fetch_favicon(base_url, timeout=5.0, online=True):
+    """返回 (filename, 来源说明) 或 (None, 失败原因汇总)。
+
+    顺序：首页 HTML 里的图标声明（质量最好）→ 常见静态路径 → 换协议再试
+    → 在线图标库兜底（仅公网域名）。每步失败原因都会汇总到返回值里，
+    前端直接展示，用户能看出到底是 404、还是要登录（401/403）。
+    """
+    base_url = (base_url or "").strip().rstrip("/")
     if not base_url:
         return None, "无地址"
-    with httpx.Client(timeout=timeout, headers={"User-Agent": UA},
-                      verify=False) as client:
-        f, why = _download(client, base_url + "/favicon.ico")
-        if f:
-            return f, "favicon.ico"
+    if not base_url.startswith(("http://", "https://")):
+        base_url = "http://" + base_url
+    tried = []
+    # 被墙/黑洞的站点每个请求都要等满 timeout，这里给「站内探测」一个总预算，
+    # 用完就提前进入兜底，避免一条卡片卡住几十秒（批量重抓时尤其明显）。
+    budget = max(6.0, timeout * 2)
+    deadline = time.time() + budget
+
+    def left():
+        return max(0.8, deadline - time.time())
+
+    def note(what, why):
+        if why:
+            tried.append("%s → %s" % (what, why))
+
+    with httpx.Client(timeout=timeout, headers=HEADERS, verify=False) as client:
+        # 1) 首页 HTML：<link rel=icon> / apple-touch-icon / manifest
         html = ""
+        root_status = 0
+        unreachable = False
         try:
-            r = client.get(base_url, follow_redirects=True)
-            if r.status_code == 200 and "html" in (r.headers.get("content-type") or ""):
+            r = client.get(base_url, timeout=left())
+            root_status = r.status_code
+            ct = (r.headers.get("content-type") or "").lower()
+            if r.status_code == 200 and ("html" in ct or not ct):
                 html = r.text
-        except Exception:
-            pass
-        for link in _find_icon_links(html, base_url + "/")[:4]:
-            f, why2 = _download(client, link)
+            else:
+                note("首页", "HTTP %d" % r.status_code)
+        except Exception as e:
+            note("首页", type(e).__name__)
+            # 连不上（连接超时/拒绝/DNS 失败）：本机到该站根本不通，再试 7 个静态
+            # 路径纯属浪费时间，直接交给在线图标库兜底。
+            unreachable = type(e).__name__ in (
+                "ConnectTimeout", "ConnectError", "ReadTimeout", "RemoteProtocolError")
+
+        if html:
+            for u in _find_icon_links(html, base_url + "/")[:5]:
+                if deadline - time.time() < 0.8:
+                    break
+                f, why = _download(client, u, left())
+                if f:
+                    return f, "站点声明的图标"
+                note(urlparse(u).path or u, why)
+            for u in _manifest_icons(html, base_url + "/", client, left())[:2]:
+                if deadline - time.time() < 0.8:
+                    break
+                f, why = _download(client, u, left())
+                if f:
+                    return f, "manifest 里的图标"
+                note("manifest 图标", why)
+
+        # 2) 常见静态路径（站点从本机根本不通就跳过）
+        for path in (() if unreachable else COMMON_PATHS):
+            if deadline - time.time() < 0.8:
+                note("站内探测", "超时预算用完")
+                break
+            f, why = _download(client, base_url + path, left())
             if f:
-                return f, link
-    return None, why or "未找到图标"
+                return f, path.lstrip("/")
+            note(path, why)
+            # 首页和 favicon 同时 401/403：整站被挡（Cloudflare 盾 / 登录墙），
+            # 剩下几个静态路径也必然一样，直接省掉，尽快走在线图标库兜底。
+            if path == "/favicon.ico" and root_status in (401, 403) and why in ("HTTP 401", "HTTP 403"):
+                note("站内探测", "整站被挡（需要登录或反爬）")
+                break
+
+        # 3) 换协议再来一轮（http-only 的内网盒子上很常见）
+        alt = ("http://" if base_url.startswith("https://") else "https://") + base_url.split("://", 1)[1]
+        if not unreachable and _safe(alt)[0] and deadline - time.time() > 1.0:
+            for path in ("/favicon.ico", "/apple-touch-icon.png"):
+                if deadline - time.time() < 0.8:
+                    break
+                f, why = _download(client, alt + path, left())
+                if f:
+                    return f, alt.split("://")[0] + path
+                note(alt.split("://")[0] + path, why)
+
+    # 4) 在线图标库兜底
+    if online:
+        f, why = fetch_online_icon(base_url)
+        if f:
+            return f, why
+        note("在线图标库", why)
+
+    # 同一原因别重复列太多次
+    uniq, seen = [], set()
+    for t in tried:
+        if t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    return None, "；".join(uniq[:3]) or "未找到图标"
 
 
 def list_icons():

@@ -7,6 +7,7 @@ import re
 import random
 import socket
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import urllib.parse
 import time
 import json
@@ -2503,19 +2504,28 @@ def refresh_icons(request: Request, body: RefreshIconsBody, _=Depends(require_ad
     if body.ids:
         want = {int(x) for x in body.ids}
         items = [i for i in items if i["id"] in want]
-    done, fail = 0, 0
-    for it in items:
+    # 并发 8 路：单个站点最坏要等十几秒（被墙站点要先超时再兜底），
+    # 70 多条串行会等到浏览器先超时。
+    online_ok = bool(s.get("icon_online_fallback", True))
+
+    def one(it):
         base = _fetchable_url(it.get("url_lan"), ctx) or _fetchable_url(it.get("url_wan"), ctx)
         if not base:
-            fail += 1
-            continue
-        f, why = icons.fetch_favicon(base)
-        if f:
-            db.update_item(it["id"], {"icon": f})
-            done += 1
-        else:
-            fail += 1
-    return {"ok": True, "done": done, "fail": fail}
+            return it, None, "地址展开不出来（模板占位符没配）"
+        f, why = icons.fetch_favicon(base, online=online_ok)
+        return it, f, why
+
+    done, fail = 0, 0
+    misses = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for it, f, why in pool.map(one, items):
+            if f:
+                db.update_item(it["id"], {"icon": f})
+                done += 1
+            else:
+                fail += 1
+                misses.append({"name": it.get("name") or str(it["id"]), "why": why})
+    return {"ok": True, "done": done, "fail": fail, "misses": misses[:8]}
 
 
 
@@ -2797,10 +2807,10 @@ def admin_item_icon(request: Request, body: ItemIconBody, _=Depends(require_admi
                     "展开不出真实网址")
     if not (base.startswith("http://") or base.startswith("https://")):
         return _err("地址要以 http:// 或 https:// 开头（当前是 " + base[:40] + "）")
-    f, why = icons.fetch_favicon(base)
+    f, why = icons.fetch_favicon(base, online=bool(s.get("icon_online_fallback", True)))
     if not f:
-        return _err(f"没抓到图标（{why}）：站点可能没有 favicon，或要登录才能访问")
-    return {"ok": True, "icon": f, "from": base}
+        return _err(f"没抓到图标：{why}。可手动上传图标，或把该站点图标另存后上传")
+    return {"ok": True, "icon": f, "from": base, "source": why}
 
 
 # ---------------------------------------------------------------- 外网地址导入（Lucky 等）

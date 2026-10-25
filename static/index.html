@@ -797,11 +797,14 @@
 
           <div class="np-sec foldable" :class="{ folded: !secFold['net:proxy'] }">
             <div class="np-sec-head" @click="toggleSec('net:proxy')">
-              <span class="np-sec-title-txt">反代面板（Gately）</span>
+              <span class="np-sec-title-txt">反代面板（Gately，旧版外挂）</span>
               <span class="np-sec-sum">{{ s.gately_domain ? (s.gately_tls ? 'https://' : 'http://') + s.gately_domain + (s.gately_listener_port && [80, 443].indexOf(+s.gately_listener_port) < 0 ? ':' + s.gately_listener_port : '') : '未启用' }}</span>
               <i class="np-sec-caret">▾</i>
             </div>
             <div class="np-sec-body" v-show="secFold['net:proxy']">
+            <div class="np-hint" style="margin-bottom:8px">
+              2.0.0 起推荐用内置网关（上面的「网关」页签），不需要再单独跑 Gately；这一页只是兼容旧配置。
+            </div>
             <div class="np-field">
               <label>面板地址</label>
               <el-input v-model="s.gately_url" size="small" placeholder="http://192.168.1.109:16680"></el-input>

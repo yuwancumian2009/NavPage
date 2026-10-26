@@ -206,7 +206,7 @@ class AcmeClient:
                     txt_name = "_acme-challenge." + ident.lstrip("*.")
                     txt_val = b64u(hashlib.sha256(key_auth.encode()).digest())
                     log(f"[{i+1}] 写 TXT：{txt_name} → {txt_val[:16]}…")
-                    provider.set_txt(txt_name, txt_val, ttl=120)
+                    provider.set_txt(txt_name, txt_val, ttl=dnsprov.TXT_TTL)
                     cleanup.append((txt_name, txt_val))
                 else:
                     if not http_dir:

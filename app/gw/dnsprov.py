@@ -9,10 +9,12 @@
   webhook:    {"url": "https://...", "token": "可选，放 Authorization: Bearer"}
 
 webhook 用来对接自建 DNS / 其他厂商：每次变更 POST 一段 JSON：{"action":"set|del",
-"domain":"_acme-challenge.example.com","type":"TXT","value":"...","ttl":120}。
+"domain":"_acme-challenge.example.com","type":"TXT","value":"...","ttl":600}。
 也能直接对接 Pebble 的 challtestsrv 做端到端测试（见 scripts/gw_pebble_test.sh）。
 
 全部同步接口（requests/httpx.Client）：调用点在后台线程/task 里，串行执行不会互相踩。
+
+TTL 统一走 `_ttl()` 收敛到 600–86400：阿里云少于 600 会直接报 QuotaExceeded.TTL。
 """
 from __future__ import annotations
 
@@ -29,6 +31,24 @@ import httpx
 
 class DnsError(Exception):
     """DNS API 报错。message 直接给用户看，所以尽量带上供应商原文。"""
+
+
+# TTL 边界：阿里云要求 600–86400（低于 600 直接报 QuotaExceeded.TTL），
+# DNSPod 免费版最小也是 600，华为云最小 60。统一抬到 600 —— DNS-01 校验在
+# 几十秒内就完成，600 秒不影响签发，也省得各家分别处理。
+MIN_TTL = 600
+MAX_TTL = 86400
+TXT_TTL = 600
+REC_TTL = 600
+
+
+def _ttl(ttl: int = MIN_TTL, floor: int = MIN_TTL) -> int:
+    """把 TTL 收进所有供应商都接受的范围，避免「TTL is invalid」类报错。"""
+    try:
+        v = int(ttl)
+    except (TypeError, ValueError):
+        v = floor
+    return max(floor, min(v, MAX_TTL))
 
 
 def _client(timeout=20.0) -> httpx.Client:
@@ -79,7 +99,7 @@ class Provider:
     def find_zone(self, fqdn: str) -> str | None:
         raise NotImplementedError
 
-    def set_txt(self, fqdn: str, value: str, ttl: int = 120) -> None:
+    def set_txt(self, fqdn: str, value: str, ttl: int = TXT_TTL) -> None:
         raise NotImplementedError
 
     def del_txt(self, fqdn: str, value: str = "") -> None:
@@ -147,10 +167,10 @@ class Cloudflare(Provider):
         q = f"/zones/{zid}/dns_records?type={rtype}&name={urllib.parse.quote(name)}&per_page=100"
         return self._req("GET", q) or []
 
-    def set_txt(self, fqdn: str, value: str, ttl: int = 120) -> None:
+    def set_txt(self, fqdn: str, value: str, ttl: int = TXT_TTL) -> None:
         zone = self.zone(fqdn)
         zid = self._zone_id(zone)
-        body = {"type": "TXT", "name": fqdn, "content": value, "ttl": max(60, ttl)}
+        body = {"type": "TXT", "name": fqdn, "content": value, "ttl": _ttl(ttl)}
         # 同一个名字可能已有别的 TXT（例如别的证书），只改内容一致的或新建
         for rec in self._records(zone, "TXT", fqdn):
             if rec.get("content") == value:
@@ -172,7 +192,7 @@ class Cloudflare(Provider):
     def upsert_a(self, fqdn: str, ip: str, ttl: int = 600) -> str:
         zone = self.zone(fqdn)
         zid = self._zone_id(zone)
-        body = {"type": "A", "name": fqdn, "content": ip, "ttl": max(60, ttl),
+        body = {"type": "A", "name": fqdn, "content": ip, "ttl": _ttl(ttl),
                 "proxied": False}
         recs = self._records(zone, "A", fqdn)
         if recs:
@@ -260,14 +280,14 @@ class AliyunDns(Provider):
         rows = d.get("DomainRecords", {}).get("Record") or []
         return [r for r in rows if str(r.get("RR", "")).lower() == rr.lower()]
 
-    def set_txt(self, fqdn: str, value: str, ttl: int = 120) -> None:
+    def set_txt(self, fqdn: str, value: str, ttl: int = TXT_TTL) -> None:
         zone = self.zone(fqdn)
         rr = _record_name(fqdn, zone)
         for rec in self._records(zone, "TXT", rr):
             if rec.get("Value", "").strip('"') == value:
                 return
         self._req("AddDomainRecord", DomainName=zone, RR=rr, Type="TXT",
-                  Value=value, TTL=max(60, ttl))
+                  Value=value, TTL=_ttl(ttl))
 
     def del_txt(self, fqdn: str, value: str = "") -> None:
         zone = self.find_zone(fqdn)
@@ -287,10 +307,10 @@ class AliyunDns(Provider):
             if recs[0].get("Value") == ip:
                 return "unchanged"
             self._req("UpdateDomainRecord", RecordId=recs[0]["RecordId"], RR=rr,
-                      Type="A", Value=ip, TTL=max(60, ttl))
+                      Type="A", Value=ip, TTL=_ttl(ttl))
             return "updated"
         self._req("AddDomainRecord", DomainName=zone, RR=rr, Type="A",
-                  Value=ip, TTL=max(60, ttl))
+                  Value=ip, TTL=_ttl(ttl))
         return "created"
 
     def get_a(self, fqdn: str) -> str:
@@ -350,14 +370,14 @@ class Dnspod(Provider):
         return [r for r in (j.get("records") or [])
                 if str(r.get("name", "")).lower() == sub.lower()]
 
-    def set_txt(self, fqdn: str, value: str, ttl: int = 120) -> None:
+    def set_txt(self, fqdn: str, value: str, ttl: int = TXT_TTL) -> None:
         zone = self.zone(fqdn)
         sub = _record_name(fqdn, zone)
         for rec in self._records(zone, "TXT", sub):
             if rec.get("value", "").strip('"') == value:
                 return
         self._req("Record.Create", domain=zone, sub_domain=sub, record_type="TXT",
-                  record_line="默认", value=value, ttl=max(60, ttl))
+                  record_line="默认", value=value, ttl=_ttl(ttl))
 
     def del_txt(self, fqdn: str, value: str = "") -> None:
         zone = self.find_zone(fqdn)
@@ -378,10 +398,10 @@ class Dnspod(Provider):
                 return "unchanged"
             self._req("Record.Modify", domain=zone, record_id=recs[0]["id"],
                       sub_domain=sub, record_type="A", record_line="默认",
-                      value=ip, ttl=max(60, ttl))
+                      value=ip, ttl=_ttl(ttl))
             return "updated"
         self._req("Record.Create", domain=zone, sub_domain=sub, record_type="A",
-                  record_line="默认", value=ip, ttl=max(60, ttl))
+                  record_line="默认", value=ip, ttl=_ttl(ttl))
         return "created"
 
     def get_a(self, fqdn: str) -> str:
@@ -427,7 +447,7 @@ class Webhook(Provider):
         g = guess_zones(fqdn)
         return g[0] if g else None
 
-    def set_txt(self, fqdn: str, value: str, ttl: int = 120) -> None:
+    def set_txt(self, fqdn: str, value: str, ttl: int = TXT_TTL) -> None:
         self._post({"action": "set", "domain": fqdn, "type": "TXT", "value": value, "ttl": ttl})
 
     def del_txt(self, fqdn: str, value: str = "") -> None:

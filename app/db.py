@@ -110,7 +110,9 @@ DEFAULT_SETTINGS = {
     "scan_hide_no_port": False,
     # 自动扫描新容器（分钟，0=关闭）：后台按这个间隔跑一次「全量同步」，
     # 新容器自动建卡、已有卡片刷新地址，并按网关设置补反代 / FRP 地址。
-    "auto_scan_min": 0,
+    "auto_scan_min": 10,
+    "backup_auto": True,          # 每天自动留一份全量快照（/data/backups，保留最近 backup_keep 份）
+    "backup_keep": 10,
     "footer_text": "",
     # ---------------- 反代面板联动（Gately）----------------
     # gately_url 例：http://192.168.1.109:16680；gately_token 在面板「API 令牌」页建，

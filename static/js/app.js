@@ -2031,6 +2031,7 @@
       function centerTab(name) {
         // 远程节点列表按需拉一次（登录时拉过也可能服务端数据已变）
         if (name === 'node') loadNodes();
+        if (name === 'backup') loadBackups();
         if (!tabsSc) initTabsScroll();
         const sc = tabsSc; if (!sc) return;
         nextTick(function () {
@@ -2357,6 +2358,170 @@
         }
         row._busy = false;
         loadCompose();
+      }
+
+      /* ---------------- 备份与恢复（2.2.0） ---------------- */
+      const bkFiles = ref([]);
+      const bkBusy = ref(false);
+      const bkAuto = ref(true);
+      const bkKeep = ref(10);
+      const bkDir = ref('');
+      const bkRestorePw = ref(false);
+      const bkPick = ref(null);          // 待恢复的上传文件
+      const bkPickName = ref('');
+      const bkLastMsg = ref('');
+
+      function bkSize(n) {
+        n = Number(n) || 0;
+        if (n < 1024) return n + ' B';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+        return (n / 1024 / 1024).toFixed(1) + ' MB';
+      }
+      function bkTime(ts) {
+        const d = new Date((Number(ts) || 0) * 1000);
+        const p = function (x) { return x < 10 ? '0' + x : '' + x; };
+        return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' '
+          + p(d.getHours()) + ':' + p(d.getMinutes());
+      }
+      function bkKind(k) {
+        return k === 'auto' ? '每日自动' : (k === 'prerestore' ? '恢复前自动' : '手动');
+      }
+      async function loadBackups() {
+        if (!token.value) return;
+        try {
+          const r = await api.get('/api/admin/backups');
+          bkFiles.value = r.data.files || [];
+          bkAuto.value = r.data.auto !== false;
+          bkKeep.value = r.data.keep || 10;
+          bkDir.value = r.data.dir || '';
+        } catch (e) { /* 没登录就静默 */ }
+      }
+      // 下载要带 Authorization 头，直接 <a href> 不行，走 blob
+      function bkSaveBlob(blob, name) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name || ('navpage-backup-' + Date.now() + '.zip');
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 500);
+      }
+      async function bkExport() {
+        if (bkBusy.value) return;
+        bkBusy.value = true;
+        try {
+          const r = await api.get('/api/admin/backup/export', { responseType: 'blob', timeout: 300000 });
+          const d = new Date();
+          const p2 = function (x) { return x < 10 ? '0' + x : '' + x; };
+          const name = 'navpage-backup-' + d.getFullYear() + p2(d.getMonth() + 1) + p2(d.getDate())
+            + '-' + p2(d.getHours()) + p2(d.getMinutes()) + '.zip';
+          bkSaveBlob(r.data, name);
+          ElMessage.success('备份已开始下载（含图标、壁纸、证书）');
+        } catch (e) {
+          // blob 响应下错误体是 Blob，得先读出来才知道后端说了什么
+          let msg = apiMsg(e);
+          try {
+            if (e.response && e.response.data && e.response.data.text) {
+              const t = await e.response.data.text();
+              msg = (JSON.parse(t) || {}).error || msg;
+            }
+          } catch (e2) { /* 忽略 */ }
+          ElMessage.error('备份失败：' + msg);
+        }
+        bkBusy.value = false;
+      }
+      async function bkSnapshot() {
+        if (bkBusy.value) return;
+        bkBusy.value = true;
+        try {
+          const r = await api.post('/api/admin/backup/snapshot', {}, { timeout: 300000 });
+          if (!r.data.ok) throw new Error(r.data.error || '备份失败');
+          ElMessage.success('已备份到服务器：' + (r.data.name || ''));
+          bkFiles.value = r.data.files_list || bkFiles.value;
+        } catch (e) {
+          ElMessage.error(apiMsg(e));
+        }
+        bkBusy.value = false;
+      }
+      async function bkDownload(row) {
+        try {
+          const r = await api.get('/api/admin/backups/' + encodeURIComponent(row.name),
+            { responseType: 'blob', timeout: 300000 });
+          bkSaveBlob(r.data, row.name);
+        } catch (e) {
+          ElMessage.error(apiMsg(e));
+        }
+      }
+      async function bkDelete(row) {
+        try {
+          await ElMessageBox.confirm('删除备份「' + row.name + '」？删了就不能再用它恢复。',
+            '删除备份', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' });
+        } catch (e) { return; }
+        try {
+          const r = await api.delete('/api/admin/backups/' + encodeURIComponent(row.name));
+          bkFiles.value = r.data.files_list || [];
+          ElMessage.success('已删除');
+        } catch (e) {
+          ElMessage.error(apiMsg(e));
+        }
+      }
+      // 恢复前把「会发生什么」说清楚：整体替换 + 自动留一份回滚快照
+      async function bkConfirmRestore(label) {
+        const tip = '恢复会用备份内容整体替换当前配置：\n'
+          + '· 卡片、分类、全部设置（含图标/外网地址/网关/FRP/DDNS/WAF）\n'
+          + '· 本地图标库、壁纸、左上角 logo、网关证书\n'
+          + (bkRestorePw.value ? '· 管理员密码也会变成备份里的密码\n' : '· 管理员密码保持当前不变\n')
+          + '\n恢复前会自动留一份「恢复前」快照，可以回滚。\n继续恢复 ' + label + ' ？';
+        await ElMessageBox.confirm(tip, '整体恢复配置', {
+          type: 'warning', confirmButtonText: '确认恢复', cancelButtonText: '取消',
+          customClass: 'np-confirm-pre'
+        });
+      }
+      async function bkRestoreLocal(row) {
+        try { await bkConfirmRestore(row.name); } catch (e) { return; }
+        bkBusy.value = true;
+        bkLastMsg.value = '正在恢复…';
+        try {
+          const r = await api.post('/api/admin/backup/restore-local',
+            { name: row.name, restore_password: !!bkRestorePw.value }, { timeout: 600000 });
+          if (!r.data.ok) throw new Error(r.data.error || '恢复失败');
+          const c = r.data.counts || {};
+          ElMessage.success('已恢复：卡片 ' + (c.items || 0) + ' 个、分类 ' + (c.categories || 0) + ' 个'
+            + (r.data.pre_restore ? '（恢复前快照：' + r.data.pre_restore + '）' : ''));
+          setTimeout(function () { location.reload(); }, 1200);
+        } catch (e) {
+          bkLastMsg.value = '';
+          ElMessage.error('恢复失败：' + apiMsg(e));
+        }
+        bkBusy.value = false;
+      }
+      function bkPickFile(file, fileList) {
+        // el-upload 的 on-change：这里只记下来，真正恢复要用户再点一次按钮
+        const raw = file && file.raw;
+        if (!raw) return;
+        if (!/\.zip$/i.test(raw.name)) { ElMessage.error('请选择 .zip 备份包'); return; }
+        bkPick.value = raw;
+        bkPickName.value = raw.name;
+      }
+      async function bkRestoreUpload() {
+        if (!bkPick.value) { ElMessage.warning('先选一个 .zip 备份包'); return; }
+        try { await bkConfirmRestore(bkPickName.value); } catch (e) { return; }
+        bkBusy.value = true;
+        bkLastMsg.value = '正在上传并恢复…';
+        try {
+          const fd = new FormData();
+          fd.append('file', bkPick.value);
+          const r = await api.post('/api/admin/backup/restore?restore_password=' + (bkRestorePw.value ? 'true' : 'false'),
+            fd, { timeout: 900000, headers: { 'Content-Type': 'multipart/form-data' } });
+          if (!r.data.ok) throw new Error(r.data.error || '恢复失败');
+          const c = r.data.counts || {};
+          ElMessage.success('已恢复：卡片 ' + (c.items || 0) + ' 个、分类 ' + (c.categories || 0) + ' 个');
+          setTimeout(function () { location.reload(); }, 1200);
+        } catch (e) {
+          bkLastMsg.value = '';
+          ElMessage.error('恢复失败：' + apiMsg(e));
+        }
+        bkBusy.value = false;
       }
 
       /* ---------------- 镜像更新 ---------------- */
@@ -3243,6 +3408,9 @@
         showUrlFor, barW, staleTip, layoutMode, layoutDirty, savingLayout, dragId, dragOverKey,
         startLayout, cancelLayout, onDragStart, onDragOverGroup, onDragOverCard, onDrop,
         onDragEnd, saveLayout, quickAddGroup,
+        bkFiles, bkBusy, bkAuto, bkKeep, bkDir, bkRestorePw, bkPick, bkPickName, bkLastMsg,
+        bkSize, bkTime, bkKind, loadBackups, bkExport, bkSnapshot, bkDownload, bkDelete,
+        bkRestoreLocal, bkPickFile, bkRestoreUpload,
         cmpRows, cmpLoading, cmpError, cmpRoot, cmpLast, cmpDlg, cmpDirty,
         cmpNew, openComposeNew, fillComposeTpl, createCompose,
         loadCompose, openCompose, saveCompose, upCompose,

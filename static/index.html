@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/vendor/element-plus.css?v=1">
-<link rel="stylesheet" href="/css/app.css?v=83">
+<link rel="stylesheet" href="/css/app.css?v=84">
 </head>
 <body>
 <div id="app" v-cloak :class="{ 'np-settings-win': settingsWin }">
@@ -1787,6 +1787,75 @@
             </div>
           </div>
         </el-tab-pane>
+
+        <!-- ---------------- 备份与恢复（2.2.0） ---------------- -->
+        <el-tab-pane label="备份与恢复" name="backup">
+          <div class="np-scroll">
+            <div class="np-hint">
+              一个备份包 = <b>全部卡片与分类</b> + <b>全部设置</b>（图标地址、内网/外网地址、外观、网关、FRP、DDNS、WAF、自动扫描等）
+              + <b>本地图标库、壁纸、左上角 logo、网关证书</b>。
+              新建容器后装好导航页，在这里恢复这一个 zip，就回到和现在一模一样的状态。
+              <br>备份包含密码哈希、DDNS/FRP 令牌、证书私钥，<b>请当作机密文件保管</b>。
+            </div>
+            <div class="np-bar">
+              <el-button size="small" type="primary" :loading="bkBusy" @click="bkExport">备份并下载</el-button>
+              <el-button size="small" :loading="bkBusy" @click="bkSnapshot">备份到服务器</el-button>
+              <el-button size="small" :loading="bkBusy" @click="loadBackups">刷新</el-button>
+              <span class="np-bar-tip">
+                每天自动备份一次（{{ bkAuto ? '已开启' : '已关闭' }}），每种保留最近 {{ bkKeep }} 份
+              </span>
+            </div>
+
+            <div class="np-scan-sec">
+              <div class="np-scan-head"><b>从备份恢复</b>
+                <span class="np-bar-tip">恢复 = 整体替换，会先自动留一份「恢复前」快照用于回滚</span></div>
+              <div class="np-bar">
+                <el-upload :auto-upload="false" :show-file-list="false" accept=".zip" :on-change="bkPickFile">
+                  <el-button size="small">选择备份包…</el-button>
+                </el-upload>
+                <span class="np-muted" v-if="bkPickName">{{ bkPickName }}</span>
+                <el-button size="small" type="danger" plain :loading="bkBusy"
+                           :disabled="!bkPick" @click="bkRestoreUpload">上传并恢复</el-button>
+              </div>
+              <div class="np-bar">
+                <el-checkbox v-model="bkRestorePw" size="small">
+                  连管理员密码一起恢复（不勾选 = 恢复后仍用当前密码登录）
+                </el-checkbox>
+              </div>
+              <div class="np-muted" v-if="bkLastMsg">{{ bkLastMsg }}</div>
+            </div>
+
+            <div class="np-scan-sec" v-if="bkFiles.length">
+              <div class="np-scan-head"><b>服务器上的备份 {{ bkFiles.length }} 份</b>
+                <span class="np-bar-tip np-mono">{{ bkDir }}</span></div>
+              <table class="ep-table np-bk-table">
+                <thead>
+                  <tr>
+                    <th style="width:250px">文件</th>
+                    <th style="width:90px">大小</th>
+                    <th style="width:150px">时间</th>
+                    <th style="width:110px">来源</th>
+                    <th style="width:190px">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="b in bkFiles" :key="b.name">
+                    <td class="np-mono">{{ b.name }}</td>
+                    <td class="np-muted">{{ bkSize(b.size) }}</td>
+                    <td class="np-muted">{{ bkTime(b.mtime) }}</td>
+                    <td><span class="np-chip" :class="{ warn: b.kind === 'prerestore' }">{{ bkKind(b.kind) }}</span></td>
+                    <td>
+                      <el-button size="small" text type="primary" @click="bkDownload(b)">下载</el-button>
+                      <el-button size="small" text type="danger" :loading="bkBusy" @click="bkRestoreLocal(b)">恢复</el-button>
+                      <el-button size="small" text @click="bkDelete(b)">删除</el-button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="np-empty-sm" v-else>服务器上还没有备份，点「备份到服务器」留一份（存在数据卷里，换容器也在）</div>
+          </div>
+        </el-tab-pane>
       </el-tabs>
     </div>
   </el-dialog>
@@ -2221,6 +2290,6 @@
 <script src="/vendor/element-plus.min.js"></script>
 <script src="/vendor/element-icons.min.js"></script>
 <script src="/vendor/axios.min.js"></script>
-<script src="/js/app.js?v=97"></script>
+<script src="/js/app.js?v=99"></script>
 </body>
 </html>

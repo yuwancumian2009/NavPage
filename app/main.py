@@ -25,6 +25,7 @@ from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Depends
 from fastapi.responses import JSONResponse, FileResponse, Response, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.gzip import GZipMiddleware
+from starlette.background import BackgroundTask
 from pydantic import BaseModel
 
 import httpx
@@ -32,6 +33,7 @@ import httpx
 from . import db, netutil, dockerapi, icons, iconlib, widgets, registry, cron, version, gately
 from . import gw as gw_mod
 from . import compose as compose_mod
+from . import backup as backup_mod
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -1753,6 +1755,129 @@ def delete_wallpaper(name: str, _=Depends(require_admin)):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------- 备份与恢复（2.2.0）
+
+def _bak_json(**kw):
+    d = {"ok": True}
+    d.update(kw)
+    return d
+
+
+@app.get("/api/admin/backups")
+def admin_backups(_=Depends(require_admin)):
+    """服务器端快照列表（存在 /data/backups，容器重建也在）。"""
+    s = db.get_settings()
+    return _bak_json(dir=backup_mod.BACKUP_DIR, files=backup_mod.list_backups(),
+                     auto=bool(s.get("backup_auto", True)),
+                     keep=int(s.get("backup_keep") or backup_mod.MAX_KEEP),
+                     data_dir=db.DATA_DIR)
+
+
+@app.get("/api/admin/backup/export")
+def admin_backup_export(_=Depends(require_admin)):
+    """现打一个包直接下载（不留服务器副本）。"""
+    import tempfile
+    name = backup_mod._ts_name()
+    tmp = os.path.join(tempfile.gettempdir(), name)
+    try:
+        info = backup_mod.build_zip(tmp)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"打包失败：{e}"}, status_code=500)
+    return FileResponse(tmp, filename=name, media_type="application/zip",
+                        background=BackgroundTask(lambda: os.path.exists(tmp) and os.remove(tmp)))
+
+
+@app.post("/api/admin/backup/snapshot")
+def admin_backup_snapshot(_=Depends(require_admin)):
+    """在服务器上留一份快照（就是「备份到 /data/backups」，方便新容器直接用）。"""
+    try:
+        info = backup_mod.snapshot(kind="manual")
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"备份失败：{e}"}, status_code=500)
+    return _bak_json(**info, files_list=backup_mod.list_backups())
+
+
+@app.get("/api/admin/backups/{name}")
+def admin_backup_download(name: str, _=Depends(require_admin)):
+    name = os.path.basename(name)
+    p = os.path.join(backup_mod.BACKUP_DIR, name)
+    if not name.endswith(".zip") or not os.path.isfile(p):
+        raise HTTPException(404, "备份不存在")
+    return FileResponse(p, filename=name, media_type="application/zip")
+
+
+@app.delete("/api/admin/backups/{name}")
+def admin_backup_delete(name: str, _=Depends(require_admin)):
+    name = os.path.basename(name)
+    p = os.path.join(backup_mod.BACKUP_DIR, name)
+    if name.endswith(".zip") and os.path.isfile(p):
+        os.remove(p)
+    return _bak_json(files_list=backup_mod.list_backups())
+
+
+async def _after_restore():
+    """恢复完把网关/FRP 按新数据重新对齐（不签证书，避免恢复时触发一堆 ACME）。"""
+    try:
+        s = db.get_settings()
+        if _gw_should_sync(s):
+            await _gw_sync_all(issue=False)
+        svc = gw_mod.instance()
+        if svc and s.get("frp_enabled"):
+            svc.frp.apply(svc.cfg(), svc.frp_proxies())
+    except Exception as e:
+        print(f"[navpage] 恢复后重载网关/FRP 失败（可手动点同步）：{e}")
+
+
+class BackupRestoreBody(BaseModel):
+    name: str = ""
+    restore_password: bool = False
+
+
+@app.post("/api/admin/backup/restore")
+async def admin_backup_restore(file: UploadFile = File(...), restore_password: bool = False,
+                               _=Depends(require_admin)):
+    """上传备份包 → 整体恢复。恢复前会自动给当前状态留一份 prerestore 快照。"""
+    import tempfile
+    raw = await file.read()
+    if not raw:
+        return _err("备份包是空的")
+    if len(raw) > 200 * 1024 * 1024:
+        return _err("备份包不能超过 200MB")
+    tmp = os.path.join(tempfile.gettempdir(), "np-restore-" + str(int(time.time())) + ".zip")
+    with open(tmp, "wb") as f:
+        f.write(raw)
+    try:
+        res = backup_mod.restore_zip(tmp, restore_password=bool(restore_password))
+    except ValueError as e:
+        return _err(str(e))
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"恢复失败：{e}"}, status_code=500)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    await _after_restore()
+    return _bak_json(**res, files_list=backup_mod.list_backups())
+
+
+@app.post("/api/admin/backup/restore-local")
+async def admin_backup_restore_local(body: BackupRestoreBody, _=Depends(require_admin)):
+    """用服务器上已有的快照恢复（新容器里最常用：同一个 /data 卷，直接选一份恢复）。"""
+    name = os.path.basename(body.name or "")
+    p = os.path.join(backup_mod.BACKUP_DIR, name)
+    if not name.endswith(".zip") or not os.path.isfile(p):
+        return _err("找不到这份快照")
+    try:
+        res = backup_mod.restore_zip(p, restore_password=bool(body.restore_password))
+    except ValueError as e:
+        return _err(str(e))
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"恢复失败：{e}"}, status_code=500)
+    await _after_restore()
+    return _bak_json(**res, files_list=backup_mod.list_backups())
+
+
 # ---------------------------------------------------------------- 图标：本地库 + 在线库
 
 class IconUseBody(BaseModel):
@@ -3249,6 +3374,20 @@ async def _auto_scan_loop():
         except Exception as e:
             _AUTO_SCAN["error"] = str(e)
             print(f"[navpage] 自动扫描失败（不影响面板）：{e}")
+        # 每天一次全量快照：靠已有快照的 mtime 判断，重启也不会重复拍
+        try:
+            s = db.get_settings()
+            if s.get("backup_auto", True):
+                autos = [b for b in backup_mod.list_backups() if b["kind"] == "auto"]
+                if not autos or (time.time() - max(b["mtime"] for b in autos)) >= 86400:
+                    info = await loop.run_in_executor(None, backup_mod.snapshot, "auto")
+                    if info.get("skipped"):
+                        print(f"[navpage] 自动备份跳过：{info['reason']}")
+                    else:
+                        print(f"[navpage] 自动备份完成：{info['name']}（{info['size'] // 1024} KB）")
+                    backup_mod.prune(int(s.get("backup_keep") or backup_mod.MAX_KEEP))
+        except Exception as e:
+            print(f"[navpage] 自动备份失败（不影响面板）：{e}")
         await asyncio.sleep(60)
 
 

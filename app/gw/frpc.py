@@ -42,6 +42,7 @@ class FrpManager:
         self.log = log or (lambda *a: None)
         self.proc: subprocess.Popen | None = None
         self.last_cfg = ""
+        self.last_cfg_obj: dict = {}
         self.started_at = 0
         self.error = ""
 
@@ -60,6 +61,8 @@ class FrpManager:
             f'auth.token = "{toml_escape(cfg.get("frp_token") or "")}"',
             'transport.tls.enable = true',
             'transport.tcpMux = true',
+            # 偶发失败（frps 重启、网络抖动）自动重试，而不是第一次登录失败就退出。
+            'loginFailExit = false',
             f'log.to = "{toml_escape(self.log_path)}"',
             f'log.level = "{toml_escape(cfg.get("frp_log_level") or "info")}"',
             f'log.maxDays = 3',
@@ -99,6 +102,7 @@ class FrpManager:
         if not bin_path:
             self.error = "镜像里没有 frpc 二进制（构建时未下载成功）"
             return self.status()
+        self.last_cfg_obj = dict(cfg)
         text = self.build_config(cfg, proxies)
         # 判「变没变」要比磁盘上的真内容，不能只比内存里的 last_cfg：
         # 容器重建后拿到的可能是上一轮留在卷里的旧配置（端口是错的），
@@ -167,6 +171,26 @@ class FrpManager:
         except Exception:
             return []
 
+    def _hint(self) -> str:
+        """把 frpc 日志里的失败翻成人话。
+
+        注意：加了 loginFailExit = false 之后，登录失败时进程仍然活着（每 5 秒重试），
+        所以不能只看「进程是否存活」，要看日志尾巴里有没有失败痕迹。
+        """
+        if not self.last_cfg:
+            return ""
+        log = self.tail(40)
+        # 只看「本次启动」之后的日志，否则改好配置后会残留上一次的报错
+        for i in range(len(log) - 1, -1, -1):
+            if "启动 frpc" in log[i]:
+                log = log[i + 1:]
+                break
+        marks = ("connect to server error", "login to the server failed",
+                 "already exists", "token in login", "unexpected EOF")
+        if not any(m in "\n".join(log) for m in marks):
+            return ""
+        return explain_failure(log, self.last_cfg_obj or {})
+
     def status(self) -> dict:
         return {
             "running": self._alive(),
@@ -174,5 +198,35 @@ class FrpManager:
             "since": self.started_at,
             "binary": find_binary(),
             "error": self.error,
+            "hint": self._hint(),
             "log": self.tail(12),
         }
+
+# FRP 的报错原名很含糊（EOF / session shutdown），这里翻成人话。
+# 每条都来自 2026-10-26 用真实 frp 0.61.1 二进制逐个复现的结果。
+def explain_failure(log: list[str], cfg: dict) -> str:
+    text = "\n".join(log[-14:])
+    port = str(cfg.get("frp_port") or "")
+    proto = (cfg.get("frp_protocol") or "tcp").strip().lower()
+    if "unexpected EOF" in text:
+        return ("连接被中途掐断：选了 websocket/wss，但服务端这个端口不认 ws。"
+                "直连 frps 请选 tcp 并填 bindPort（默认 7000）；只有前置反代时（wss + 443）才会看到这个错。")
+    if "EOF" in text:
+        if proto == "tcp" and port in ("80", "443", "8080", "8443"):
+            return (f"端口填的是 {port}（网站端口），tcp 直连连不上它。"
+                    "tcp 要填 frps 的 bindPort（默认 7000）；只有 wss 才填 443。")
+        return ("TCP 能连上但对方立刻断开 —— 这个端口上跑的不是 frps。常见三种："
+                "① 填了 80/443（nginx、Caddy、OpenResty）；② 填了 7500（frps 仪表盘）；"
+                "③ VPS 上另有一套 frps 且版本/配置不同。确认填的是 frps 的 bindPort（本项目默认 7000）。")
+    if "connection refused" in text:
+        return ("端口没有服务监听：frps 没启动、端口写错，或 VPS 安全组/防火墙没放行这个端口。")
+    if "i/o timeout" in text or "context deadline exceeded" in text or "no route to host" in text:
+        return ("连接超时：VPS 安全组或本机防火墙没放行这个端口（有的是机房拦截了非标准端口）。")
+    if "token in login doesn't match" in text:
+        return "token 和 frps 不一致：把 VPS 上的 auth.token 和这里填的改成同一个。"
+    if "session shutdown" in text:
+        return ("服务端主动关了会话：token 不一致，或两端 frp 版本差太多"
+                "（本项目 frps 镜像固定 v0.61.1，自己另装的建议也升到 0.61.x）。")
+    if "already exists" in text:
+        return "隧道名和同一个 frps 上其他客户端重名了：给「隧道名前缀」填个独一无二的值。"
+    return ""

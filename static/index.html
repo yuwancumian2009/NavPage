@@ -1226,6 +1226,9 @@
               <span class="np-gwbar-sp"></span>
               <el-button size="small" :loading="gwBusy === 'frp'" @click="gwFrpApply">应用配置</el-button>
             </div>
+            <div v-if="gw.frp && gw.frp.hint" class="np-diag">
+              <b>诊断：</b><span>{{ gw.frp.hint }}</span>
+            </div>
             <div class="np-sec foldable" :class="{ folded: !secFold['frp:cfg'] }">
               <div class="np-sec-head" @click="toggleSec('frp:cfg')">
                 <span class="np-sec-title-txt">frps 服务器</span>
@@ -1253,6 +1256,10 @@
                     <el-option label="wss（443 反代，最常见的公网玩法）" value="wss"></el-option>
                   </el-select>
                   <div class="np-hint">frps 挂在 nginx/OpenResty 后面、对外只有 443 时选 <code>wss</code>，端口填 443。</div>
+                  <div v-if="(s.frp_protocol||'tcp')==='tcp' && ['80','443','8080'].includes(String(s.frp_port||''))"
+                       class="np-diag" style="margin-top:6px">
+                    <b>注意：</b><span>tcp 直连不能填 {{ s.frp_port }} —— 那是网站端口。tcp 要填 frps 的 bindPort（默认 <b>7000</b>）；只有 wss 才填 443。</span>
+                  </div>
                 </div>
                 <div class="np-field">
                   <label>代理名前缀</label>

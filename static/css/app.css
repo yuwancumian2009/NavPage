@@ -1353,6 +1353,15 @@ th.c-src-op { width: 208px; }
 .np-dot.off { background: #e6a23c; }
 .np-gwerr { color: #e74c3c; }
 
+/* FRP 故障诊断条：把 EOF / session shutdown 这类原文翻成人话 */
+.np-diag {
+  display: flex; gap: 6px; align-items: flex-start;
+  margin: 8px 0 0; padding: 9px 11px; border-radius: 8px;
+  background: rgba(231, 76, 60, .10); border: 1px solid rgba(231, 76, 60, .35);
+  color: var(--np-text, #333); font-size: 12.5px; line-height: 1.55;
+}
+.np-diag b { color: #e74c3c; white-space: nowrap; }
+
 .np-gwlist { border: 1px solid rgba(127,127,127,.18); border-radius: 10px; overflow: hidden; margin: 6px 0 10px; }
 .np-gwrow { display: flex; align-items: center; gap: 10px; padding: 8px 10px; font-size: 12px;
   border-bottom: 1px solid rgba(127,127,127,.12); }

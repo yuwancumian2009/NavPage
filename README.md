@@ -15,17 +15,18 @@
 
 ## 功能
 
-### 2.0.0 起：内置网关（反代 / 证书 / DDNS / FRP）
+### 内置网关：反代 / 证书 / WAF / DDNS / FRP
 
-不用再外挂 Lucky 或 Gately，一个容器全包：
+一个容器全包，不用再外挂 Lucky 或 Gately：
 
 | 能力 | 说明 | 设置位置 |
 |---|---|---|
 | 反向代理 | 按域名转发到内网容器，支持 WebSocket / 流式响应 | 设置 → 网关 |
+| WAF 防火墙 | IP 白 / 黑名单、扫描器 UA、敏感路径、请求方法、CC 限速，带拦截记录 | 设置 → 网关 → WAF |
 | HTTPS 证书 | ACME DNS-01，自动申请与续期，可签通配符证书 | 设置 → 网关 → 证书 |
 | DDNS | 多源探测公网 IP，变化时更新 A 记录 | 设置 → DDNS |
-| FRP 隧道 | 镜像内置 frpc，按卡片自动生成隧道 | 设置 → FRP |
-| 卡片地址 | 自动 / 内网 / 反代 / FRP 四档，可逐条固定 | 首页右上角 / 编辑条目 |
+| FRP 隧道 | 镜像内置 frpc，按卡片自动生成隧道；可一键部署远端 frps 节点 | 设置 → FRP / 远程节点 |
+| 卡片地址 | 自动 / 内网 / 反代 / FRP 四档，可逐条固定；域名按卡片名自动生成 | 首页右上角 / 编辑条目 |
 
 反代默认监听容器内 `8081`（HTTP）和 `18443`（HTTPS），compose 已映射；端口可在设置里改。
 证书走 DNS-01 所以不需要占用 80 端口，Cloudflare / 阿里云 / DNSPod / 自定义 webhook 任选其一。
@@ -48,41 +49,15 @@
 - 也可以用域名判定：用非内网域名访问就算外网；或指定哪些域名算外网（支持 `*.example.com`）。
 - 每张卡片右上角标出当前用的是哪个地址，出问题一眼能看出走错没。
 
-### 从 Lucky 批量导入外网域名
+### 外网地址自动生成
 
-已经用 Lucky 之类把一堆内网服务映射到域名后，不用一条条手填「外网地址」：
+外网地址由网关/FRP 自己写，不用一条条手填：
 
-1. 管理台 →「扫描导入」→ 拉到底部「导入外网地址」
-2. 在 Lucky「Web服务」里点开主规则，看到子规则列表（表头是 名称 / 前端 / 目标 / 访问控制 / 速率），在表格上按 `Ctrl+A` 再 `Ctrl+C`，整个粘进来就行 —— 不用整理格式：
-
-   ```
-   emby.example.com
-   http://192.168.1.109:8096
-   jf.example.com
-   http://192.168.1.109:8097
-   ```
-
-   手写也可以，一行一条、域名和内网地址写在同一行：
-
-   ```
-   emby.example.com     192.168.1.109:8096
-   jellyfin.example.com 192.168.1.109:8096
-   ```
-
-3. 点「解析预览」，每行显示解析出的域名、后端地址、自动匹配到的卡片
-4. 匹配错了在「匹配卡片」下拉里改；不想写的留空（显示「不写入」）
-5. 点「写入 N 张卡片」
-
-要点：
-
-- **只写外网地址**，内网地址不动；默认跳过已有外网地址的卡片，勾「覆盖已有外网地址」才覆盖
-- 协议默认 `https`；点域名前面的 `https://` 可切成 `http`
-- 匹配顺序：先按后端端口对应卡片，端口对不上再按域名首段和卡片名（`emby.example.com` → `emby`）
-- 不依赖固定列顺序和换行位置：Lucky 的表格复制出来是「一格一行」（域名一行、`http://IP:端口` 一行），会自动跨行配对；制表符、空格、`->`、`|` 分隔也都能认，多余的列（名称、状态、速率）会被忽略
-- 一个子规则绑了多个域名（`a.com,b.com` 共用一个后端）时，会拆成多行、共用同一个后端
-- 端口写了域名自己的（如 `https://emby.example.com:8443`）也能识别，不会被当成后端端口
-- Lucky 的规则数据是加密存放的，第三方读不出来，所以这里是「粘贴 → 预览 → 确认」，不会去连你的 Lucky
-- 注意：在「添加/编辑子规则」弹窗里复制是拿不到值的（域名、地址都在输入框里），要在**子规则列表**上复制
+- **反代**：给卡片填一个域名（或让面板按卡片名生成 `名字.你的域名`），保存即生成路由，
+  地址同时写进卡片的「外网地址」；改端口 / 改域名会跟着更新
+- **FRP**：连上 frps 后每张卡片自动得到 `容器名.域名后缀`，新扫描出来的容器也会在下一轮补齐地址
+- 手动写过的地址默认不被覆盖，想纠正就在「项目」里改
+- 早期版本的「粘贴 Lucky 规则批量导入」已在 2.1.3 移除，外网地址统一由网关联动管理
 
 ### 零配置主机名推导
 
@@ -107,10 +82,12 @@ mihomo / Clash（连接数、上下行速率、机场数）、自定义 JSON。�
 
 ### 管理台
 
-右下角菜单进入，八个页签：**项目**（增删改卡片）、**分类**（分组与排序）、
-**扫描导入**（扫描容器 / 全量同步 / 按服务类型归类）、**外观**（标题与壁纸）、
-**网络与安全**（密码、内网判定、反代）、**镜像**（检查更新 / 更新 / 定时任务 / 清理）、
-**Compose**（改 YAML 并重构）、**备份与恢复**（整站打包 / 一键还原）。
+右下角菜单进入，十二个页签：**项目**（增删改卡片）、**分类**（分组与排序）、
+**扫描导入**（扫描容器 / 采集源 / 全量同步）、**外观**（标题、壁纸、卡片样式）、
+**网络与安全**（密码、内网判定、模式切换）、**网关**（反代、WAF、证书、DNS 凭据）、
+**DDNS**、**FRP**（frps 连接 / 运行日志）、**远程节点**（一键部署 frps + Caddy）、
+**镜像**（检查更新 / 定时任务 / 清理）、**Compose**（新建 / 改 YAML 并重构）、
+**备份与恢复**（整站打包 / 一键还原）。
 
 ### 多主机：采集源（远端容器自动建卡）
 
@@ -135,19 +112,20 @@ docker run -d --name navpage-agent --restart unless-stopped --no-healthcheck \
 `./data` 这类相对路径会被解析到容器里，daemon 会在宿主机建出错误的挂载点），
 就能在面板里管理所有项目：
 
-- 列表：项目名、服务数、容器与运行状态，扫描 `NAVPAGE_COMPOSE_ROOT` 下的
-  `docker-compose.yml` / `compose.yaml`（最多 3 层目录）
+- 列表：项目名、服务数、容器与运行状态；扫描 `NAVPAGE_COMPOSE_ROOT` 下的
+  `docker-compose.yml` / `compose.yaml`（最多 3 层目录），服务完全相同的项目标「重复」
+- 新建项目：填项目名 + YAML，校验通过后写到 `<根目录>/<项目名>/docker-compose.yml`，可勾「立即启动」
 - 编辑：直接改 YAML，保存前跑 `docker compose config` 校验，**校验不过不会落盘**
+- 重构：`docker compose up -d`（可选 `--pull always`），成功与否和输出留在页面底部「上次重构」
 - 备份：每次保存在同目录留一份 `<文件名>.bak-时间戳`，只保留最近 10 份
-- 重构：`docker compose up -d`（可选 `--pull always`）；改的是面板自己那个项目时会
-  异步执行，面板重启后回来即可
+- 改的是面板自己那个项目时会异步执行，面板重启后回来即可
 
 需要 `POST: 1` 和 `SESSION: 1`（compose v5 会开 BuildKit session，不放开会被代理 403）。
 
 ### 备份与恢复
 
 「设置 → 备份与恢复」把整站的配置打成一个 zip：**5 张表**（卡片、分类、采集源、设置、网关证书）
-\+ **磁盘资产**（本地图标库、壁纸、左上角 logo、网关证书与 frpc 配置）。图标是卡片 `icon`
++ **磁盘资产**（本地图标库、壁纸、左上角 logo、网关证书与 frpc 配置）。图标是卡片 `icon`
 字段引用的文件名，光备份数据库会满屏「找不到图标」，所以文件必须一起进包。
 
 - **备份并下载** / **备份到服务器**（存 `/data/backups`），每天自动备份一次，每类保留 10 份
@@ -178,7 +156,7 @@ docker run -d --name navpage-agent --restart unless-stopped --no-healthcheck \
 ```yaml
 services:
   navpage:
-    image: yuwancumian2009/navpage:1.1.7
+    image: yuwancumian2009/navpage:latest
     container_name: navpage
     restart: unless-stopped
     ports:
@@ -219,7 +197,7 @@ services:
 ```
 
 ```bash
-sudo docker compose pull
+sudo docker compose pull     # latest 标签，拉到的就是最新版
 sudo docker compose up -d
 ```
 
@@ -483,6 +461,22 @@ TCP 型隧道（`remotePort`），或者在「设置 → 网关」用反代 + �
 - 根域名填你要用的域名（例如 `example.com`），开启「通配符证书」就只签一张 `*.example.com`
 - 证书走 DNS-01，只改 TXT 记录，**不需要 80 端口**，也不影响现有网站
 
+### WAF 防火墙
+
+设置 → **网关 → WAF**，只作用于内置反代的站点（每条检查在请求最前面，命中即 403 或只记日志）：
+
+| 项 | 默认 | 说明 |
+| --- | --- | --- |
+| 开关 / 模式 | 关 / 拦截 | `拦截` 命中即 403，`观察` 只记日志放行，先观察几天再切拦截 |
+| IP 白名单 | 空 | 自己的运维网段 / 跳板 IP，优先级最高，绝不能被自己拦掉 |
+| IP 黑名单 | 空 | IP 或 CIDR，逗号 / 换行分隔 |
+| 拦截 UA | 内置基线 | 填了就只用你填的；留空用内置 sqlmap / nikto / nuclei 等扫描器特征 |
+| 拦截路径 | 内置基线 | 同上，内置 `/.env`、`/.git/`、`/wp-login.php`、`/actuator/` 等探测路径 |
+| 拦 TRACE/TRACK/DEBUG | 开 | 这三个方法正常业务用不到 |
+| CC 限速 | 0（不限） | 每 IP 每窗口最多请求数 + 窗口秒数，挡暴力破解和爬虫 |
+
+拦截记录在页面里直接看最近的命中（IP、路径、命中规则），清空只清记录不动规则。
+
 ## 参数说明
 
 ### 1. compose 环境变量
@@ -490,7 +484,7 @@ TCP 型隧道（`remotePort`），或者在「设置 → 网关」用反代 + �
 | 变量 | 默认 | 作用 |
 | --- | --- | --- |
 | `NAVPAGE_DEFAULT_PASSWORD` | 无 | 首次启动的管理员密码，只在库里还没有密码时使用；不设则随机生成并打印到日志 |
-| `NAVPAGE_DATA` | `/data` | 数据目录（SQLite 库、壁纸、图标缓存），一般不用改 |
+| `NAVPAGE_DATA` | `/data` | 数据目录（SQLite 库、图标、壁纸、网关证书、备份快照），一般不用改 |
 | `DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker API 地址。compose 里指向 socket-proxy |
 | `NAVPAGE_DOCKER_TIMEOUT` | `10` | 调 Docker API 的超时秒数，容器多 / NAS 慢可以调大 |
 | `NAVPAGE_COMPOSE_ROOT` | `/vol1/1000/docker` | Compose 管理的扫描根目录，**要和挂载进容器的宿主机路径一致**；目录不存在时 Compose 页为空 |
@@ -503,7 +497,7 @@ TCP 型隧道（`remotePort`），或者在「设置 → 网关」用反代 + �
 | 对外端口 | `8095`（改 compose 的 `ports` 左边） |
 | 容器内端口 | `8080` |
 | 健康检查 | `GET /api/health` |
-| 数据目录 | 挂载 `./data:/data`，含 `navpage.db`、`wallpapers/`、`icons/`、`logo/` |
+| 数据目录 | 挂载 `./data:/data`，含 `navpage.db`、`wallpapers/`、`icons/`、`logo/`、`gw/`（证书、frpc）、`backups/`（快照） |
 
 `./data` 就是全部配置，**删容器不丢**；备份它等于备份整个面板。面板里的
 「备份与恢复」会把它打成可搬移的 zip（含图标 / 壁纸 / 证书），换机或重装时直接上传即可。
@@ -521,8 +515,8 @@ TCP 型隧道（`remotePort`），或者在「设置 → 网关」用反代 + �
 `{scheme}` 在内网模式展开为 `http`，外网模式展开为「网络与安全」里配的协议（默认 `https`）。
 只填端口（`8078`）保存时会自动补成模板 `{scheme}://{host}:8078`，内网访问时即 `http://<当前主机>:8078`。
 
-外网地址多的时候不用手填：管理台「扫描导入」页底部有「导入外网地址」，把反代里的域名规则粘贴进去，
-预览确认后一键写到对应卡片（见上文「从 Lucky 批量导入外网域名」）。
+外网地址不用手填：网关 / FRP 配好后，域名和隧道地址会自动写进卡片（见上文「外网地址自动生成」）。
+想覆盖就手动改，写死的地址不会被自动改掉。
 
 ### 4. 内网判定与模式切换
 
@@ -621,13 +615,15 @@ TCP 型隧道（`remotePort`），或者在「设置 → 网关」用反代 + �
 ## 升级 / 备份 / 迁移
 
 ```bash
-# 升级（compose 里钉了版本号时，先改版本号）
+# 升级：默认就用 latest，拉一把重建即可
 sudo docker compose pull && sudo docker compose up -d
 
-# 备份（配置 + 壁纸 + 图标全在 ./data）
+# 想钉版本：把 compose 里改成 yuwancumian2009/navpage:2.2.0 再 pull
+# 升级前留个后路（面板里也有「备份与恢复」，更省事）
 tar czf navpage-data-$(date +%F).tar.gz data/
 
-# 迁移：把 data/ 和 docker-compose.yml 拷到新机器，up -d 即可
+# 迁移：新机器起容器 → 设置 → 备份与恢复 → 上传 zip；
+# 或者把 data/ 和 docker-compose.yml 一起拷过去 up -d
 ```
 
 日志 / 排错：
@@ -653,6 +649,10 @@ curl -s localhost:8095/api/health
 **小组件显示认证失败**
 qBittorrent 请确认密码正确（WebUI 里临时关闭「对本地地址跳过认证」以外的干扰项）；
 MoviePilot 的 `API_TOKEN` 不要带引号；Emby / Jellyfin 的 Key 要属于管理员账号。
+
+**换了容器 / 换台机器，怎么回到原来的样子**
+设置 → **备份与恢复** → 上传之前导出的 zip 即可（卡片、图标、壁纸、网关与 FRP 配置一起回来，
+管理员密码默认保持新容器那个）。同一块 `./data` 上的容器重启不需要恢复。
 
 **图标不显示**
 外链图标可能被对方站点防盗链。优先用内置图标库或自己上传。
@@ -681,14 +681,19 @@ Docker Hub 按 IP 限流（HTTP 429）。「镜像」里填一个国内镜像站
 navpage/
 ├── app/
 │   ├── main.py       FastAPI 路由：bootstrap / admin / 扫描 / 壁纸 / 鉴权
-│   ├── db.py         SQLite：items / categories / settings
+│   ├── db.py         SQLite：items / categories / settings / docker_sources / gw_certs
 │   ├── dockerapi.py  只读 Docker API 客户端（容器、端口、compose 项目）
+│   ├── compose.py    Compose 扫描 / 编辑 / 新建 / 重构
+│   ├── backup.py     整站备份与恢复（表 + 图标 / 壁纸 / 证书）
 │   ├── widgets.py    12 种服务状态小组件
 │   ├── registry.py   镜像更新检查（Registry v2 / 镜像站）
 │   ├── cron.py       定时检查 / 更新 / 清理
 │   ├── netutil.py    局域网判定、客户端 IP、{host} 模板展开
+│   ├── gately.py     反代规则联动（Gately / 内置网关）
 │   ├── iconlib.py    在线图标库（GitHub 仓库索引）
-│   └── icons.py      favicon 抓取与缓存
+│   ├── icons.py      favicon 抓取与缓存
+│   ├── agent.py      远端采集源 agent（零依赖，可独立跑）
+│   └── gw/           内置网关：proxy / waf / certs / acme / ddns / dnsprov / frpc / node
 ├── static/           index.html + app.js + app.css + vendor/（Vue3 / ElementPlus / axios 本地化）
 ├── docker-compose.yml  navpage + docker-socket-proxy
 └── Dockerfile
@@ -700,23 +705,24 @@ navpage/
 
 ## 版本与镜像标签
 
-当前版本：**v1.1.2**（页面「☰ → 关于」里也能看到）。
+当前版本：**2.2.0**（页面「☰ → 关于」里也能看到）。
 
-版本递进规则：每次发版第三位 +1（0.0.1 步进），第三位满 10 进位到第二位
-（`1.1.9` → `1.2.0`，不会出现 `1.1.10`）；第一位只在重大改版时动。
+镜像默认用 `latest`：`docker compose pull` 拉到的就是主分支最新构建，示例 compose 里都是这个标签。
 
 | 标签 | 含义 |
 | --- | --- |
-| `latest` | 主分支最新构建 |
-| `1.1.2` / `v1.1.2` | 对应版本的固定镜像（推荐生产用） |
-| `1.1` | 该次版本的最新补丁 |
+| `latest` | 主分支最新构建（**默认**，跟着主分支升级） |
+| `2.2.0` / `v2.2.0` | 某个版本的固定镜像，不想被自动升级时用 |
+| `2.2` | 该次版本的最新补丁 |
 | `sha-<commit>` | 某次提交的构建 |
 
-生产建议钉死版本，避免 `latest` 悄悄升级：
-
 ```yaml
-image: yuwancumian2009/navpage:1.1.7
+image: yuwancumian2009/navpage:latest   # 默认
+# image: yuwancumian2009/navpage:2.2.0  # 需要钉版本时改成这样
 ```
+
+版本递进规则：每次发版第三位 +1（0.0.1 步进），第三位满 10 进位到第二位
+（`1.1.9` → `1.2.0`，不会出现 `1.1.10`）；第一位只在重大改版时动。
 
 改了哪些东西看 [CHANGELOG.md](CHANGELOG.md)。发版流程：改 `app/version.py` 的 `VERSION` →
 `CHANGELOG.md` 顶部加一节 → `git tag vX.Y.Z && git push origin vX.Y.Z`，CI 自动构建并推版本标签。

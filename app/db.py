@@ -170,6 +170,9 @@ DEFAULT_SETTINGS = {
     "ddns_record": "",          # 完整记录名，如 home.example.com
     "ddns_interval": 300,       # 秒
     "ddns_ip_sources": "https://api.ipify.org,https://myip.ipip.net/json,https://4.ipw.cn",
+    "ddns_ip_mode": "url",      # url=在线探测 / nic=指定网卡 / static=手动填写
+    "ddns_nic": "",             # 网卡名，如 eth0 / ppp0
+    "ddns_ip_static": "",       # 手动固定 IP
 
     # FRP 客户端
     "frp_enabled": False,

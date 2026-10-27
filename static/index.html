@@ -1201,7 +1201,40 @@
                   <div class="np-hint">只在 IP 变化时才调 API。</div>
                 </div>
                 <div class="np-field">
-                  <label>取 IP 的来源</label>
+                  <label>IP 获取方式</label>
+                  <el-radio-group v-model="s.ddns_ip_mode" size="small" @change="onIpModeChange">
+                    <el-radio-button value="url">在线探测</el-radio-button>
+                    <el-radio-button value="nic">指定网卡</el-radio-button>
+                    <el-radio-button value="static">手动填写</el-radio-button>
+                  </el-radio-group>
+                  <div class="np-hint">机器走了代理/加速器时，在线探测拿到的是「代理出口 IP」，解析到域名上会打不开 —— 这时改用「指定网卡」，直接读本机网口的地址。</div>
+                </div>
+                <div class="np-field" v-if="s.ddns_ip_mode === 'nic'">
+                  <label>网卡</label>
+                  <div style="display:flex;gap:8px;align-items:center">
+                    <el-select v-model="s.ddns_nic" size="small" placeholder="选择网卡" filterable style="flex:1">
+                      <el-option v-for="n in gwNics" :key="n.name"
+                                 :label="n.name + (n.ipv4 ? ' · ' + n.ipv4 : '') + (n.default ? '（默认路由）' : '')"
+                                 :value="n.name"></el-option>
+                    </el-select>
+                    <el-button size="small" @click="gwLoadNics">刷新</el-button>
+                    <el-button size="small" @click="gwIpTest">试一下</el-button>
+                  </div>
+                  <div class="np-hint">读的是这块网卡的 IPv4：适合 VPS、光猫/路由器上直接拨号的机器（ppp0 / wan）；NAS 在 NAT 后面一般只看到 192.168.x.x，那种情况请用在线探测或手动填写。</div>
+                  <div class="np-hint np-warn" v-if="gwNics.length && s.ddns_nic && !nicIpv4(s.ddns_nic)">网卡「{{ s.ddns_nic }}」不存在或没拿到 IPv4（换机器、改网口名后常见）—— 重新选一块，或改用在线探测。</div>
+                  <div class="np-hint np-warn" v-if="gwNet.bridge">当前是 bridge 网络的容器，只能看到容器自己的网卡（172.17.x）—— 想用「指定网卡」读宿主机真实网口，请把容器改成 <code>network_mode: host</code> 后重建。</div>
+                  <div class="np-hint np-warn" v-if="isPrivateIp(nicIpv4(s.ddns_nic))">这块网卡是内网地址（{{ nicIpv4(s.ddns_nic) }}），解析到域名上外网打不开 —— 除非你把端口映射出去了，否则请改用在线探测。</div>
+                </div>
+                <div class="np-field" v-if="s.ddns_ip_mode === 'static'">
+                  <label>固定 IP</label>
+                  <div style="display:flex;gap:8px;align-items:center">
+                    <el-input v-model="s.ddns_ip_static" size="small" placeholder="1.2.3.4" style="flex:1"></el-input>
+                    <el-button size="small" @click="gwIpTest">试一下</el-button>
+                  </div>
+                  <div class="np-hint">直接把这个 IP 写进 DNS 记录，不再探测。</div>
+                </div>
+                <div class="np-field" v-if="s.ddns_ip_mode === 'url'">
+                  <label>探测源</label>
                   <el-input v-model="s.ddns_ip_sources" size="small" placeholder="留空用内置多源自动探测"></el-input>
                   <div class="np-hint">逗号分隔的 URL，返回纯文本 IP 或 JSON 都行；留空时依次试 ipify / ipip / cloudflare。</div>
                 </div>

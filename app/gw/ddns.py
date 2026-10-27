@@ -18,6 +18,7 @@ import time
 
 import httpx
 
+from .. import netutil
 from . import dnsprov
 
 
@@ -27,6 +28,28 @@ def _valid_ip(s: str) -> str:
         return str(ipaddress.ip_address(s))
     except Exception:
         return ""
+
+
+def nic_ip(name: str) -> tuple[str, str]:
+    """读指定网卡的 IPv4。比在线探测可靠的地方在于：不受代理/加速器影响。"""
+    name = (name or "").strip() or netutil.default_iface()
+    if not name or netutil.fcntl is None:
+        return "", ""
+    ip = netutil.iface_ipv4(name)
+    if ip and not ip.startswith("169.254."):     # 169.254 是没拿到 DHCP 的自配地址
+        return ip, f"网卡 {name}"
+    return "", ""
+
+
+def detect_ip(cfg: dict) -> tuple[str, str]:
+    """按设置决定「IP 从哪来」：url=在线探测 / nic=指定网卡 / static=手动固定。"""
+    mode = (cfg.get("ddns_ip_mode") or "url").strip()
+    if mode == "nic":
+        return nic_ip(cfg.get("ddns_nic") or "")
+    if mode == "static":
+        ip = _valid_ip(cfg.get("ddns_ip_static") or "")
+        return ip, ("手动填写" if ip else "")
+    return fetch_public_ip(cfg.get("ddns_ip_sources") or "")
 
 
 def fetch_public_ip(sources: str = "", timeout: float = 6.0) -> tuple[str, str]:
@@ -94,6 +117,8 @@ class DdnsManager:
         st["record"] = cfg.get("ddns_record") or ""
         st["provider"] = cfg.get("dns_provider") or ""
         st["interval"] = int(cfg.get("ddns_interval") or 300)
+        st["ip_mode"] = (cfg.get("ddns_ip_mode") or "url").strip()
+        st["nic"] = cfg.get("ddns_nic") or ""
         return st
 
     # ---------------------------------------------------------------- 主循环
@@ -134,11 +159,17 @@ class DdnsManager:
             self.state.update({"status": "error", "error": "没填要更新的域名"})
             self._save()
             return self.state
-        ip, src = await asyncio.to_thread(fetch_public_ip, cfg.get("ddns_ip_sources") or "")
+        ip, src = await asyncio.to_thread(detect_ip, cfg)
         self.last_try = int(time.time())
         if not ip:
-            self.state.update({"status": "error", "error": "取不到本机公网 IP（所有探测源都失败）",
-                               "last_try": self.last_try})
+            mode = (cfg.get("ddns_ip_mode") or "url").strip()
+            if mode == "nic":
+                err = f"网卡 {cfg.get('ddns_nic') or '(未选择)'} 上没有可用的 IPv4 地址（选错网口？）"
+            elif mode == "static":
+                err = "手动填写的 IP 不是合法的 IPv4 地址"
+            else:
+                err = "取不到本机公网 IP（所有探测源都失败）"
+            self.state.update({"status": "error", "error": err, "last_try": self.last_try})
             self._save()
             return self.state
         prev = str(self.state.get("ip") or "")

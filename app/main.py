@@ -3666,9 +3666,22 @@ def gw_ddns_tick(_=Depends(require_admin)):
         return _err(f"DDNS 更新失败：{e}", 400)
 
 
+@app.get("/api/admin/gw/nics")
+def gw_nics(_=Depends(require_admin)):
+    """本机网卡清单，DDNS「指定网卡」下拉用。"""
+    info = netutil.container_net()
+    return {"ok": True, "nics": netutil.list_ifaces(), **info}
+
+
 @app.get("/api/admin/gw/ip")
-def gw_public_ip(_=Depends(require_admin)):
-    ip, src = gw_mod.ddns.fetch_public_ip(db.get_settings().get("ddns_ip_sources") or "")
+def gw_public_ip(mode: str = "", nic: str = "", static: str = "", _=Depends(require_admin)):
+    """试取 IP。带 mode/nic/static 时按前端当前选择试，不带就用已保存的设置。"""
+    cfg = dict(db.get_settings())
+    if mode:
+        cfg["ddns_ip_mode"] = mode
+        cfg["ddns_nic"] = nic or cfg.get("ddns_nic") or ""
+        cfg["ddns_ip_static"] = static or cfg.get("ddns_ip_static") or ""
+    ip, src = gw_mod.ddns.detect_ip(cfg)
     return {"ok": bool(ip), "ip": ip, "source": src}
 
 

@@ -1,5 +1,14 @@
 """客户端 IP 识别、内网判定、地址拼装。"""
 import ipaddress
+import os
+import re
+import socket
+import struct
+
+try:
+    import fcntl
+except Exception:      # 非 Linux 平台（Windows/macOS）：网卡直读不可用
+    fcntl = None
 
 DEFAULT_PORTS = {80, 443, 3000, 5000, 5001, 8000, 8001, 8080, 8081, 8088, 8090,
                  8096, 8443, 8888, 9000, 9090, 32400, 25600}
@@ -261,3 +270,145 @@ def norm_name(s: str) -> str:
     """名字归一化：只留字母数字，用于域名首段 ↔ 容器名/卡片名的模糊比对。"""
     import re as _re
     return _re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+# ---------------------------------------------------------------- 网卡地址
+# 给 DDNS「指定网卡」用：直接读本机某块网口的地址，不经过任何在线探测，
+# 因此也不会被代理/加速器换成出口 IP（Lucky 的「接口」方式就是这个思路）。
+# 纯标准库实现（Linux ioctl + /proc），不引入第三方依赖。
+_SIOCGIFADDR = 0x8915
+_SIOCGIFFLAGS = 0x8913
+_SIOCGIFHWADDR = 0x8927
+
+
+def _ifreq(name):
+    return struct.pack("256s", (name or "")[:15].encode("utf-8"))
+
+
+def _iface_ioctl(name, req, size=40):
+    if fcntl is None:
+        return b""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        return fcntl.ioctl(s.fileno(), req, _ifreq(name))[:size]
+    finally:
+        s.close()
+
+
+def iface_ipv4(name):
+    """网卡的主 IPv4 地址；没有（或非 Linux）返回空串。"""
+    try:
+        return socket.inet_ntoa(_iface_ioctl(name, _SIOCGIFADDR)[20:24])
+    except Exception:
+        return ""
+
+
+def iface_mac(name):
+    try:
+        raw = _iface_ioctl(name, _SIOCGIFHWADDR, 32)[18:24]
+        return ":".join("%02x" % b for b in raw)
+    except Exception:
+        return ""
+
+
+def iface_up(name):
+    try:
+        flags = struct.unpack("H", _iface_ioctl(name, _SIOCGIFFLAGS, 32)[16:18])[0]
+        return bool(flags & 0x1)
+    except Exception:
+        return False
+
+
+def iface_ipv6(name):
+    """网卡上的全局 IPv6（跳过 fe80 链路本地）。"""
+    out = []
+    try:
+        with open("/proc/net/if_inet6", encoding="utf-8") as f:
+            for line in f:
+                p = line.split()
+                if len(p) >= 6 and p[5] == name:
+                    raw = p[0]
+                    try:
+                        ip = ipaddress.ip_address(":".join(raw[i:i + 4] for i in range(0, 32, 4)))
+                    except Exception:
+                        continue
+                    if not ip.is_link_local:
+                        out.append(str(ip))
+    except Exception:
+        pass
+    return out
+
+
+def default_iface():
+    """默认路由所在网卡（/proc/net/route 里 Destination=00000000 那条）。"""
+    try:
+        with open("/proc/net/route", encoding="utf-8") as f:
+            next(f)
+            for line in f:
+                p = line.split()
+                if len(p) >= 2 and p[1] == "00000000":
+                    return p[0]
+    except Exception:
+        pass
+    return ""
+
+
+def _default_gateway():
+    """默认网关地址（/proc/net/route 里 Destination=00000000 那条的 Gateway）。"""
+    try:
+        with open("/proc/net/route", encoding="utf-8") as f:
+            next(f)
+            for line in f:
+                p = line.split()
+                if len(p) >= 3 and p[1] == "00000000":
+                    raw = p[2]
+                    return ".".join(str(int(raw[i:i + 2], 16)) for i in (6, 4, 2, 0))
+    except Exception:
+        pass
+    return ""
+
+
+def container_net():
+    """判断容器能不能看到宿主机网卡。
+
+    bridge 网络只有容器自己的 eth0（172.17.x），「指定网卡」读到的是容器地址，没用；
+    host 网络才能看到宿主机真实网口（ppp0 / br0 / wan 等）。
+    """
+    in_docker = os.path.exists("/.dockerenv")
+    bridge = False
+    if in_docker:
+        try:
+            names = [n for _i, n in socket.if_nameindex()]
+            gw = _default_gateway()
+            bridge = (len(names) <= 3 and gw.startswith("172.17.")) or len(names) <= 2
+        except Exception:
+            bridge = False
+    return {"in_container": in_docker, "bridge": bridge}
+
+
+_IFACE_NOISE = re.compile(r"^(lo|veth|docker|virbr|vmnet|tap|br-[0-9a-f]{12}|br-.*-\w{4,})")
+
+
+def list_ifaces():
+    """网卡清单：name / ipv4 / ipv6 / mac / up / default（默认路由）。
+
+    host 网络的宿主机上会有几十个 veth / docker 网桥，全列出来没法选，这里过滤掉；
+    ppp0、br-lan、eth0、wlan0 这些真实网口都保留。默认路由那块即使叫 br-xxx 也保留。
+    """
+    dft = default_iface()
+    rows = []
+    try:
+        names = [n for _i, n in socket.if_nameindex()]
+    except Exception:
+        return rows
+    for n in names:
+        ip4 = iface_ipv4(n)
+        ip6 = iface_ipv6(n)
+        if not ip4 and not ip6:
+            continue
+        if n != dft and _IFACE_NOISE.match(n):
+            continue
+        rows.append({"name": n, "ipv4": ip4, "ipv6": ip6, "mac": iface_mac(n),
+                     "up": iface_up(n), "default": n == dft})
+    rows.sort(key=lambda r: (not r["default"], not r["up"], r["name"]))
+    return rows

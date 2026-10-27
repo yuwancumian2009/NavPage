@@ -878,14 +878,63 @@
         'gw_acme_insecure', 'gw_cert_days', 'gw_dns_wait',
         'dns_provider', 'dns_creds',
         'ddns_enabled', 'ddns_record', 'ddns_interval', 'ddns_ip_sources',
+        'ddns_ip_mode', 'ddns_nic', 'ddns_ip_static',
         'frp_enabled', 'frp_server', 'frp_port', 'frp_protocol', 'frp_name_prefix', 'frp_token', 'frp_scheme',
         'frp_vhost_http_port', 'frp_vhost_https_port', 'frp_subdomain_host', 'frp_domain',
         'waf_enabled', 'waf_mode', 'waf_ip_allow', 'waf_ip_deny', 'waf_ua_block',
         'waf_path_block', 'waf_block_methods', 'waf_cc_limit', 'waf_cc_window'
       ];
+      const gwNics = ref([]);
+      const gwNet = ref({ in_container: false, bridge: false });
+      async function onIpModeChange(mode) {
+        if (mode !== 'nic') return;
+        if (!gwNics.value.length) await gwLoadNics();
+        if (s.value.ddns_nic) return;
+        const hit = (gwNics.value || []).filter(function (n) { return n.default; })[0]
+          || (gwNics.value || []).filter(function (n) { return n.up && n.ipv4; })[0];
+        if (hit) s.value.ddns_nic = hit.name;
+      }
+      function nicIpv4(name) {
+        const hit = (gwNics.value || []).filter(function (n) { return n.name === name; })[0];
+        return (hit && hit.ipv4) || '';
+      }
+      function isPrivateIp(ip) {
+        if (!ip) return false;
+        return /^10\./.test(ip) || /^192\.168\./.test(ip) || /^127\./.test(ip) || /^169\.254\./.test(ip)
+          || /^172\.(1[6-9]|2[0-9]|3[01])\./.test(ip);
+      }
+      async function gwLoadNics() {
+        if (!token.value) return;
+        try {
+          const r = await api.get('/api/admin/gw/nics');
+          const d = (r && r.data) || {};
+          gwNics.value = d.nics || [];
+          gwNet.value = { in_container: !!d.in_container, bridge: !!d.bridge };
+          // 选了网卡模式但没记住网卡（或换机器后名字对不上）：自动落到默认路由那块
+          if (s.value.ddns_ip_mode === 'nic' && !s.value.ddns_nic) {
+            const hit = (gwNics.value || []).filter(function (n) { return n.default; })[0]
+              || (gwNics.value || []).filter(function (n) { return n.up && n.ipv4; })[0];
+            if (hit) s.value.ddns_nic = hit.name;
+          }
+        } catch (e) { gwNics.value = []; }
+      }
+      async function gwIpTest() {
+        gwBusy.value = 'iptest';
+        try {
+          const q = '?mode=' + encodeURIComponent(s.value.ddns_ip_mode || 'url')
+            + '&nic=' + encodeURIComponent(s.value.ddns_nic || '')
+            + '&static=' + encodeURIComponent(s.value.ddns_ip_static || '');
+          const r = await api.get('/api/admin/gw/ip' + q);
+          const d = r.data || {};
+          if (d.ok) ElMessage.success('取到 ' + d.ip + '（来源：' + (d.source || '未知') + '）');
+          else ElMessage.error('取不到 IP：换一种方式或检查网卡选择');
+        } catch (e) { apiErr(e); }
+        gwBusy.value = '';
+      }
       async function loadGw() {
         if (!token.value) return;
         try { const r = await api.get('/api/admin/gw/status'); gw.value = r.data || {}; } catch (e) { /* 忽略 */ }
+        if (s.value.ddns_ip_mode === 'nic' && !gwNics.value.length) gwLoadNics();
       }
       function gwPatch() {
         const out = {};
@@ -3427,7 +3476,7 @@
         addCat, renameCat, delCat, bulkDelCats, moveCat, catIdx,
         selCats, catAllChecked, catIndeterminate,
         onCatCheck, toggleAllCats, doScan, selectAllNew, importSelected, excludeCand, restoreExcluded, syncAll, autocatAll, autoSaveAt, flushAutoSave,
-        gw, gwBusy, gwProxying, loadGw, gwSave, gwReload, gwIssue, gwCertDel, gwSyncAll,
+        gw, gwBusy, gwProxying, gwNics, gwNet, gwLoadNics, gwIpTest, nicIpv4, isPrivateIp, onIpModeChange, loadGw, gwSave, gwReload, gwIssue, gwCertDel, gwSyncAll,
         gwNodes, nodeBusy, nodeSteps, nodeForm, loadNodes, nodeLogText,
         gwNodeTest, gwNodeDeploy, gwNodeEdit, gwNodeReset, gwNodeUse, gwNodeCert, gwNodeDel,
         gwDdnsNow, gwFrpApply, gwDnsTest, gwProxyItem, gwDlg, openGwDlg, saveGwDlg, gwCopy, closeAdmin,

@@ -1406,3 +1406,9 @@ th.c-src-op { width: 208px; }
   padding: 8px 10px; margin-bottom: 8px; background: var(--np-bg2, rgba(148,163,184,.06)); }
 .np-nodecard-hd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .np-nodecard-bd { margin-top: 4px; font-size: 12px; opacity: .75; display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 提示条里的警示变体：DDNS 网卡选错、内网地址这类要一眼看到 */
+.np-hint.np-warn { background: #fdf6ec; border-left-color: #e6a23c; color: #b88230; }
+.np-hint.np-warn code { color: #b88230; background: #fbecd5; }
+html.dark .np-hint.np-warn { background: #2a2018; border-left-color: #e6a23c; color: #e6a23c; }
+html.dark .np-hint.np-warn code { color: #e6a23c; background: #3a2c1c; }

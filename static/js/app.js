@@ -1116,6 +1116,7 @@
         return {
           id: '', name: '', host: '', ssh_port: 22, ssh_user: 'root', auth: 'password',
           password: '', key: '', mode: 'caddy', root_domain: '', frps_bind_port: 7000, vhost_port: 0,
+          frps_image: '', client_mode: 'direct', client_host: '', client_port: 443,
           token: '', has_password: false, has_key: false
         };
       }

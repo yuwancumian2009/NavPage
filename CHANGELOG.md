@@ -1,3 +1,8 @@
+## 2.3.0
+
+- 远程节点新增「frpc 怎么连 → 走已有反代的 443（wss）」形态：frps 只监听回环（bindAddr 127.0.0.1），公网 TLS 仍由既有 nginx / OpenResty 终结，「用这个节点」写回的客户端设置用 wss:443、卡片端口 443，不再把 VPS 的 bindPort 暴露出去。
+- 远程节点新增「frps 镜像」可覆盖：对端已有 0.7x 客户端时直接换 `fatedier/frps:v0.71.0`，不用改代码重打镜像。
+
 # 更新日志
 
 所有重要改动记录在这里，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。

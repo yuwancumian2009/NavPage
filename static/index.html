@@ -1414,6 +1414,30 @@
                   <div class="np-hint">Caddy 形态：站点走 <code>https:443</code>，frpc 直连 <code>tcp:7000</code>（TLS）；纯 HTTP 形态：全走 <code>http:80</code> + <code>tcp:7000</code>。</div>
                 </div>
                 <div class="np-field">
+                  <label>frpc 怎么连</label>
+                  <el-select v-model="nodeForm.client_mode" size="small" style="width:100%;max-width:420px">
+                    <el-option label="直连 frps 的 bindPort（裸 VPS，推荐）" value="direct"></el-option>
+                    <el-option label="走已有反代的 443（wss，frps 不出网）" value="proxy"></el-option>
+                  </el-select>
+                  <div class="np-2col" v-if="nodeForm.client_mode === 'proxy'" style="margin-top:8px;max-width:420px">
+                    <el-input v-model="nodeForm.client_host" size="small"
+                              :placeholder="'frp.' + (nodeForm.root_domain || 'example.com')"></el-input>
+                    <el-input v-model.number="nodeForm.client_port" size="small" placeholder="443"></el-input>
+                  </div>
+                  <div class="np-hint" v-if="nodeForm.client_mode === 'proxy'">
+                    frps 只监听本机回环，公网那层由你已有的 nginx / OpenResty 终结 TLS（导航页不碰 80/443）：
+                    精确站点 <code>{{ nodeForm.client_host || ('frp.' + (nodeForm.root_domain || 'example.com')) }}</code> →
+                    <code>127.0.0.1:{{ nodeForm.frps_bind_port || 7000 }}</code>，
+                    卡片正则 <code>*.{{ nodeForm.root_domain || 'example.com' }}</code> →
+                    <code>127.0.0.1:{{ nodeForm.vhost_port || 8080 }}</code>；客户端用 <b>wss</b> 连 {{ nodeForm.client_port || 443 }}。
+                  </div>
+                </div>
+                <div class="np-field">
+                  <label>frps 镜像（高级）</label>
+                  <el-input v-model="nodeForm.frps_image" size="small" placeholder="fatedier/frps:v0.61.1" style="width:340px"></el-input>
+                  <div class="np-hint">对端已有 frpc 客户端时填对应版本的 frps（frp 要求两端版本接近），例如 <code>fatedier/frps:v0.71.0</code>。</div>
+                </div>
+                <div class="np-field">
                   <label>FRP 域名后缀</label>
                   <el-input v-model="nodeForm.root_domain" size="small" placeholder="frp.example.com"></el-input>
                   <div class="np-hint">卡片地址 = <code>容器名.这个后缀</code>；自动加的记录是 <code>*.{{ nodeForm.root_domain || 'frp.example.com' }}</code>（走「设置 → 证书」里的 DNS 服务商）。</div>
@@ -1454,6 +1478,7 @@
                     <b>{{ n.name || n.host }}</b>
                     <span class="np-tag">{{ n.mode === 'caddy' ? 'Caddy/443' : 'HTTP/' + (n.vhost_port || 80) }}</span>
                     <span class="np-tag">{{ n.root_domain }}</span>
+                    <span class="np-tag">{{ n.client_mode === 'proxy' ? ('wss/' + (n.client_port || 443)) : ('tcp/' + (n.frps_bind_port || 7000)) }}</span>
                     <span class="np-tag" v-if="n.last && n.last.cert_ok">证书 OK</span>
                     <span class="np-gwbar-sp"></span>
                     <el-button link size="small" @click="gwNodeEdit(n)">编辑</el-button>

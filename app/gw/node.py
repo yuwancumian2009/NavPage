@@ -136,8 +136,11 @@ def node_ports(node: dict) -> dict:
 def render_frps(node: dict) -> str:
     p = node_ports(node)
     dash = int(node.get("dashboard_port") or 7500)
+    # 反代形态（公网只开 443）时 frps 完全不需要出网：bindPort / vhost 都只听回环，
+    # 由本机 nginx 转发进来，少一个被扫描的端口。
+    bind_addr = 'bindAddr = "127.0.0.1"\n' if (node.get("client_mode") or "direct").lower() == "proxy" else ""
     return f"""# 由 NavPage 自动生成，请勿手改（重新部署会覆盖）
-bindPort = {p['bind']}
+{bind_addr}bindPort = {p['bind']}
 vhostHTTPPort = {p['vhost']}
 
 auth.method = "token"
@@ -153,11 +156,17 @@ log.level = "info"
 """
 
 
+def frps_image(node: dict) -> str:
+    """frps 镜像可覆盖：对端已有更老/更新的 frpc 客户端时（frp 要求客户端版本 ≈ 服务端），
+    下拉里能直接换成对应版本，不用改代码重打镜像。"""
+    return (node.get("frps_image") or "").strip() or FRPS_IMAGE
+
+
 def render_compose(node: dict) -> str:
     p = node_ports(node)
     svc = [
         "  frps:",
-        f"    image: {FRPS_IMAGE}",
+        f"    image: {frps_image(node)}",
         "    container_name: navpage-node-frps",
         "    restart: always",
         "    network_mode: host",
@@ -515,25 +524,46 @@ def deploy(node: dict, log_fn=None) -> dict:
             "suggest": suggest_client(node, host_ip), "root_domain": root}
 
 
+def client_endpoint(node: dict) -> dict:
+    """frpc 该往哪连、用什么协议。
+
+    direct：直连 frps 的 bindPort（裸 VPS + 自己放行防火墙，最省事）。
+    proxy ：frps 藏在已有的 nginx / OpenResty / 1Panel 后面，公网只开 443，
+            客户端走 wss:443 由反代转给 bindPort（本机 7000 不出网）。
+            VPS 安全组不放行 7000、或者 443 是唯一出网端口时用这个。
+    """
+    p = node_ports(node)
+    root = (node.get("root_domain") or "").strip().strip(".").lower()
+    if (node.get("client_mode") or "direct").lower() == "proxy":
+        return {"host": (node.get("client_host") or (f"frp.{root}" if root else "")).strip(),
+                "port": int(node.get("client_port") or 443),
+                "protocol": (node.get("client_protocol") or "wss").strip().lower(),
+                "scheme": "https"}
+    return {"host": (node.get("host") or "").strip(), "port": p["bind"],
+            "protocol": "tcp", "scheme": "http" if p["mode"] == "http" else "https"}
+
+
 def suggest_client(node: dict, host_ip: str = "") -> dict:
     """部署完该往「设置 → FRP」里填什么。"""
     p = node_ports(node)
     root = (node.get("root_domain") or "").strip().strip(".").lower()
     base = {"frp_token": node.get("token") or "", "frp_domain": root, "frp_subdomain_host": "",
             "frp_name_prefix": node.get("name_prefix") or "np-", "frp_enabled": True}
-    if p["mode"] == "http":
-        return {**base, "frp_server": (node.get("host") or "").strip(), "frp_port": p["bind"],
-                "frp_protocol": "tcp", "frp_scheme": "http",
-                "frp_vhost_http_port": p["vhost"], "frp_vhost_https_port": p["vhost"]}
-    # 控制连接直连 frps 的 bindPort 走 TLS（实测最稳）。wss 那套只在
-    # 「443 是唯一出网端口 + 前面有 nginx/Caddy 反代」时才需要，本工具部署的节点
-    # 自己控制防火墙，直连省掉一层，少一处故障点。
-    return {**base, "frp_server": (node.get("host") or "").strip(), "frp_port": p["bind"],
-            "frp_protocol": "tcp", "frp_scheme": "https",
-            "frp_vhost_http_port": p["public"], "frp_vhost_https_port": p["public"]}
+    ep = client_endpoint(node)
+    # vhost 端口 = 浏览器实际访问的端口，只影响「卡片地址要不要带 :端口」。
+    #   direct + http   → 浏览器直连 frps 的 vhost 端口
+    #   direct + caddy  → Caddy 占 443，卡片就是 https://x.root
+    #   proxy           → 公网那层由既有反代终结 TLS，同样落在 443
+    if ep["scheme"] == "https":
+        vh_http = 80
+        vh_https = p["public"] if (p["mode"] == "caddy" and ep["protocol"] == "tcp") else 443
+    else:
+        vh_http = vh_https = p["vhost"]
+    return {**base, "frp_server": ep["host"], "frp_port": ep["port"],
+            "frp_protocol": ep["protocol"], "frp_scheme": ep["scheme"],
+            "frp_vhost_http_port": vh_http, "frp_vhost_https_port": vh_https}
 
 
-# --------------------------------------------------------------------- 证书
 def sync_cert(node: dict, svc, force: bool = False) -> dict:
     """签（或复用）`*.<root>` 通配证书，推到节点并 reload Caddy。"""
     log: list[dict] = []

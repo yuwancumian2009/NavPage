@@ -1433,11 +1433,6 @@
                   </div>
                 </div>
                 <div class="np-field">
-                  <label>frps 镜像（高级）</label>
-                  <el-input v-model="nodeForm.frps_image" size="small" placeholder="fatedier/frps:v0.61.1" style="width:340px"></el-input>
-                  <div class="np-hint">对端已有 frpc 客户端时填对应版本的 frps（frp 要求两端版本接近），例如 <code>fatedier/frps:v0.71.0</code>。</div>
-                </div>
-                <div class="np-field">
                   <label>FRP 域名后缀</label>
                   <el-input v-model="nodeForm.root_domain" size="small" placeholder="frp.example.com"></el-input>
                   <div class="np-hint">卡片地址 = <code>容器名.这个后缀</code>；自动加的记录是 <code>*.{{ nodeForm.root_domain || 'frp.example.com' }}</code>（走「设置 → 证书」里的 DNS 服务商）。</div>
@@ -1454,6 +1449,11 @@
                   <label>vhost 端口</label>
                   <el-input v-model.number="nodeForm.vhost_port" size="small" placeholder="http 模式默认 80 / caddy 模式默认 8080" style="width:340px"></el-input>
                   <div class="np-hint">80/443 已被别的服务占用，或者想用非标准端口时填这里（如 8180）。</div>
+                </div>
+                <div class="np-field">
+                  <label>frps 镜像（高级）</label>
+                  <el-input v-model="nodeForm.frps_image" size="small" placeholder="fatedier/frps:v0.61.1" style="width:340px"></el-input>
+                  <div class="np-hint">对端已有 frpc 客户端时填对应版本的 frps（frp 要求两端版本接近），例如 <code>fatedier/frps:v0.71.0</code>。</div>
                 </div>
                 <div class="np-field">
                   <div class="np-ctlrow">

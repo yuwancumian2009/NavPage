@@ -173,6 +173,51 @@ sudo docker compose up -d
 | FRP 域名后缀 | 例如 `frp.example.com`。**卡片地址 = 容器名.这个后缀**，必须是你 DNS 里那个域名的子域 |
 | frps 端口 / Token | 端口保持 `7000`；Token 留空会自动生成（两端同步写） |
 | vhost 端口 | 留空即可（Caddy 形态默认 8080，纯 HTTP 形态默认 80） |
+| frpc 怎么连 | 默认「直连 frps 的 bindPort」；VPS 上已有 nginx / 1Panel 占着 443 时，选「走已有反代的 443（wss）」 |
+| frps 镜像（高级） | 留空用内置 `v0.61.1`；VPS 上已有更老的 frpc 客户端时换成对应的，例如 `fatedier/frps:v0.71.0` |
+
+> **VPS 的 80/443 已经被 nginx / 1Panel 占了？**（很常见，尤其你在这台机器上还跑了别的站）
+>
+> 接入形态选 **纯 HTTP**、vhost 端口填 **8080**、frpc 怎么连选 **走已有反代的 443（wss）**，
+> 让面板只装 frps（`bindAddr = 127.0.0.1`，7000/8080 都只听本机），TLS 仍由你现有的反代终结。
+> 部署完在你的 nginx 里加两条即可（`<后缀>` = FRP 域名后缀，`<你的 frp 域名>` 随意，例如 `frp.example.com`）：
+>
+> ```nginx
+> # 1) frpc 的 wss 控制连接：精确站点 → frps 的 bindPort
+> server {
+>     listen 443 ssl;
+>     http2 on;
+>     server_name frp.example.com;
+>     ssl_certificate     /path/fullchain.pem;
+>     ssl_certificate_key /path/privkey.pem;
+>     location / {
+>         proxy_pass http://127.0.0.1:7000;
+>         proxy_http_version 1.1;
+>         proxy_set_header Upgrade $http_upgrade;
+>         proxy_set_header Connection "upgrade";
+>         proxy_set_header Host $host;
+>         proxy_read_timeout 3600s;
+>     }
+> }
+>
+> # 2) 卡片站点：通配 → frps 的 vhost 端口
+> server {
+>     listen 443 ssl;
+>     http2 on;
+>     server_name ~^(?<sub>.+)\.example\.com$;
+>     ssl_certificate     /path/wildcard.fullchain.pem;
+>     ssl_certificate_key /path/wildcard.privkey.pem;
+>     location / {
+>         proxy_pass http://127.0.0.1:8080;
+>         proxy_set_header Host $host;
+>         proxy_set_header X-Forwarded-Proto $scheme;
+>         proxy_read_timeout 3600s;
+>         client_max_body_size 0;
+>     }
+> }
+> ```
+>
+> 之后「用这个节点」会自动写回 `wss:443` + 卡片端口 443，卡片地址仍是 `https://容器名.后缀`，不带 `:8080`。
 
 先点「测试连接」（验证 SSH、Docker、端口占用），通过后点「**部署 / 更新**」。
 

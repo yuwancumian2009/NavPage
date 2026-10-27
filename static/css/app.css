@@ -835,10 +835,38 @@ body {
 }
 .np-sec.foldable > .np-sec-head .np-sec-sum b { font-weight: 500; color: #5c6b7a; }
 .np-sec-caret {
-  flex: none; width: 14px; text-align: center; color: #b6bcc4;
-  transition: transform .18s ease; transform: rotate(0deg);
+  flex: none; width: 26px; height: 26px; margin-left: 10px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; border: 1px solid #dde2e8; background: #fff;
+  box-shadow: 0 1px 2px rgba(31, 45, 61, .07);
+  color: transparent; font-size: 0; line-height: 0;   /* 隐藏 ▾ 字符，改用 CSS 箭头 */
+  transition: transform .2s ease, border-color .15s ease, background .15s ease, box-shadow .15s ease;
 }
+.np-sec-caret::after {
+  content: ""; width: 8px; height: 8px; margin-top: -3px;
+  border-right: 2px solid #7d8894; border-bottom: 2px solid #7d8894;
+  border-radius: 1px; transform: rotate(45deg);
+  transition: border-color .15s ease;
+}
+.np-sec.foldable > .np-sec-head:hover .np-sec-caret {
+  border-color: #a8c7f4; background: #f2f7ff; box-shadow: 0 1px 4px rgba(26, 111, 232, .18);
+}
+.np-sec.foldable > .np-sec-head:hover .np-sec-caret::after { border-color: #1a6fe8; }
+.np-sec.foldable > .np-sec-head:active .np-sec-caret { transform: scale(.94); }
 .np-sec.folded > .np-sec-head .np-sec-caret { transform: rotate(-90deg); }
+.np-sec.folded > .np-sec-head .np-sec-caret::after { border-color: #9aa4b0; }
+
+/* 每个设置页顶部的折叠提示 */
+.np-fold-tip {
+  display: flex; align-items: center; gap: 6px;
+  margin: 0 0 10px; padding: 7px 10px; border-radius: 8px;
+  background: #f4f8ff; border: 1px solid #e2ecfb;
+  font-size: 12px; color: #5a7fa8;
+}
+.np-fold-tip::before {
+  content: ""; width: 7px; height: 7px; border-right: 1.8px solid #7ba7dd;
+  border-bottom: 1.8px solid #7ba7dd; transform: rotate(45deg); flex: none;
+}
 .np-sec.folded > .np-sec-head { border-bottom-color: transparent; margin-bottom: 0; padding-bottom: 10px; }
 .np-sec.folded { padding-bottom: 2px; }
 .np-sec-body { transition: opacity .16s ease; }

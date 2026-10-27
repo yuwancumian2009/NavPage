@@ -515,6 +515,7 @@
         <!-- ---------------- 外观 ---------------- -->
         <el-tab-pane label="外观" name="look">
           <div class="np-scroll">
+          <div class="np-fold-tip">点分组标题即可收起 / 展开</div>
           <div class="np-sec foldable" :class="{ folded: !secFold['look:site'] }">
             <div class="np-sec-head" @click="toggleSec('look:site')">
               <span class="np-sec-title-txt">站点信息</span>
@@ -602,8 +603,8 @@
           </div>
           <div class="np-sec foldable" :class="{ folded: !secFold['look:card'] }">
             <div class="np-sec-head" @click="toggleSec('look:card')">
-              <span class="np-sec-title-txt">卡片</span>
-              <span class="np-sec-sum">卡片风格与信息量</span>
+              <span class="np-sec-title-txt">卡片与图标</span>
+              <span class="np-sec-sum">风格、大小、信息量、图标抓取</span>
               <i class="np-sec-caret">▾</i>
             </div>
             <div class="np-sec-body" v-show="secFold['look:card']">
@@ -668,7 +669,6 @@
                 <span class="np-hint">毫秒，超过显示黄点</span>
               </div>
             </div>
-            </div>
             <div class="np-field">
               <label>图标抓取</label>
               <div class="np-2col">
@@ -676,6 +676,7 @@
                 <el-switch v-model="s.icon_letter_fallback" active-text="抓不到时用首字母占位"></el-switch>
               </div>
               <div class="np-hint">站内抓不到时，用 <code>favicon.im</code> 按域名再取一次（能救回被 Cloudflare 拦的站点）；「首字母占位」给纯 API 容器本地生成字母图，不联网。抓取顺序：首页声明的 icon → 常见路径 → 在线图标库。</div>
+            </div>
             </div>
           </div>
           </div>
@@ -688,6 +689,7 @@
         <!-- ---------------- 网络与安全 ---------------- -->
         <el-tab-pane label="网络与安全" name="net">
           <div class="np-scroll">
+          <div class="np-fold-tip">点分组标题即可收起 / 展开</div>
           <div class="np-sec foldable" :class="{ folded: !secFold['net:addr'] }">
             <div class="np-sec-head" @click="toggleSec('net:addr')">
               <span class="np-sec-title-txt">地址与域名</span>
@@ -857,6 +859,7 @@
         <!-- ---------------- 网关（2.0.0 内置反代 + 证书 + DNS） ---------------- -->
         <el-tab-pane label="网关" name="gw">
           <div class="np-scroll">
+          <div class="np-fold-tip">点分组标题即可收起 / 展开</div>
             <div class="np-gwbar">
               <span :class="['np-dot', (gw.proxy && gw.proxy.running) ? 'ok' : 'off']"></span>
               <b>{{ (gw.proxy && gw.proxy.running) ? '反代运行中' : '反代未启动' }}</b>
@@ -1172,6 +1175,7 @@
         <!-- ---------------- DDNS ---------------- -->
         <el-tab-pane label="DDNS" name="ddns">
           <div class="np-scroll">
+          <div class="np-fold-tip">点分组标题即可收起 / 展开</div>
             <div class="np-gwbar">
               <span :class="['np-dot', (gw.ddns && gw.ddns.enabled) ? 'ok' : 'off']"></span>
               <b>{{ (gw.ddns && gw.ddns.enabled) ? 'DDNS 已启用' : 'DDNS 未启用' }}</b>
@@ -1251,6 +1255,7 @@
         <!-- ---------------- FRP ---------------- -->
         <el-tab-pane label="FRP" name="frp">
           <div class="np-scroll">
+          <div class="np-fold-tip">点分组标题即可收起 / 展开</div>
             <div class="np-gwbar">
               <span :class="['np-dot', (gw.frp && gw.frp.running) ? 'ok' : 'off']"></span>
               <b>{{ (gw.frp && gw.frp.running) ? 'frpc 运行中' : 'frpc 未运行' }}</b>
@@ -1351,6 +1356,7 @@
         <!-- ---------------- 远程节点（2.1.0）：裸 VPS 一键部署 frps ---------------- -->
         <el-tab-pane label="远程节点" name="node">
           <div class="np-scroll">
+          <div class="np-fold-tip">点分组标题即可收起 / 展开</div>
             <div class="np-hint">
               填一台<b>裸 VPS</b>（能 SSH + 装了 Docker 就行，<b>不需要</b> 1Panel / 宝塔），点「部署」会自动：
               装 frps（可选 Caddy 终止 TLS）、补 <code>*.{{ nodeForm.root_domain || 'frp.你的域名' }}</code> 通配 A 记录、
@@ -1770,6 +1776,7 @@
         <!-- ---------------- Compose 管理（2026-10-19） ---------------- -->
         <el-tab-pane label="Compose" name="compose">
           <div class="np-scroll">
+          <div class="np-fold-tip">点分组标题即可收起 / 展开</div>
             <div class="np-hint">
               扫描 <code>{{ cmpRoot || '/vol1/1000/docker' }}</code> 下的 compose 文件，可直接改 YAML 并「保存并重构」。
               保存前会跑 <code>docker compose config</code> 校验，写不进去的坏配置不会落盘；
@@ -1831,6 +1838,7 @@
         <!-- ---------------- 备份与恢复（2.2.0） ---------------- -->
         <el-tab-pane label="备份与恢复" name="backup">
           <div class="np-scroll">
+          <div class="np-fold-tip">点分组标题即可收起 / 展开</div>
             <div class="np-hint">
               一个备份包 = <b>全部卡片与分类</b> + <b>全部设置</b>（图标地址、内网/外网地址、外观、网关、FRP、DDNS、WAF、自动扫描等）
               + <b>本地图标库、壁纸、左上角 logo、网关证书</b>。

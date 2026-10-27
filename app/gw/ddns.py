@@ -164,7 +164,7 @@ class DdnsManager:
         if not ip:
             mode = (cfg.get("ddns_ip_mode") or "url").strip()
             if mode == "nic":
-                err = f"网卡 {cfg.get('ddns_nic') or '(未选择)'} 上没有可用的 IPv4 地址（选错网口？）"
+                err = f"网卡 {cfg.get('ddns_nic') or netutil.default_iface() or '(未选择)'} 上没有可用的 IPv4 地址（选错网口，或容器不是 host 网络？）"
             elif mode == "static":
                 err = "手动填写的 IP 不是合法的 IPv4 地址"
             else:

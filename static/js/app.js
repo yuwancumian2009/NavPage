@@ -44,6 +44,10 @@
       const sourceSaving = ref(false);
       const tokenDlg = ref(false);
       const agentCmd = ref("");
+      const agentToken = ref("");        // 当前命令里的令牌（切换面板地址时要重拼命令）
+      const agentBase = ref("");         // 命令里的 PANEL_URL
+      const agentBases = ref([]);        // 服务端给的面板地址候选
+
       const tokenSrcId = ref('');
       const newCat = ref('');
       const selCats = ref([]);   // 分类页勾选的分类 id
@@ -1753,16 +1757,47 @@
                              auto_import: !!src.auto_import, enabled: !!src.enabled };
         sourceDlg.value = true;
       }
-      function cmdFor(token) {
+      function baseIsPrivate(u) {
+        try {
+          const h = new URL(u).hostname;
+          return h === 'localhost' || h === '::1' || h === '[::1]' ||
+            /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) ||
+            /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^169\.254\./.test(h);
+        } catch (e) { return false; }
+      }
+      function cmdFor(token, base) {
         // 用数组拼，避免 JS 字符串里写续行反斜杠（很容易多写一个变成 \\）
         return [
           'docker run -d --name navpage-agent --restart unless-stopped --no-healthcheck \\',
           '  -v /var/run/docker.sock:/var/run/docker.sock:ro \\',
-          '  -e PANEL_URL=' + location.origin + ' \\',
+          '  -e PANEL_URL=' + (base || agentBase.value || location.origin) + ' \\',
           '  -e AGENT_TOKEN=' + token + ' \\',
           '  -e INTERVAL=300 \\',
           '  yuwancumian2009/navpage:latest python -m app.agent'
         ].join('\n');
+      }
+      // 面板地址候选：服务端按「上次公网访问地址 > 设置里的外网地址 > DDNS 域名 > 当前访问地址」
+      // 排好序给出推荐值。以前固定用 location.origin，从内网 IP 打开面板时命令里就带着
+      // 192.168.x.x，粘到对端 VPS 上必然连不上（用户 2026-10-27 报的问题）。
+      async function loadAgentBases() {
+        try {
+          const r = await api.get('/api/admin/agent/base_urls');
+          agentBases.value = r.data.candidates || [];
+          return r.data.suggested || location.origin;
+        } catch (e) {
+          agentBases.value = [{ url: location.origin, label: '当前访问地址', public: !baseIsPrivate(location.origin) }];
+          return location.origin;
+        }
+      }
+      async function openAgentCmd(token, sid) {
+        tokenSrcId.value = sid || '';
+        agentToken.value = token;
+        agentBase.value = await loadAgentBases();
+        agentCmd.value = cmdFor(token, agentBase.value);
+        tokenDlg.value = true;
+      }
+      function onAgentBaseChange() {
+        agentCmd.value = cmdFor(agentToken.value, agentBase.value);
       }
       async function saveSource() {
         const f = sourceForm.value;
@@ -1776,9 +1811,7 @@
           } else {
             const r = await api.post('/api/admin/sources', {
               name: f.name, prefix: f.prefix, auto_import: !!f.auto_import });
-            agentCmd.value = cmdFor(r.data.token);
-            tokenSrcId.value = r.data.id;
-            tokenDlg.value = true;
+            await openAgentCmd(r.data.token, r.data.id);
           }
           sourceDlg.value = false;
           await loadSources();
@@ -1819,16 +1852,14 @@
         } catch (e) { apiErr(e); }
       }
       function showAgentCmd(src) {
-        tokenSrcId.value = src.id;
-        agentCmd.value = cmdFor('<' + (src.name || '令牌') + ' 的令牌已隐藏，点下面「轮换令牌」生成新的>');
-        tokenDlg.value = true;
+        openAgentCmd('<' + (src.name || '令牌') + ' 的令牌已隐藏，点下面「轮换令牌」生成新的>', src.id);
       }
       async function rotateSource(sid) {
         try {
           await ElMessageBox.confirm('轮换后端上正在跑的 agent 会立刻失效，需要用新命令重启它。继续？',
                                      '提示', { type: 'warning' });
           const r = await api.post('/api/admin/sources/' + sid + '/rotate');
-          agentCmd.value = cmdFor(r.data.token);
+          agentCmd.value = cmdFor(r.data.token, agentBase.value);
           ElMessage.success('新令牌已生成，复制下面命令替换旧容器');
           await loadSources();
         } catch (e) { if (e !== 'cancel') apiErr(e); }
@@ -3444,6 +3475,7 @@
         token, adminOpen, tab, items, categories, docker, scanResult, scanning, autocatting,
         importing, selNew, newCat, newPw, itemDlg, editItem, icons,
         sources, sourceDlg, sourceForm, sourceSaving, tokenDlg, agentCmd, tokenSrcId,
+        agentBase, agentBases, onAgentBaseChange, baseIsPrivate,
         agoText, loadSources, openSourceDlg, editSource, saveSource, toggleSource, delSource,
         showAgentCmd, rotateSource, copyAgentCmd,
         modeChoice, modeOptions, lanProbe, reprobeLan, probeText, probeUrlText, themeOptions, sizeOptions, schemeOptions, isMobile, centerTab,

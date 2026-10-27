@@ -867,6 +867,14 @@ body {
   content: ""; width: 7px; height: 7px; border-right: 1.8px solid #7ba7dd;
   border-bottom: 1.8px solid #7ba7dd; transform: rotate(45deg); flex: none;
 }
+
+/* Agent 安装命令弹窗里的「面板地址」选择（2.2.6） */
+.np-agent-base { margin-bottom: 12px; }
+.np-agent-base-hd {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 12.5px; color: #5b6472; margin-bottom: 6px;
+}
+.np-agent-base-hd .np-muted { font-size: 11.5px; color: #9aa1ab; }
 .np-sec.folded > .np-sec-head { border-bottom-color: transparent; margin-bottom: 0; padding-bottom: 10px; }
 .np-sec.folded { padding-bottom: 2px; }
 .np-sec-body { transition: opacity .16s ease; }

@@ -2270,7 +2270,7 @@
         <el-input v-model="sourceForm.name" placeholder="甲骨文/圣何塞"></el-input>
       </el-form-item>
       <el-form-item label="地址前缀">
-        <el-input v-model="sourceForm.prefix" placeholder="http://146.235.228.251:"></el-input>
+        <el-input v-model="sourceForm.prefix" placeholder="http://<对端公网 IP>:"></el-input>
         <div class="np-muted">卡片内网地址 = 前缀 + 容器端口；容器有 nav.url.lan 标签时以标签为准。</div>
       </el-form-item>
       <el-form-item label="自动建卡">
@@ -2292,6 +2292,24 @@
     <div class="np-muted" style="margin-bottom:8px">
       在对端主机（需要 docker）执行下面这条命令即可，纯出站上报，不用开放任何端口。
       令牌只显示一次：换机器或重装时点「轮换令牌」重新生成。
+    </div>
+    <div class="np-agent-base">
+      <div class="np-agent-base-hd">
+        <span>面板地址</span>
+        <span class="np-muted">必填对端能访问到的地址</span>
+      </div>
+      <el-select v-model="agentBase" size="small" filterable allow-create default-first-option
+                 style="width:100%" @change="onAgentBaseChange"
+                 placeholder="选择或填写对端能访问到的面板地址">
+        <el-option v-for="c in agentBases" :key="c.url"
+                   :label="c.label + ' · ' + c.url" :value="c.url"></el-option>
+      </el-select>
+      <div class="np-hint np-warn-txt" v-if="baseIsPrivate(agentBase)">
+        这是内网 / 本机地址，对端 VPS 连不到 —— 换成公网域名或公网 IP（如 https://nav.example.com）。
+      </div>
+      <div class="np-hint" v-else>
+        默认已按「上次公网访问地址 → 设置里的外网地址 → DDNS 域名」挑好，可下拉换或直接手填。
+      </div>
     </div>
     <pre class="np-cmd">{{ agentCmd }}</pre>
     <div class="np-muted" style="margin-top:8px">

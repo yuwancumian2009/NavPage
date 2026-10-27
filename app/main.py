@@ -12,6 +12,7 @@ import urllib.parse
 import time
 import json
 import hashlib
+import ipaddress
 import secrets
 import uuid
 import warnings
@@ -2370,6 +2371,88 @@ async def agent_inventory(request: Request):
         db.set_source_error(src["id"], f"{type(e).__name__}: {e}")
         res = {"imported": 0, "updated": 0, "missing": 0, "live": 0}
     return {"ok": True, "server_time": int(time.time()), **res}
+
+
+# ---------------------------------------------------------------- Agent 安装地址（2.2.6）
+# 为什么需要它：agent 安装命令是拿到**对端 VPS** 上执行的，命令里的 PANEL_URL 必须
+# 是对端能访问到的地址。以前前端直接写 location.origin —— 从内网 IP 打开面板时，
+# 生成的命令就带着 192.168.x.x，粘到 VPS 上必然连不上，只能手工改。
+# 现在由服务端把所有可能的面板地址排好序给前端，前端做成下拉（也可手填）。
+_PUBLIC_BASE_CACHE = {"value": None}
+
+
+def _req_origin(request: Request) -> str:
+    s = db.get_settings()
+    trust = bool(s.get("trust_proxy"))
+    # X-Forwarded-Proto 一律采用：反代/隧道（frps、nginx）都会带，它才是浏览器看到的协议。
+    # 只有 X-Forwarded-Host 需要开「信任反代」才认——那个头会决定卡片的内外网归属。
+    proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    host = ""
+    if trust:
+        host = (request.headers.get("x-forwarded-host") or "").split(",")[0].strip()
+    proto = proto or request.url.scheme or "http"
+    host = host or request.headers.get("host") or ""
+    return (f"{proto}://{host}").rstrip("/") if host else ""
+
+
+def _host_is_private(host_header: str) -> bool:
+    """内网 / 本机地址判定。域名一律视为公网入口。"""
+    host = netutil._hostname_of(host_header)
+    if not host or host.lower() == "localhost":
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except Exception:
+        return False
+    return bool(addr.is_private or addr.is_loopback or addr.is_link_local)
+
+
+@app.get("/api/admin/agent/base_urls")
+def agent_base_urls(request: Request, _=Depends(require_admin)):
+    s = db.get_settings()
+    out, seen = [], set()
+
+    def add(url, label, public):
+        url = (url or "").strip().rstrip("/")
+        if not url.startswith("http") or url in seen:
+            return
+        seen.add(url)
+        out.append({"url": url, "label": label, "public": bool(public)})
+
+    add(s.get("agent_public_base") or "", "上次的公网访问地址", True)
+    wan = (s.get("host_wan") or "").strip()
+    if wan:
+        add(netutil.build_url(wan, 0, s.get("wan_scheme") or "https"), "设置里的「外网地址」", True)
+    ddns = (s.get("ddns_record") or "").strip()
+    if ddns:
+        add("https://" + ddns, "DDNS 域名", True)
+    cur = _req_origin(request)
+    if cur:
+        add(cur, "当前访问地址", not _host_is_private(request.headers.get("host") or ""))
+
+    suggested = next((c["url"] for c in out if c["public"]), cur)
+    return {"ok": True, "candidates": out, "suggested": suggested, "current": cur}
+
+
+@app.middleware("http")
+async def _learn_public_base(request, call_next):
+    """记住「用公网域名访问过面板」的那个地址，下次生成 agent 命令直接用它。
+
+    只对 API 请求记（静态资源不记），且值变了才落库，正常运行时几乎不产生写。
+    """
+    resp = await call_next(request)
+    try:
+        if request.url.path.startswith("/api/") and not request.url.path.startswith("/api/health"):
+            host = request.headers.get("host") or ""
+            if host and not _host_is_private(host):
+                origin = _req_origin(request)
+                if origin and origin != _PUBLIC_BASE_CACHE["value"]:
+                    _PUBLIC_BASE_CACHE["value"] = origin
+                    if (db.get_settings().get("agent_public_base") or "") != origin:
+                        db.update_settings({"agent_public_base": origin})
+    except Exception:
+        pass
+    return resp
 
 
 # ---------------------------------------------------------------- 采集源管理

@@ -98,6 +98,9 @@ DEFAULT_SETTINGS = {
     # 增删改走 /api/admin/iconlibraries，别的手改这个键。
     "icon_libs": [{"repo": "homarr-labs/dashboard-icons", "branch": "main",
                    "label": "Dashboard Icons", "sub": ""}],
+    # 上次「用公网域名访问面板」的地址（2.2.6）：生成 agent 安装命令时优先用它，
+    # 免得从内网 IP 打开面板时把 192.168.x.x 写进命令、导致对端 VPS 连不上。
+    "agent_public_base": "",
     "require_login": True,
     "admin_password_hash": "",
     "secret": "",

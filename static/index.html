@@ -1479,7 +1479,7 @@
                     <span class="np-tag">{{ n.mode === 'caddy' ? 'Caddy/443' : 'HTTP/' + (n.vhost_port || 80) }}</span>
                     <span class="np-tag">{{ n.root_domain }}</span>
                     <span class="np-tag">{{ n.client_mode === 'proxy' ? ('wss/' + (n.client_port || 443)) : ('tcp/' + (n.frps_bind_port || 7000)) }}</span>
-                    <span class="np-tag" v-if="n.last && n.last.cert_ok">证书 OK</span>
+                    <span class="np-tag" v-if="n.mode === 'caddy' && n.last && n.last.cert_ok">证书 OK</span>
                     <span class="np-gwbar-sp"></span>
                     <el-button link size="small" @click="gwNodeEdit(n)">编辑</el-button>
                     <el-button link size="small" :loading="nodeBusy === 'cert:' + n.id" @click="gwNodeCert(n)">同步证书</el-button>

@@ -3548,6 +3548,27 @@ class GwSettingsBody(BaseModel):
     patch: dict = {}
 
 
+def _remap_cards_on_domain_change(old_cfg: dict, new_patch: dict) -> int:
+    """FRP 域名变了就把卡片外网地址一起迁过去。
+
+    隧道是按 `<容器名>.<frp_domain>` 动态算的，域名一换隧道自己就跟上了；
+    但卡片的 url_wan / url_frp 是存下来的文本，不跟着改就会一直指向老域名，
+    表现就是「隧道通了，点卡片还是打不开」。
+    """
+    old = (old_cfg.get("frp_domain") or "").strip().strip(".").lower()
+    new = (new_patch.get("frp_domain") or "").strip().strip(".").lower()
+    if not (old and new and old != new):
+        return 0
+    moved = 0
+    for iid, patch in gw_mod.service.remap_frp_urls(db.list_items(), old, new):
+        try:
+            db.update_item(iid, patch)
+            moved += 1
+        except Exception:
+            pass
+    return moved
+
+
 @app.put("/api/admin/gw/settings")
 def gw_save_settings(body: GwSettingsBody, _=Depends(require_admin)):
     """保存网关相关设置并立刻生效（端口变化会重启监听）。"""
@@ -3556,9 +3577,14 @@ def gw_save_settings(body: GwSettingsBody, _=Depends(require_admin)):
     patch = {k: v for k, v in (body.patch or {}).items() if k in allowed}
     if not patch:
         return _err("没有可保存的网关设置")
+    before = db.get_settings()
     db.update_settings(patch)
+    moved = _remap_cards_on_domain_change(before, patch)
     _run_bg(_gw_or_404().reload_all())
-    return {"ok": True, "saved": list(patch.keys())}
+    out = {"ok": True, "saved": list(patch.keys())}
+    if moved:
+        out["remapped"] = moved
+    return out
 
 
 @app.post("/api/admin/gw/reload")
@@ -3959,9 +3985,14 @@ def gw_node_use(nid: str, _=Depends(require_admin)):
     if not node:
         return {"ok": False, "error": "节点不存在"}
     sug = node_mod.suggest_client(node, ((node.get("last") or {}).get("host_ip") or ""))
+    before = db.get_settings()
     db.update_settings(sug)
+    moved = _remap_cards_on_domain_change(before, sug)
     _run_bg(svc.reload_all())
-    return {"ok": True, "saved": sug}
+    out = {"ok": True, "saved": sug}
+    if moved:
+        out["remapped"] = moved
+    return out
 
 
 @app.delete("/api/admin/gw/nodes/{nid}")

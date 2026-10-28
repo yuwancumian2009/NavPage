@@ -85,6 +85,52 @@ def url_host(url: str) -> str:
         return ""
 
 
+def remap_frp_host(url: str, old_root: str, new_root: str) -> str:
+    """把外网地址里的 `<子域>.<旧后缀>` 换成 `<子域>.<新后缀>`。
+
+    只替换主机名后缀，scheme / 端口 / 路径 / 查询串原样保留；只认一层子域，
+    `a.b.旧后缀` 这类深层主机不动，避免误伤别人的域名。
+    """
+    u = (url or "").strip()
+    old = (old_root or "").strip().strip(".").lower()
+    new = (new_root or "").strip().strip(".").lower()
+    if not u or not old or not new or old == new:
+        return u
+    try:
+        sp = urlsplit(u)
+    except ValueError:
+        return u
+    host = (sp.hostname or "").lower()
+    if not host.endswith("." + old):
+        return u
+    label = host[: -(len(old) + 1)]
+    if not label or "." in label:
+        return u
+    netloc = f"{label}.{new}"
+    if sp.port:
+        netloc = f"{netloc}:{sp.port}"
+    return sp._replace(netloc=netloc).geturl()
+
+
+def remap_frp_urls(items: list[dict], old_root: str, new_root: str) -> list[tuple]:
+    """算出「换 FRP 域名后要改哪些卡片」，返回 [(卡片 id, 要更新的字段)]。
+
+    只算不改，方便调用方先落库再应用；卡片外网地址是用户看得见的东西，
+    换域名时如果不跟着改，卡片会一直指向已经不通的老域名。
+    """
+    out = []
+    for it in items or []:
+        patch = {}
+        for k in ("url_wan", "url_frp"):
+            cur = (it.get(k) or "").strip()
+            nxt = remap_frp_host(cur, old_root, new_root)
+            if nxt and nxt != cur:
+                patch[k] = nxt
+        if patch:
+            out.append((it.get("id"), patch))
+    return out
+
+
 def url_port(url: str) -> int:
     try:
         u = urlsplit(url)

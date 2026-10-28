@@ -208,6 +208,12 @@ def render_caddyfile(node: dict) -> str:
 	reverse_proxy 127.0.0.1:{p['bind']}
 }}
 
+# frpc 的 wss 握手（frp.<root>，客户端默认连这个；缺了会被通配站点抢走）
+frp.{root}:{p['public']} {{
+	tls /certs/cert.pem /certs/key.pem
+	reverse_proxy 127.0.0.1:{p['bind']}
+}}
+
 # 各容器的 HTTP 隧道 → frps 的 vhost HTTP 端口（Host 头必须原样带）
 *.{root}:{p['public']} {{
 	tls /certs/cert.pem /certs/key.pem
@@ -369,7 +375,15 @@ def preflight(node: dict) -> dict:
 
         rc, o = sh.run("curl -fsS -m 8 https://api.ipify.org 2>/dev/null || curl -fsS -m 8 https://ifconfig.me 2>/dev/null")
         out["host_ip"] = (o or "").strip().split("\n")[-1].strip()
-        chk("公网 IP", bool(out["host_ip"]), out["host_ip"] or "取不到公网 IP（不影响部署，但 DNS 记录要手动加）")
+        if not out["host_ip"]:
+            # 机房里取不到外网（或 ipify 被墙）时，回落到填的地址，DNS 才能自动写
+            out["host_ip"] = (node.get("host") or "").strip()
+            if out["host_ip"]:
+                chk("公网 IP", True, out["host_ip"] + "（机器内取不到外网，用填写的地址）")
+            else:
+                chk("公网 IP", False, "取不到公网 IP（不影响部署，但 DNS 记录要手动加）")
+        else:
+            chk("公网 IP", True, out["host_ip"])
 
         # 已有 navpage-node 容器说明之前部署过，重部署是覆盖，不算错
         rc, o = sh.run("docker ps -a --filter name=navpage-node- --format '{{.Names}} {{.Status}}'")

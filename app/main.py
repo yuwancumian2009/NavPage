@@ -1317,6 +1317,11 @@ class ComposeUpBody(BaseModel):
     pull: bool = False
 
 
+class ComposeRebuildBody(BaseModel):
+    path: str
+    build: bool = True
+
+
 class ComposeNewBody(BaseModel):
     name: str
     content: str
@@ -1355,6 +1360,16 @@ def admin_compose_save(body: ComposeSaveBody, _=Depends(require_admin)):
 def admin_compose_up(body: ComposeUpBody, _=Depends(require_admin)):
     try:
         ok, out, detached = compose_mod.up(body.path, pull=bool(body.pull))
+        return {"ok": ok, "message": out, "detached": detached}
+    except Exception as e:
+        return _err(str(e))
+
+
+@app.post("/api/admin/compose/rebuild")
+def admin_compose_rebuild(body: ComposeRebuildBody, _=Depends(require_admin)):
+    """强制重建：--pull always 回源拉镜像 + --build 重编本地镜像 + --force-recreate 重建容器。"""
+    try:
+        ok, out, detached = compose_mod.rebuild(body.path, build=bool(body.build))
         return {"ok": ok, "message": out, "detached": detached}
     except Exception as e:
         return _err(str(e))

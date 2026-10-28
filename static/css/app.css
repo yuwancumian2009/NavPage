@@ -1448,3 +1448,6 @@ th.c-src-op { width: 208px; }
 .np-hint.np-warn code { color: #b88230; background: #fbecd5; }
 html.dark .np-hint.np-warn { background: #2a2018; border-left-color: #e6a23c; color: #e6a23c; }
 html.dark .np-hint.np-warn code { color: #e6a23c; background: #3a2c1c; }
+
+/* 需要保留换行的确认弹窗（如「强制重建」的步骤说明） */
+.np-confirm-pre .el-message-box__message { white-space: pre-line; line-height: 1.65; }

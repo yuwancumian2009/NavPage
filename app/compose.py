@@ -325,6 +325,32 @@ def up(path, pull=False):
     return ok, out, False
 
 
+def rebuild(path, build=True):
+    """强制重建：重新拉取镜像 + 重新 build 本地镜像 + 无视配置差异强制重建容器。
+
+    和 up(pull=True) 的区别：up 只在配置/镜像变了才重建，配置没动就什么都不做；
+    这里 --force-recreate 一定会把容器删了重建，--pull always 一定回源拉一遍 tag
+    （:latest 被别人覆盖也能拿到新层），--build 会把 build: 的服务重新编译。
+    返回 (ok, 输出, detached)。
+    """
+    real = safe_path(path)
+    doc, _ = _load_yaml(real)
+    proj = _project_for(real, doc, _containers_by_project())
+    cmd = ["docker", "compose", "-f", real, "-p", proj,
+           "up", "-d", "--force-recreate", "--remove-orphans", "--pull", "always"]
+    if build:
+        cmd.append("--build")
+    if _is_self(proj):
+        try:
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+            return True, "已提交，面板容器正在强制重建，几十秒后自动刷新", True
+        except Exception as e:
+            return False, f"{type(e).__name__}: {e}", False
+    ok, out = _run(cmd, timeout=1800)
+    return ok, out, False
+
+
 def save(path, content, restart=False, pull=False):
     """保存 YAML：校验 -> 备份 -> 原子写 -> （可选）重构。"""
     real = safe_path(path)

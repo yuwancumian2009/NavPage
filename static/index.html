@@ -1820,7 +1820,7 @@
                   <th style="width:96px">服务</th>
                   <th>容器</th>
                   <th style="width:190px">文件</th>
-                  <th style="width:150px">操作</th>
+                  <th style="width:220px">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -1845,6 +1845,10 @@
                   <td>
                     <el-button size="small" text type="primary" @click="openCompose(r)">编辑</el-button>
                     <el-button size="small" text :loading="r._busy" @click="upCompose(r, false)">重构</el-button>
+                    <el-tooltip placement="top" content="重新拉取镜像 + 重新编译 build 服务 + 无视配置差异强制重建容器">
+                      <el-button size="small" text type="danger" :loading="r._busy2"
+                                 @click="rebuildCompose(r)">强制重建</el-button>
+                    </el-tooltip>
                   </td>
                 </tr>
               </tbody>

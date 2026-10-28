@@ -2343,6 +2343,36 @@
         d.busy = false;
       }
 
+      async function rebuildCompose(row) {
+        const name = row.project;
+        try {
+          await ElMessageBox.confirm(
+            '对「' + name + '」执行强制重建：\n' +
+            '· 镜像重新回源拉取（--pull always，:latest 被别人覆盖也会拿到新版本）\n' +
+            '· 带 build: 的服务重新编译（--build）\n' +
+            '· 就算配置没变也删掉容器重建（--force-recreate），顺带清理孤立容器\n\n' +
+            '服务会中断几十秒到几分钟（取决于拉取/编译速度），建议避开正在用的时段。继续？',
+            '强制重建 ' + name,
+            { type: 'warning', confirmButtonText: '开始重建', cancelButtonText: '取消',
+              customClass: 'np-confirm-pre' });
+        } catch (e) { return; }
+        row._busy2 = true;
+        cmpLast.value = { project: name, ok: null, message: '正在强制重建（拉镜像 / 编译 / 重建容器）…', ts: Date.now() };
+        try {
+          const r = await api.post('/api/admin/compose/rebuild',
+                                   { path: row.path, build: true }, { timeout: 1800000 });
+          const d = r.data || {};
+          cmpLast.value = { project: name, ok: !!d.ok, message: d.message || '', ts: Date.now() };
+          if (d.ok) ElMessage.success(d.detached ? '已提交，面板容器正在强制重建' : '强制重建完成');
+          else ElMessage.error('强制重建失败，看下方输出');
+        } catch (e) {
+          cmpLast.value = { project: name, ok: false, message: apiMsg(e), ts: Date.now() };
+          apiErr(e);
+        }
+        row._busy2 = false;
+        loadCompose();
+      }
+
       /* ---------------- 新建 Compose 项目 ---------------- */
       function cmpTpl(name) {
         const n = name || 'app';
@@ -3495,7 +3525,7 @@
         bkRestoreLocal, bkPickFile, bkRestoreUpload,
         cmpRows, cmpLoading, cmpError, cmpRoot, cmpLast, cmpDlg, cmpDirty,
         cmpNew, openComposeNew, fillComposeTpl, createCompose,
-        loadCompose, openCompose, saveCompose, upCompose,
+        loadCompose, openCompose, saveCompose, upCompose, rebuildCompose,
         imgRows, imgLoading, imgError, imgUpdating, imgUpdatingName, imgLog, imgAllow,
         imgAnyBusy, imgStep, imgPct, imgPhase, imgElapsed, imgLast, ago,
         imgOutdated, loadImages, updateImage, updateAllImages,

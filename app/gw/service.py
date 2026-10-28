@@ -238,9 +238,16 @@ class Gateway:
 
     def frp_url_for(self, item: dict) -> str:
         host = (item.get("url_frp") or "").strip()
-        if host:
-            return host
         d = self.frp_domain_for(item)
+        root = (self.cfg().get("frp_domain") or "").strip().strip(".").lower()
+        if host:
+            h = url_host(host)
+            # 存在卡片里的 url_frp 是自动生成的，落在本 FRP 域名下却不等于隧道域名时
+            # （比如卡片外网地址改过短域名），以隧道为准，否则链接和隧道会各说各话。
+            if not (root and h.endswith("." + root)) or not d or h == d:
+                return host
+        if not d:
+            return ""
         if not d:
             return ""
         cfg = self.cfg()
@@ -312,6 +319,22 @@ class Gateway:
             else:
                 p["domain"] = d
             out.append(p)
+            # 别名：卡片用短域名（qb2）时，容器名那条（qbittorrent）也留一条隧道，
+            # 老书签/分享链接不会因为改名而失效。
+            suffix = (sub_host or (cfg.get("frp_domain") or "")).strip().strip(".").lower()
+            alias = f"{slugify(it.get('container_name') or '')}.{suffix}" if suffix else ""
+            if alias and alias != d and alias not in used_domains:
+                used_domains.add(alias)
+                aname = f"{name}-alt"
+                if aname in used:
+                    aname = f"{aname}-{it.get('id')}"
+                used.add(aname)
+                ap = {"name": aname, "local_ip": host, "local_port": port}
+                if sub_host:
+                    ap["subdomain"] = alias.split(".")[0]
+                else:
+                    ap["domain"] = alias
+                out.append(ap)
         return out
 
     # ---------------------------------------------------------------- 生命周期

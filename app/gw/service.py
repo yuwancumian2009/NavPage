@@ -28,6 +28,12 @@ from .certs import CertStore, safe_name
 from .proxy import ProxyEngine
 
 
+# 端口连不上多久才真正摘掉隧道（秒）。容器重建/重启时端口会短暂关闭，
+# 立刻摘掉会让 frpc 配置来回抖动（45 秒自愈循环里每轮都判「变了」→ 反复重启）。
+# 宽限期内保留隧道：frps 侧返回 502（后端挂了），域名本身还在，用户知道该等服务起来。
+FRP_DEAD_GRACE = 90
+
+
 def _target_listening(host: str, port: int, timeout: float = 0.6) -> bool:
     """目标端口是否有人监听。
 
@@ -108,6 +114,8 @@ class Gateway:
         self._renew_task: asyncio.Task | None = None
         self._frp_task: asyncio.Task | None = None
         self._last_issue: dict[str, dict] = {}
+        # 卡片 id -> 最后一次探测到端口可连的时间戳（配合 FRP_DEAD_GRACE 去抖）
+        self._alive_at: dict[str, float] = {}
 
     # ---------------------------------------------------------------- 日志
     def log(self, msg: str):
@@ -215,7 +223,13 @@ class Gateway:
             # 目标端口没人监听就别建隧道：以前容器停了/删了，隧道照样挂着，
             # 外网访问就是一座「404 墓碑」，用户根本分不清是没配好还是服务挂了。
             # 只把「连接被拒」当死掉（超时/DNS 抖动不算），服务起来下一轮自动补回。
-            if not _target_listening(host, port):
+            key = str(it.get("id") or "")
+            if _target_listening(host, port):
+                self._alive_at[key] = time.time()
+            elif time.time() - self._alive_at.get(key, 0.0) < FRP_DEAD_GRACE:
+                # 宽限期内：保留隧道（frps 返 502），避免容器重建时摘了又加、每次全量重启
+                pass
+            else:
                 continue
             d = self.frp_domain_for(it)
             if not d:

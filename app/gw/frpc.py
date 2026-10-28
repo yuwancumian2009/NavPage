@@ -14,8 +14,17 @@ import os
 import shutil
 import subprocess
 import time
+import urllib.error
+import urllib.request
 
 BIN_CANDIDATES = ["/usr/local/bin/frpc", "/app/frpc", "frpc"]
+
+# frpc 自带的 admin 接口（配置里 webServer 绑 127.0.0.1:7400）。
+# 它支持「只重读配置文件、进程不退出」——增删一条隧道不再把其它隧道一起掐断。
+ADMIN_BASE = "http://127.0.0.1:7400"
+
+# 这些参数属于连接层：改了必须重启进程才生效。其余（proxies 列表）可以热重载。
+CONN_KEYS = ("frp_server", "frp_port", "frp_protocol", "frp_token", "frp_log_level")
 
 
 def find_binary() -> str:
@@ -102,6 +111,7 @@ class FrpManager:
         if not bin_path:
             self.error = "镜像里没有 frpc 二进制（构建时未下载成功）"
             return self.status()
+        prev_cfg = dict(self.last_cfg_obj or {})
         self.last_cfg_obj = dict(cfg)
         text = self.build_config(cfg, proxies)
         # 判「变没变」要比磁盘上的真内容，不能只比内存里的 last_cfg：
@@ -120,10 +130,36 @@ class FrpManager:
             except Exception as e:
                 self.error = f"写配置失败：{e}"
                 return self.status()
-            self._restart(bin_path)
-            self.last_cfg = text
+            # 只有隧道列表变了就热重载：frpc 重读配置，进程不动，其它隧道不断。
+            # 连接层参数（地址/端口/协议/token）变了，或热重载不可用，才退回重启进程。
+            conn_changed = self._conn_sig(cfg) != self._conn_sig(prev_cfg)
+            if self._alive() and not conn_changed and self._admin_reload():
+                self.last_cfg = text
+                self.log("frpc 配置已热重载（隧道未中断）")
+            else:
+                self._restart(bin_path)
+                self.last_cfg = text
         self.error = ""
         return self.status()
+
+    # ---------------------------------------------------------------- 热重载
+    def _conn_sig(self, cfg: dict) -> tuple:
+        """连接层签名：只包含「改了必须重启」的字段。"""
+        return tuple(str((cfg or {}).get(k) or "") for k in CONN_KEYS)
+
+    def _admin_reload(self) -> bool:
+        """让 frpc 重读配置文件（admin API，进程不退出）。
+
+        frpc 0.52+ 在 webServer 上提供 /api/reload：重新解析 -c 指定的配置文件，
+        只增删变化的 proxy，已有隧道保持连接。失败就返回 False，调用方回落为重启。
+        """
+        try:
+            req = urllib.request.Request(ADMIN_BASE + "/api/reload", method="GET")
+            with urllib.request.urlopen(req, timeout=3) as r:
+                return 200 <= getattr(r, "status", 200) < 300
+        except Exception as e:
+            self.log(f"frpc 热重载不可用，回落重启：{e}")
+            return False
 
     # ---------------------------------------------------------------- 进程
     def _alive(self) -> bool:

@@ -223,10 +223,18 @@ class Gateway:
         cfg = self.cfg()
         base = slugify(item.get("container_name") or "") or slugify(item.get("name") or "") or f"app-{item.get('id')}"
         sub_host = (cfg.get("frp_subdomain_host") or "").strip().strip(".").lower()
-        if sub_host:
-            return f"{base}.{sub_host}"
         root = (cfg.get("frp_domain") or "").strip().strip(".").lower()
-        return f"{base}.{root}" if root else ""
+        suffix = sub_host or root
+        if not suffix:
+            return ""
+        # 卡片上写的短域名（qb2 / emby2 这种）优先当隧道域名：
+        # 用户看到的就是这个地址，隧道却按容器名生成的话，点卡片必然 404。
+        host = url_host(item.get("url_wan") or "")
+        if host.endswith("." + suffix):
+            label = host[: -(len(suffix) + 1)]
+            if label and "." not in label:
+                return host
+        return f"{base}.{suffix}"
 
     def frp_url_for(self, item: dict) -> str:
         host = (item.get("url_frp") or "").strip()
@@ -258,6 +266,7 @@ class Gateway:
     def frp_proxies(self) -> list[dict]:
         out = []
         used: set[str] = set()
+        used_domains: set[str] = set()
         cfg = self.cfg()
         sub_host = (cfg.get("frp_subdomain_host") or "").strip()
         # 这里用全集：隐藏卡片往往正是 postgres / redis / 管理口这种「不想上首页
@@ -280,6 +289,14 @@ class Gateway:
             d = self.frp_domain_for(it)
             if not d:
                 continue
+            if d in used_domains:      # 两张卡片写了同一个域名 → 第二张退回容器名
+                base_name = slugify(it.get("container_name") or "") or slugify(it.get("name") or "") or f"app-{it.get('id')}"
+                suffix = (cfg.get("frp_subdomain_host") or cfg.get("frp_domain") or "").strip().strip(".").lower()
+                if suffix:
+                    d = f"{base_name}.{suffix}"
+            if d in used_domains:
+                continue
+            used_domains.add(d)
             base = d.split(".")[0]
             # proxy 名必须唯一：同一个容器可能被建了两张卡片（比如内外网分开），
             # 重名会让 frpc 直接报 "proxy name already exists" 并整份配置失效。

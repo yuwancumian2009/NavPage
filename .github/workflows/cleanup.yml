@@ -1,0 +1,37 @@
+name: cleanup
+# 免费额度只有 500MB artifacts / 10GB cache：每天清一次 3 天没用的，避免又顶到上限。
+on:
+  schedule:
+    - cron: '0 20 * * *'   # UTC 20:00 = 北京时间 04:00
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 删除 3 天前的 artifact 与 cache
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          NOW=$(date +%s)
+          LIMIT=$((3*24*3600))
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | "\(.id) \(.created_at)"' | while read -r id created; do
+              ts=$(date -d "$created" +%s) || continue
+              if [ $((NOW-ts)) -gt $LIMIT ]; then
+                gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" >/dev/null 2>&1 || true
+              fi
+            done
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/caches?per_page=100" \
+            --jq '.actions_caches[] | "\(.id) \(.last_accessed_at)"' | while read -r id seen; do
+              ts=$(date -d "$seen" +%s) || continue
+              if [ $((NOW-ts)) -gt $LIMIT ]; then
+                gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/caches/$id" >/dev/null 2>&1 || true
+              fi
+            done
+          echo "cleanup done"

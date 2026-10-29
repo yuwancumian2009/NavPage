@@ -3557,15 +3557,50 @@ def _remap_cards_on_domain_change(old_cfg: dict, new_patch: dict) -> int:
     """
     old = (old_cfg.get("frp_domain") or "").strip().strip(".").lower()
     new = (new_patch.get("frp_domain") or "").strip().strip(".").lower()
-    if not (old and new and old != new):
+    label_domain = new or old
+    # 端口也一起迁：<域名> 变了要换后缀，反代端口变了（443 → 8443 这种）要补端口
+    old_port = int(old_cfg.get("frp_vhost_https_port") or 443)
+    new_port = int(new_patch.get("frp_vhost_https_port") or old_port)
+    if not (label_domain and ((old and new and old != new) or old_port != new_port)):
         return 0
     moved = 0
+    if not (old and new and old != new):
+        items = db.list_items()
+        for it in items:
+            p = {}
+            for k in ("url_wan", "url_frp"):
+                cur = (it.get(k) or "").strip()
+                nxt = gw_mod.service.remap_frp_port(cur, label_domain, new_port)
+                if nxt and nxt != cur:
+                    p[k] = nxt
+            if p:
+                try:
+                    db.update_item(it["id"], p)
+                    moved += 1
+                except Exception:
+                    pass
+        return moved
     for iid, patch in gw_mod.service.remap_frp_urls(db.list_items(), old, new):
         try:
             db.update_item(iid, patch)
             moved += 1
         except Exception:
             pass
+    # 域名和端口可能同时变（换后缀 + 443→8443），域名改完再把端口对齐
+    if old_port != new_port:
+        for it in db.list_items():
+            p = {}
+            for k in ("url_wan", "url_frp"):
+                cur = (it.get(k) or "").strip()
+                nxt = gw_mod.service.remap_frp_port(cur, label_domain, new_port)
+                if nxt and nxt != cur:
+                    p[k] = nxt
+            if p:
+                try:
+                    db.update_item(it["id"], p)
+                    moved += 1
+                except Exception:
+                    pass
     return moved
 
 

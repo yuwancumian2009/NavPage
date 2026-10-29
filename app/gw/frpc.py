@@ -57,6 +57,14 @@ class FrpManager:
 
     # ---------------------------------------------------------------- 配置
     def build_config(self, cfg: dict, proxies: list[dict]) -> str:
+        # 跨洋高延迟线路（国内 -> 美西 RTT 230ms）下，frp 默认 5 条 work 连接池
+        # 远远不够：浏览器并发拉十几个资源时 frps 会回
+        # "work connection pool is full, discarding"，请求排队重试，表现为卡顿/白屏。
+        try:
+            pool = int(cfg.get("frp_pool_count") or 40)
+        except (TypeError, ValueError):
+            pool = 40
+        pool = max(5, min(pool, 200))
         lines = [
             f'serverAddr = "{toml_escape(cfg.get("frp_server") or "")}"',
             f'serverPort = {int(cfg.get("frp_port") or 7000)}',
@@ -70,6 +78,7 @@ class FrpManager:
             f'auth.token = "{toml_escape(cfg.get("frp_token") or "")}"',
             'transport.tls.enable = true',
             'transport.tcpMux = true',
+            f'transport.poolCount = {pool}',
             # 偶发失败（frps 重启、网络抖动）自动重试，而不是第一次登录失败就退出。
             'loginFailExit = false',
             f'log.to = "{toml_escape(self.log_path)}"',

@@ -570,7 +570,9 @@ def suggest_client(node: dict, host_ip: str = "") -> dict:
     #   proxy           → 公网那层由既有反代终结 TLS，同样落在 443
     if ep["scheme"] == "https":
         vh_http = 80
-        vh_https = p["public"] if (p["mode"] == "caddy" and ep["protocol"] == "tcp") else 443
+        # caddy 形态下浏览器访问的 HTTPS 端口就是 Caddy 的公网端口（443 或自定义 8443 等），
+        # 跟 frpc 用 tcp 还是 wss 连无关——之前只认 tcp，改端口后卡片地址就漏了 :端口。
+        vh_https = p["public"] if p["mode"] == "caddy" else 443
     else:
         vh_http = vh_https = p["vhost"]
     return {**base, "frp_server": ep["host"], "frp_port": ep["port"],

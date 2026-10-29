@@ -112,6 +112,28 @@ def remap_frp_host(url: str, old_root: str, new_root: str) -> str:
     return sp._replace(netloc=netloc).geturl()
 
 
+def remap_frp_port(url: str, root: str, new_port: int) -> str:
+    """把 FRP 域名下的地址端口改成新的（443 时省掉端口）。"""
+    u = (url or "").strip()
+    root = (root or "").strip().strip(".").lower()
+    if not u or not root:
+        return u
+    try:
+        sp = urlsplit(u)
+    except ValueError:
+        return u
+    if not (sp.hostname or "").lower().endswith("." + root):
+        return u
+    netloc = sp.hostname
+    if sp.port and sp.port not in (80, 443):
+        netloc = f"{netloc}:{sp.port}"
+    if new_port and new_port not in (80, 443):
+        netloc = f"{sp.hostname}:{new_port}"
+    elif sp.port:
+        netloc = sp.hostname
+    return sp._replace(netloc=netloc).geturl()
+
+
 def remap_frp_urls(items: list[dict], old_root: str, new_root: str) -> list[tuple]:
     """算出「换 FRP 域名后要改哪些卡片」，返回 [(卡片 id, 要更新的字段)]。
 

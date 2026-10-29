@@ -1,5 +1,11 @@
+## 2.4.3
+
+- 新增：FRP 端口变化时自动改写卡片地址端口（如 443 → 8443），域名与端口同一次变更会连着处理。
+- 修复：Caddy 形态下 `frp_vhost_https_port` 取 Caddy 公网端口，之前只认 tcp 直连模式，自定义端口会漏掉 `:端口`。
+
 ## 2.4.2
 
+- 修：frpc 连接池默认 5 条偏小（跨洋高延迟下并发拉资源会 `work connection pool is full`，表现为卡顿/白屏），改为 `transport.poolCount = 40`，可用 `frp_pool_count` 覆盖
 - 修复：Caddy 形态新节点缺 `frp.<后缀>` 精确站点，frpc 的 wss 握手被 `*.<后缀>` 抢到 vhost 端口，报 `tls: internal error`。
 - 修复：机器内取不到公网 IP 时回落到填写的地址，DNS 记录仍能自动写。
 - 新增：换 FRP 域名时自动把所有卡片的外网地址迁到新域名（隧道本来就跟 `frp_domain` 走，卡片地址之前是死的）。

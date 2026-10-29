@@ -92,6 +92,21 @@ def resolve_item(item, mode, ctx=None):
     if not lan and "{host}" in wan_raw:
         lan = netutil.expand_url(wan_raw, "lan", ctx)
 
+    # 路径后缀：mihomo / zashboard 这类服务界面挂在子路径下，三个地址都要拼上，
+    # 否则点开就是 404。已经自带该路径的地址不重复拼。
+    _path = (item.get("url_path") or "").strip()
+    if _path:
+        if not _path.startswith("/"):
+            _path = "/" + _path
+        _base = _path.rstrip("/")
+
+        def _add_path(u):
+            if not u:
+                return u
+            return u if u.rstrip("/").endswith(_base) else u.rstrip("/") + _path
+
+        lan, wan, frp = _add_path(lan), _add_path(wan), _add_path(frp)
+
     pref = (item.get("addr_pref") or "inherit").strip().lower()
     want = mode if pref in ("inherit", "auto", "") else pref
     if want not in ("lan", "wan", "frp"):
@@ -852,6 +867,7 @@ class ItemBody(BaseModel):
     url_frp: str | None = None
     proxy_domain: str | None = None
     addr_pref: str | None = None
+    url_path: str | None = None
 
 
 @app.post("/api/admin/items")

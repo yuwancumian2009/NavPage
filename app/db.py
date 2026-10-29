@@ -207,6 +207,7 @@ CREATE TABLE IF NOT EXISTS items (
   description TEXT DEFAULT '',
   url_lan TEXT DEFAULT '',
   url_wan TEXT DEFAULT '',
+  url_path TEXT DEFAULT '',
   icon TEXT DEFAULT '',
   category_id INTEGER,
   sort INTEGER DEFAULT 0,
@@ -468,7 +469,7 @@ def delete_categories(cids):
 # ---------------------------------------------------------------- items
 
 ITEM_FIELDS = (
-    "name", "description", "url_lan", "url_wan", "icon", "category_id",
+    "name", "description", "url_lan", "url_wan", "url_path", "icon", "category_id",
     "sort", "hidden", "source", "container_name", "container_image",
     "container_port", "docker_host", "missing", "widget", "url_visible", "card_size",
     "auto_created", "url_frp", "proxy_domain", "addr_pref",
@@ -483,7 +484,9 @@ MIGRATIONS = {
               # addr_pref: inherit/auto/lan/wan/frp —— 卡片可单独指定用哪个地址，
               # 不再只能跟着右上角的全局开关走。
               ("url_frp", "TEXT DEFAULT ''"), ("proxy_domain", "TEXT DEFAULT ''"),
-              ("addr_pref", "TEXT DEFAULT 'inherit'")],
+              ("addr_pref", "TEXT DEFAULT 'inherit'"),
+              # 2.4.4：路径后缀（mihomo 的 /ui/zashboard/ 这种），拼在内网/外网/FRP 三个地址后面
+              ("url_path", "TEXT DEFAULT ''")],
     "categories": [("card_size", "TEXT DEFAULT ''")],
 }
 # card_size: '' = 跟随上级（条目→分类→全局），lg = 大卡，xs = 小卡（纯图标方形）

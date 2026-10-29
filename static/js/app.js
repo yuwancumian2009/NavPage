@@ -1483,7 +1483,7 @@
           }
         } else {
           editItem.value = {
-            id: 0, name: '', url_lan: '', url_wan: '', url_frp: '', icon: '',
+            id: 0, name: '', url_lan: '', url_wan: '', url_frp: '', url_path: '', icon: '',
             description: '', category_id: null, hidden: false, source: 'manual',
             url_visible: -1, card_size: 'inherit', addr_pref: 'inherit'
           };
@@ -1524,6 +1524,7 @@
         const url_frp = joinUrl(it.addr_frp, it.port_frp, it.tail_frp);
         const payload = {
           name: it.name, url_lan: url_lan, url_wan: url_wan, url_frp: url_frp,
+          url_path: (it.url_path || '').trim(),
           addr_pref: it.addr_pref || 'inherit',
           icon: it.icon || '', description: it.description || '',
           category_id: (it.category_id === '' || it.category_id === undefined) ? null : it.category_id,

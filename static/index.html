@@ -1968,6 +1968,11 @@
       </div>
       <div class="np-hint">在「设置 → FRP」里开了隧道后，点下面的「生成反代 / FRP 地址」会自动填好。</div>
     </div>
+    <div class="np-field">
+      <label>路径后缀（可选）</label>
+      <el-input v-model="editItem.url_path" size="small" placeholder="/ui/zashboard/"></el-input>
+      <div class="np-hint">界面挂在子路径下的服务填这里（如 mihomo 的 zashboard 是 <code>/ui/zashboard/</code>），会自动拼到内网 / 外网 / FRP 三个地址后面。</div>
+    </div>
     <div class="np-field row">
       <label>这个卡片用哪个地址</label>
       <el-select v-model="editItem.addr_pref" size="small" style="width:210px">

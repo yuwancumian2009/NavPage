@@ -441,12 +441,12 @@ def pull_image(image, tag=None, task=None):
                         return True, LOCAL_ONLY_HINT
                     if task:
                         task.line("拉取原始错误: " + (body or "")[:300])
-                    return False, _friendly_pull_err(r.status_code, body)
+                    return False, _friendly_pull_err(r.status_code, body, image)
                 return _consume_pull_stream(r, task)
     except Exception as e:
         txt = f"{type(e).__name__}: {e}"
         if any(h in txt.lower() for h in _NET_HINTS):
-            return False, _friendly_pull_err(0, txt)
+            return False, _friendly_pull_err(0, txt, image)
         return False, txt
 
 
@@ -456,12 +456,19 @@ _NET_HINTS = ("eof", "dial tcp", "i/o timeout", "proxyconnect", "connection rese
               "timeout awaiting response", "http2", "unexpected eof")
 
 
-def _friendly_pull_err(status, body):
+def _friendly_pull_err(status, body, image=""):
     """把拉取失败的原始报文压成一句能行动的话（详情仍由调用方写进日志）。"""
     low = (body or "").lower()
     if any(h in low for h in _NET_HINTS):
-        return ("连不上镜像仓库（NAS 的 docker 要经代理出网，多半是代理不稳/不通）。"
-                "稍后重试，或改用「仅重建」用本地现有镜像重建容器。")
+        host = (image or "").split("/")[0] or "镜像仓库"
+        # 2026-10-30 mihomo 卡一整天：qqaazz.msaber.fun 对 curl 是 200、对 dockerd 恒
+        # TLS handshake timeout（10s，Go 默认值），换直连也没救。所以别只说「代理不通」，
+        # 要明确告诉用户「这个仓库对 docker 就是不通，换镜像源」。
+        tail = ""
+        if "tls handshake" in low or "timeout" in low:
+            tail = "；该仓库对 docker 常常永远卡在 TLS 握手（curl/浏览器能通不代表 docker 能通）"
+        return ("拉取失败：连不上 %s%s。连续几次都失败就换镜像源（例如把 image 改成 "
+                "docker.1ms.run/<同名路径>），或点「仅重建」用本地镜像重建。" % (host, tail))
     if status in (401, 404):
         return f"仓库里没有这个镜像或没权限（HTTP {status}）"
     return f"HTTP {status}: {(body or '')[:200]}"

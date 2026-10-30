@@ -1294,6 +1294,24 @@ def admin_images(refresh: int = 0, cached: int = 0, auto_apply: int = 0, _=Depen
     if refresh and auto_apply:
         applied = _apply_updates(_auto_targets(rows, s), "手动检查")
     hist = _hist_list()
+    # 每行挂「上次更新失败」：定时任务失败只写历史文件，列表页此前完全不体现，
+    # 于是「检测到有更新」能显示一整天不动、用户以为功能坏了（2026-10-30 mihomo 实例）。
+    # 只在「失败晚于上次成功」时显示，修好之后旧失败记录不会一直挂红。
+    _fails, _oks = {}, {}
+    for h in hist:
+        c = (h.get("container") or "").strip()
+        if not c:
+            continue
+        if h.get("success") is True and c not in _oks:
+            _oks[c] = h.get("ts") or 0
+        elif h.get("success") is False and c not in _fails:
+            _fails[c] = h
+    for r in rows:
+        c = (r.get("container") or "").strip()
+        f = _fails.get(c)
+        if f and (f.get("ts") or 0) > (_oks.get(c) or 0) and r.get("status") == "outdated":
+            r["last_fail"] = (f.get("message") or "")[:200]
+            r["last_fail_ts"] = f.get("ts") or 0
     return {"ok": True, "rows": rows, "error": err, "cached": is_cached,
             "auto_applied": applied,
             "checked_at": _img_checked_at(),

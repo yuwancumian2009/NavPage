@@ -1765,6 +1765,7 @@
                       {{ r.local_only ? '本地镜像'
                          : (r.status === 'outdated' ? '可更新' : (r.status === 'current' ? '已最新' : '未知')) }}
                     </span>
+                    <span v-if="r.last_fail" class="np-fail-tag" :title="r.last_fail">上次失败</span>
                   </td>
                   <td class="np-muted np-mono"
                       :title="r.digest_missing ? '这个镜像没有 RepoDigests（飞牛面板/离线包导入），这里比的是镜像 config digest' : ''">

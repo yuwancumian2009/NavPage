@@ -1451,3 +1451,9 @@ html.dark .np-hint.np-warn code { color: #e6a23c; background: #3a2c1c; }
 
 /* 需要保留换行的确认弹窗（如「强制重建」的步骤说明） */
 .np-confirm-pre .el-message-box__message { white-space: pre-line; line-height: 1.65; }
+
+/* 镜像行「上次更新失败」标记（2026-10-30）：失败原因在 tooltip 里，
+   否则「可更新」会一直挂着不动，看不出是拉取失败 */
+.np-fail-tag{display:inline-block;margin-left:6px;padding:0 6px;border-radius:8px;
+  background:rgba(230,162,60,.16);color:#e6a23c;font-size:11px;line-height:18px;
+  cursor:help;white-space:nowrap}

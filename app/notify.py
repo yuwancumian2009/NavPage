@@ -31,12 +31,50 @@ EVENTS: dict[str, tuple[str, int]] = {
     "update_ok":   ("容器自动更新完成", 0),
     "update_fail": ("容器更新失败", 0),
     "prune":       ("镜像清理完成", 0),
-    "node_down":   ("远程节点不通", 600),
-    "node_up":     ("远程节点恢复", 300),
-    "frp_down":    ("frp 掉线", 300),
-    "frp_up":      ("frp 重启/重连完成", 120),
+    "node_down":   ("远程节点不通", 1800),
+    "node_up":     ("远程节点恢复", 600),
+    "frp_down":    ("frp 掉线", 1800),
+    "frp_up":      ("frp 重启/重连完成", 600),
     "cert_expiring": ("证书即将过期", 43200),
 }
+
+
+class FlapGuard:
+    """连续采样去抖：单次探测失败不算故障。
+
+    为什么需要：海外 VPS 的 TCP 偶尔丢一个包、frpc 自己重启几百毫秒，
+    单次采样就会把状态翻成「断开」，下一轮再翻回「恢复」，用户收到一对无意义消息。
+    这里要求连续 down_after 次异常才判故障、连续 up_after 次正常才判恢复，
+    并且只有「真的通知过断开」才会通知恢复（首次采样异常也会通知，避免启动时静默）。
+    """
+
+    def __init__(self, down_after: int = 3, up_after: int = 2):
+        self.state: bool | None = None
+        self.fail = 0
+        self.ok = 0
+        self.down_after = down_after
+        self.up_after = up_after
+
+    def feed(self, ok: bool) -> str | None:
+        """喂一次采样，返回 'down' / 'up' / None（需要通知的动作）。"""
+        if ok:
+            self.ok += 1
+            self.fail = 0
+            if self.state is False and self.ok >= self.up_after:
+                self.state = True
+                return "up"
+            if self.state is None:
+                self.state = True
+            return None
+        self.fail += 1
+        self.ok = 0
+        if self.state is True and self.fail >= self.down_after:
+            self.state = False
+            return "down"
+        if self.state is None and self.fail >= self.down_after:
+            self.state = False      # 启动时就是坏的：也要告诉用户一次
+            return "down"
+        return None
 
 
 def event_list() -> list[dict]:
@@ -189,8 +227,10 @@ def send(event: str, title: str, desc: str = "", url: str = "", key: str = "") -
             return False
         if event not in EVENTS:
             return False
-        cooldown = int(s.get("notify_cooldown") or 0) if event.startswith(("node_", "frp_")) \
-            else int(EVENTS[event][1])
+        cfg_cd = int(s.get("notify_cooldown") or 0)
+        default_cd = int(EVENTS[event][1])
+        # 节点/frp 是低频但要命的事件：用户配的重复抑制只会让间隔更长，不会被调短
+        cooldown = max(cfg_cd, default_cd) if event.startswith(("node_", "frp_")) else default_cd
         if cooldown > 0:
             k = (event, key or "")
             now = time.time()

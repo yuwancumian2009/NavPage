@@ -3929,7 +3929,10 @@ def gw_frp_apply(_=Depends(require_admin)):
 # ---------------------------------------------------------------- 远程 FRP 节点（2.1.0）
 # 把 frps（+ 可选 Caddy）部署到任意裸 VPS：SSH + Docker，不依赖 1Panel/宝塔。
 # ---------------------------------------------------------------- admin: notify
-_NOTIFY_STATE: dict = {"frp": None, "node": None}
+# 检测节奏：45 秒一轮；frp / 节点都用 FlapGuard 连续确认（3 次异常才算断，2 次正常才算恢复），
+# 单次丢包或 frpc 自己重启几百毫秒不会产生「断开—恢复」这一对噪音通知。
+_NOTIFY_STATE: dict = {"frp": notify.FlapGuard(3, 2), "node": notify.FlapGuard(3, 2),
+                       "cert_ts": 0.0}
 
 
 def _frp_host_port(s) -> tuple[str, int]:
@@ -3977,31 +3980,28 @@ def _notify_watch_loop():
                     except Exception:
                         running = None
                 if running is not None:
-                    prev = _NOTIFY_STATE.get("frp")
-                    if prev is not None and running != prev:
-                        if running:
-                            notify.send("frp_up", "frp 已重新连上",
-                                        "frpc 进程已恢复，隧道重新注册完成，外网地址应可访问。",
-                                        url="/")
-                        else:
-                            notify.send("frp_down", "frp 掉线了",
-                                        "frpc 进程不在运行，外网地址暂时不可用；面板会在下一轮自动重启它。",
-                                        url="/")
-                    _NOTIFY_STATE["frp"] = running
+                    act = _NOTIFY_STATE["frp"].feed(running)
+                    if act == "up":
+                        notify.send("frp_up", "frp 已重新连上",
+                                    "frpc 进程已恢复，隧道重新注册完成，外网地址应可访问。",
+                                    url="/", key="frp")
+                    elif act == "down":
+                        notify.send("frp_down", "frp 掉线了",
+                                    "frpc 进程连续多次不在运行，外网地址暂时不可用；面板会自动重启它。",
+                                    url="/", key="frp")
                 if s.get("frp_enabled"):
                     alive = _node_alive(s)
                     if alive is not None:
-                        prev_n = _NOTIFY_STATE.get("node")
-                        if prev_n is not None and alive != prev_n:
-                            host, port = _frp_host_port(s)
-                            if alive:
-                                notify.send("node_up", "远程节点恢复：%s:%s" % (host, port),
-                                            "frp 服务端端口重新可达。")
-                            else:
-                                notify.send("node_down", "远程节点不通：%s:%s" % (host, port),
-                                            "连不上 frp 服务端，外网隧道会陆续失效。检查 VPS 是否在线 / 安全组是否放行。",
-                                            url="/")
-                        _NOTIFY_STATE["node"] = alive
+                        act = _NOTIFY_STATE["node"].feed(alive)
+                        host, port = _frp_host_port(s)
+                        if act == "up":
+                            notify.send("node_up", "远程节点恢复：%s:%s" % (host, port),
+                                        "frp 服务端端口重新可达。", key="node")
+                        elif act == "down":
+                            notify.send("node_down", "远程节点不通：%s:%s" % (host, port),
+                                        "连续多次连不上 frp 服务端，外网隧道会陆续失效。"
+                                        "检查 VPS 是否在线 / 安全组是否放行该端口。",
+                                        url="/", key="node")
                 # 证书到期：6 小时查一次就够，别每轮都算
                 if time.time() - float(_NOTIFY_STATE.get("cert_ts") or 0) > 21600:
                     _NOTIFY_STATE["cert_ts"] = time.time()

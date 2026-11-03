@@ -1838,7 +1838,7 @@
             </el-form-item>
             <el-form-item label="重复抑制">
               <el-input-number v-model="ntCooldown" :min="0" :max="86400" :step="60" controls-position="right" style="width:150px"></el-input-number>
-              <span class="np-hint" style="margin-left:10px">秒 · 节点或 frp 反复抖动时只报一次</span>
+              <span class="np-hint" style="margin-left:10px">秒 · frp/节点事件至少 1800 秒；每 45 秒探测一次，连续 3 次失败才报断开</span>
             </el-form-item>
             <el-form-item label="通知事件">
               <el-checkbox-group v-model="ntEvents" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px 12px">

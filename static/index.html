@@ -1808,6 +1808,9 @@
             <el-button size="small" :loading="ntBusy === 'test'" @click="ntTest">发送测试</el-button>
             <el-button type="primary" size="small" :loading="ntBusy === 'save'" @click="ntSave">保存</el-button>
           </div>
+          <el-alert v-if="!ntCorpid || !ntSecret || !ntAgentid" type="warning" :closable="false" show-icon
+                    title="还缺应用凭证：企业ID / 应用 Secret / AgentId 都填齐并保存后，测试按钮才会真正发得出去"
+                    style="margin-bottom:10px;max-width:760px"></el-alert>
           <el-form label-width="110px" size="small" style="max-width:760px">
             <el-form-item label="企业 ID">
               <el-input v-model="ntCorpid" clearable placeholder="ww1a2b3c4d5e6f7g8h"></el-input>

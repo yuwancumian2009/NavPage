@@ -1800,6 +1800,51 @@
         </el-tab-pane>
 
         <!-- ---------------- Compose 管理（2026-10-19） ---------------- -->
+        <el-tab-pane label="通知" name="notify">
+          <div class="np-bar">
+            <span class="np-sub" style="margin:0">企业微信群机器人 · 图文卡片消息</span>
+            <el-switch v-model="ntEnabled" active-text="启用"></el-switch>
+            <div style="flex:1"></div>
+            <el-button size="small" :loading="ntBusy === 'test'" @click="ntTest">发送测试</el-button>
+            <el-button type="primary" size="small" :loading="ntBusy === 'save'" @click="ntSave">保存</el-button>
+          </div>
+          <el-form label-width="110px" size="small" style="max-width:760px">
+            <el-form-item label="Webhook">
+              <el-input v-model="ntWebhook" clearable placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."></el-input>
+              <p class="np-hint">企业微信群 → 右上角 → 添加群机器人 → 复制 webhook 地址</p>
+            </el-form-item>
+            <el-form-item label="面板地址">
+              <el-input v-model="ntPanelUrl" clearable placeholder="https://navpage.o.hhxin.top"></el-input>
+              <p class="np-hint">卡片点开后跳转的地址，留空则不跳转</p>
+            </el-form-item>
+            <el-form-item label="重复抑制">
+              <el-input-number v-model="ntCooldown" :min="0" :max="86400" :step="60" controls-position="right" style="width:150px"></el-input-number>
+              <span class="np-hint" style="margin-left:10px">秒 · 节点或 frp 反复抖动时只报一次</span>
+            </el-form-item>
+            <el-form-item label="通知事件">
+              <el-checkbox-group v-model="ntEvents" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px 12px">
+                <el-checkbox v-for="e in ntEventList" :key="e.key" :label="e.key">{{ e.label }}</el-checkbox>
+              </el-checkbox-group>
+            </el-form-item>
+          </el-form>
+          <p class="np-sub" style="margin:12px 0 6px;font-size:13px;opacity:.85">最近发送</p>
+          <el-table :data="ntHistory" size="small" empty-text="还没有发送记录" style="max-width:980px">
+            <el-table-column label="时间" width="170">
+              <template #default="{ row }">{{ ntTs(row.ts) }}</template>
+            </el-table-column>
+            <el-table-column label="事件" width="130">
+              <template #default="{ row }">{{ ntEventLabel(row.event) }}</template>
+            </el-table-column>
+            <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip></el-table-column>
+            <el-table-column label="结果" width="80">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.ok ? 'success' : 'danger'">{{ row.ok ? '成功' : '失败' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="msg" label="错误信息" min-width="180" show-overflow-tooltip></el-table-column>
+          </el-table>
+        </el-tab-pane>
+
         <el-tab-pane label="Compose" name="compose">
           <div class="np-scroll">
           <div class="np-fold-tip">点分组标题即可收起 / 展开</div>

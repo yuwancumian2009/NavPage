@@ -30,6 +30,15 @@
       const token = ref(localStorage.getItem(TOKEN_KEY) || '');
       const adminOpen = ref(false);
       const tab = ref('items');
+      // ---- 通知（企业微信群机器人）
+      const ntEnabled = ref(false);
+      const ntWebhook = ref('');
+      const ntPanelUrl = ref('');
+      const ntCooldown = ref(300);
+      const ntEvents = ref([]);
+      const ntEventList = ref([]);
+      const ntHistory = ref([]);
+      const ntBusy = ref('');
       const items = ref([]);
       const categories = ref([]);
       const docker = ref({ ok: false });
@@ -935,6 +944,64 @@
         } catch (e) { apiErr(e); }
         gwBusy.value = '';
       }
+      // ---- 通知
+      async function loadNotify() {
+        if (!token.value) return;
+        try {
+          const r = await api.get('/api/admin/notify');
+          const d = r.data || {};
+          ntEnabled.value = !!d.enabled;
+          ntWebhook.value = d.webhook || '';
+          ntPanelUrl.value = d.panel_url || '';
+          ntCooldown.value = Number(d.cooldown || 300);
+          ntEvents.value = Array.isArray(d.events) ? d.events.slice() : [];
+          ntEventList.value = d.event_list || [];
+          ntHistory.value = d.history || [];
+        } catch (e) { /* 忽略 */ }
+      }
+      async function ntSave() {
+        ntBusy.value = 'save';
+        try {
+          await api.post('/api/admin/notify', {
+            enabled: ntEnabled.value,
+            webhook: ntWebhook.value,
+            panel_url: ntPanelUrl.value,
+            cooldown: Number(ntCooldown.value || 300),
+            events: ntEvents.value
+          });
+          ElMessage.success('通知设置已保存');
+          await loadNotify();
+        } catch (e) { apiErr(e); }
+        ntBusy.value = '';
+      }
+      async function ntTest() {
+        ntBusy.value = 'test';
+        try {
+          // 测试前先存一次，避免「测试通了但设置没保存」
+          await api.post('/api/admin/notify', {
+            enabled: true, webhook: ntWebhook.value, panel_url: ntPanelUrl.value,
+            cooldown: Number(ntCooldown.value || 300), events: ntEvents.value
+          });
+          const r = await api.post('/api/admin/notify/test');
+          if (r.data && r.data.ok) ElMessage.success('测试消息已发送，去企微群里看');
+          else ElMessage.error('发送失败：' + ((r.data && r.data.error) || '未知错误'));
+          await loadNotify();
+        } catch (e) { apiErr(e); }
+        ntBusy.value = '';
+      }
+      function ntEventLabel(k) {
+        const hit = (ntEventList.value || []).find(function (e) { return e.key === k; });
+        if (hit) return hit.label;
+        return k === 'test' ? '测试' : k;
+      }
+      function ntTs(ts) {
+        if (!ts) return '-';
+        const d = new Date(ts * 1000);
+        const p = function (n) { return String(n).padStart(2, '0'); };
+        return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' '
+          + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+      }
+
       async function loadGw() {
         if (!token.value) return;
         try { const r = await api.get('/api/admin/gw/status'); gw.value = r.data || {}; } catch (e) { /* 忽略 */ }
@@ -982,7 +1049,7 @@
       // 打开设置窗口 / 切到「网关」页签时补拉一次网关状态：
       // 以前只在启动带 token 或深链时 loadGw，从菜单进设置时 gw 是空的，
       // 证书列表、WAF 统计都显示 0（2026-10-26 浏览器实测发现）。
-      watch(adminOpen, function (v) { if (v) { loadGw(); loadNodes(); } });
+      watch(adminOpen, function (v) { if (v) { loadGw(); loadNodes(); loadNotify(); } });
       watch(tab, function (v) { if (v === 'gw' && adminOpen.value) loadGw(); });
 
       async function gwReload() {
@@ -3541,6 +3608,8 @@
         selCats, catAllChecked, catIndeterminate,
         onCatCheck, toggleAllCats, doScan, selectAllNew, importSelected, excludeCand, restoreExcluded, syncAll, autocatAll, autoSaveAt, flushAutoSave,
         gw, gwBusy, gwProxying, gwNics, gwNet, gwLoadNics, gwIpTest, nicIpv4, isPrivateIp, onIpModeChange, loadGw, gwSave, gwReload, gwIssue, gwCertDel, gwSyncAll,
+        ntEnabled, ntWebhook, ntPanelUrl, ntCooldown, ntEvents, ntEventList, ntHistory, ntBusy,
+        loadNotify, ntSave, ntTest, ntEventLabel, ntTs,
         gwNodes, nodeBusy, nodeSteps, nodeForm, loadNodes, nodeLogText,
         gwNodeTest, gwNodeDeploy, gwNodeEdit, gwNodeReset, gwNodeUse, gwNodeCert, gwNodeDel,
         gwDdnsNow, gwFrpApply, gwDnsTest, gwProxyItem, gwDlg, openGwDlg, saveGwDlg, gwCopy, closeAdmin,

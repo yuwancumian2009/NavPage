@@ -189,6 +189,13 @@ class FrpManager:
                                          cwd=self.dir, start_new_session=False, env=env)
             self.started_at = int(time.time())
             self.log(f"frpc 已启动（pid {self.proc.pid}）")
+            # 通知：重启完成（热重载不走到这里，所以不会因为改卡片刷屏）
+            try:
+                from .. import notify as _notify
+                _notify.send("frp_up", "frp 已重启完成",
+                             "frpc 启动成功（pid %s），隧道正在重新注册。" % self.proc.pid, url="/")
+            except Exception:
+                pass
         except Exception as e:
             self.error = f"启动 frpc 失败：{e}"
             self.log(self.error)

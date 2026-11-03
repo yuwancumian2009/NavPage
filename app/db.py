@@ -93,6 +93,13 @@ DEFAULT_SETTINGS = {
     "image_auto_prune_cron": "0 3 * * 0",
     "image_prune_mode": "dangling",
     "image_prune_keep": [],
+    # 通知（企微群机器人图文卡片）。事件粒度见 app/notify.py 的 EVENTS。
+    "notify_enabled": False,
+    "notify_wecom_webhook": "",
+    "notify_events": ["update_ok", "update_fail", "prune", "node_down", "node_up",
+                      "frp_down", "frp_up", "cert_expiring"],
+    "notify_panel_url": "",        # 卡片点开跳转的面板地址，如 https://navpage.xxx.top
+    "notify_cooldown": 300,        # 节点/frp 类事件的重复抑制秒数
     # 在线图标库：可配多个 GitHub 公开图标仓库（仓库地址 / 分支 / 备注名 / 子目录）。
     # 首项是内置默认库，与 app/iconlib.py 的 DEFAULT_LIB 保持一致。
     # 增删改走 /api/admin/iconlibraries，别的手改这个键。

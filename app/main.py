@@ -32,7 +32,7 @@ from pydantic import BaseModel
 
 import httpx
 
-from . import db, netutil, dockerapi, icons, iconlib, widgets, registry, cron, version, gately
+from . import db, netutil, dockerapi, icons, iconlib, widgets, registry, cron, version, gately, notify
 from . import gw as gw_mod
 from . import compose as compose_mod
 from . import backup as backup_mod
@@ -183,6 +183,7 @@ def _startup():
     db.init()
     # 镜像定时自动检查/自动更新（设置项 image_auto_check）。单进程 uvicorn，不会重复起。
     threading.Thread(target=_auto_scheduler_loop, name="navpage-auto-check", daemon=True).start()
+    threading.Thread(target=_notify_watch_loop, name="navpage-notify-watch", daemon=True).start()
 
 
 @app.get("/api/health")
@@ -1437,6 +1438,20 @@ def _hist_add(rec):
             json.dump(arr[:30], f, ensure_ascii=False, indent=1)
     except Exception:
         pass
+    # 通知：这里是所有更新结果的唯一收口（定时/手动/勾选三个入口都走它），
+    # 放在写历史之后，通知失败也不影响历史。
+    try:
+        name = str(rec.get("container") or "")
+        if name and not name.startswith("("):
+            if rec.get("success") is False:
+                notify.send("update_fail", "容器更新失败：%s" % name,
+                            rec.get("message") or "", key=name)
+            elif rec.get("success") is True:
+                notify.send("update_ok", "容器已更新：%s" % name,
+                            "镜像：%s\n耗时 %ss" % (rec.get("image") or "-", rec.get("elapsed") or "?"),
+                            key=name)
+    except Exception:
+        pass
 
 
 def _hist_list():
@@ -1653,6 +1668,14 @@ def _prune_run(mode=None, force=False, auto=False):
     _hist_add({"ts": rec["ts"], "container": "(定时清理镜像)" if auto else "(手动清理镜像)",
                "image": "", "success": bool(rec["ok"]), "elapsed": rec["elapsed"],
                "local_only": False, "message": _prune_summary(rec), "log": []})
+    try:
+        n = len(rec.get("removed") or [])
+        if n or rec.get("failed"):
+            notify.send("prune", "镜像清理%s：删除 %d 个，释放 %s"
+                        % ("（定时）" if auto else "（手动）", n, rec.get("freed_text") or "0 B"),
+                        _prune_summary(rec))
+    except Exception:
+        pass
     return rec
 
 
@@ -3905,6 +3928,151 @@ def gw_frp_apply(_=Depends(require_admin)):
 
 # ---------------------------------------------------------------- 远程 FRP 节点（2.1.0）
 # 把 frps（+ 可选 Caddy）部署到任意裸 VPS：SSH + Docker，不依赖 1Panel/宝塔。
+# ---------------------------------------------------------------- admin: notify
+_NOTIFY_STATE: dict = {"frp": None, "node": None}
+
+
+def _frp_host_port(s) -> tuple[str, int]:
+    raw = (s.get("frp_server") or "").strip()
+    port = int(s.get("frp_port") or 7000)
+    if not raw:
+        return "", port
+    host = raw.split("//")[-1].split("/")[0]
+    if ":" in host and host.count(":") == 1:
+        host, p2 = host.split(":")
+        try:
+            port = int(p2)
+        except Exception:
+            pass
+    return host, port
+
+
+def _node_alive(s) -> bool | None:
+    host, port = _frp_host_port(s)
+    if not (host and port):
+        return None
+    try:
+        with socket.create_connection((host, port), timeout=5):
+            return True
+    except Exception:
+        return False
+
+
+def _notify_watch_loop():
+    """盯着两件事：frpc 进程在不在、远端节点端口通不通。
+
+    只在**状态翻转**时发通知（不是每轮都发），再叠加 notify 的冷却，
+    否则节点抖一下就是十几条消息，群里会烦。
+    """
+    time.sleep(20)
+    while True:
+        try:
+            s = db.get_settings()
+            if s.get("notify_enabled"):
+                svc = gw_mod.instance()
+                running = None
+                if svc is not None and s.get("frp_enabled"):
+                    try:
+                        running = bool(svc.frp.status().get("running"))
+                    except Exception:
+                        running = None
+                if running is not None:
+                    prev = _NOTIFY_STATE.get("frp")
+                    if prev is not None and running != prev:
+                        if running:
+                            notify.send("frp_up", "frp 已重新连上",
+                                        "frpc 进程已恢复，隧道重新注册完成，外网地址应可访问。",
+                                        url="/")
+                        else:
+                            notify.send("frp_down", "frp 掉线了",
+                                        "frpc 进程不在运行，外网地址暂时不可用；面板会在下一轮自动重启它。",
+                                        url="/")
+                    _NOTIFY_STATE["frp"] = running
+                if s.get("frp_enabled"):
+                    alive = _node_alive(s)
+                    if alive is not None:
+                        prev_n = _NOTIFY_STATE.get("node")
+                        if prev_n is not None and alive != prev_n:
+                            host, port = _frp_host_port(s)
+                            if alive:
+                                notify.send("node_up", "远程节点恢复：%s:%s" % (host, port),
+                                            "frp 服务端端口重新可达。")
+                            else:
+                                notify.send("node_down", "远程节点不通：%s:%s" % (host, port),
+                                            "连不上 frp 服务端，外网隧道会陆续失效。检查 VPS 是否在线 / 安全组是否放行。",
+                                            url="/")
+                        _NOTIFY_STATE["node"] = alive
+                # 证书到期：6 小时查一次就够，别每轮都算
+                if time.time() - float(_NOTIFY_STATE.get("cert_ts") or 0) > 21600:
+                    _NOTIFY_STATE["cert_ts"] = time.time()
+                    try:
+                        svc2 = gw_mod.instance()
+                        certs = svc2.certs.entries() if svc2 else []
+                        soon = []
+                        for c in certs:
+                            na = int(c.get("not_after") or 0)
+                            if not na or not c.get("exists"):
+                                continue
+                            days = (na - time.time()) / 86400.0
+                            if days <= 10:
+                                soon.append("%s（%d 天）" % (c.get("name"), int(days)))
+                        if soon:
+                            notify.send("cert_expiring", "证书即将过期",
+                                        "、".join(soon[:6]) + "\n续期失败时请检查 DNS 凭据与 80/443 可达性。",
+                                        url="/")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        time.sleep(45)
+
+
+@app.get("/api/admin/notify")
+def admin_notify_get(_=Depends(require_admin)):
+    s = db.get_settings()
+    return {"ok": True,
+            "enabled": bool(s.get("notify_enabled")),
+            "webhook": s.get("notify_wecom_webhook") or "",
+            "events": s.get("notify_events") or [],
+            "panel_url": s.get("notify_panel_url") or "",
+            "cooldown": int(s.get("notify_cooldown") or 300),
+            "event_list": notify.event_list(),
+            "history": notify.history()}
+
+
+class NotifyBody(BaseModel):
+    enabled: bool | None = None
+    webhook: str | None = None
+    events: list | None = None
+    panel_url: str | None = None
+    cooldown: int | None = None
+
+
+@app.post("/api/admin/notify")
+def admin_notify_save(body: NotifyBody, _=Depends(require_admin)):
+    patch = {}
+    if body.enabled is not None:
+        patch["notify_enabled"] = bool(body.enabled)
+    if body.webhook is not None:
+        w = (body.webhook or "").strip()
+        if w and not w.startswith("http"):
+            return _err("webhook 要以 http(s):// 开头（企业微信群机器人地址）")
+        patch["notify_wecom_webhook"] = w
+    if body.events is not None:
+        patch["notify_events"] = [str(x) for x in body.events if str(x) in notify.EVENTS]
+    if body.panel_url is not None:
+        patch["notify_panel_url"] = (body.panel_url or "").strip().rstrip("/")
+    if body.cooldown is not None:
+        patch["notify_cooldown"] = max(0, min(86400, int(body.cooldown)))
+    db.update_settings(patch)
+    return {"ok": True}
+
+
+@app.post("/api/admin/notify/test")
+def admin_notify_test(_=Depends(require_admin)):
+    return notify.test()
+
+
 from .gw import node as node_mod  # noqa: E402
 
 

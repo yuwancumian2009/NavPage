@@ -95,7 +95,11 @@ DEFAULT_SETTINGS = {
     "image_prune_keep": [],
     # 通知（企微群机器人图文卡片）。事件粒度见 app/notify.py 的 EVENTS。
     "notify_enabled": False,
-    "notify_wecom_webhook": "",
+    "notify_wecom_corpid": "",
+    "notify_wecom_secret": "",
+    "notify_wecom_agentid": "",
+    "notify_wecom_touser": "@all",
+    "notify_wecom_api": "",
     "notify_events": ["update_ok", "update_fail", "prune", "node_down", "node_up",
                       "frp_down", "frp_up", "cert_expiring"],
     "notify_panel_url": "",        # 卡片点开跳转的面板地址，如 https://navpage.xxx.top

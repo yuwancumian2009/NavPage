@@ -32,7 +32,11 @@
       const tab = ref('items');
       // ---- 通知（企业微信群机器人）
       const ntEnabled = ref(false);
-      const ntWebhook = ref('');
+      const ntCorpid = ref('');
+      const ntSecret = ref('');
+      const ntAgentid = ref('');
+      const ntTouser = ref('@all');
+      const ntApi = ref('');
       const ntPanelUrl = ref('');
       const ntCooldown = ref(300);
       const ntEvents = ref([]);
@@ -951,7 +955,11 @@
           const r = await api.get('/api/admin/notify');
           const d = r.data || {};
           ntEnabled.value = !!d.enabled;
-          ntWebhook.value = d.webhook || '';
+          ntCorpid.value = d.corpid || '';
+          ntSecret.value = d.secret || '';
+          ntAgentid.value = d.agentid || '';
+          ntTouser.value = d.touser || '@all';
+          ntApi.value = d.api || '';
           ntPanelUrl.value = d.panel_url || '';
           ntCooldown.value = Number(d.cooldown || 300);
           ntEvents.value = Array.isArray(d.events) ? d.events.slice() : [];
@@ -964,7 +972,11 @@
         try {
           await api.post('/api/admin/notify', {
             enabled: ntEnabled.value,
-            webhook: ntWebhook.value,
+            corpid: ntCorpid.value,
+            secret: ntSecret.value,
+            agentid: ntAgentid.value,
+            touser: ntTouser.value,
+            api: ntApi.value,
             panel_url: ntPanelUrl.value,
             cooldown: Number(ntCooldown.value || 300),
             events: ntEvents.value
@@ -979,11 +991,13 @@
         try {
           // 测试前先存一次，避免「测试通了但设置没保存」
           await api.post('/api/admin/notify', {
-            enabled: true, webhook: ntWebhook.value, panel_url: ntPanelUrl.value,
+            enabled: true, corpid: ntCorpid.value, secret: ntSecret.value,
+            agentid: ntAgentid.value, touser: ntTouser.value, api: ntApi.value,
+            panel_url: ntPanelUrl.value,
             cooldown: Number(ntCooldown.value || 300), events: ntEvents.value
           });
           const r = await api.post('/api/admin/notify/test');
-          if (r.data && r.data.ok) ElMessage.success('测试消息已发送，去企微群里看');
+          if (r.data && r.data.ok) ElMessage.success('测试消息已发送，去企业微信应用里看');
           else ElMessage.error('发送失败：' + ((r.data && r.data.error) || '未知错误'));
           await loadNotify();
         } catch (e) { apiErr(e); }
@@ -3608,7 +3622,7 @@
         selCats, catAllChecked, catIndeterminate,
         onCatCheck, toggleAllCats, doScan, selectAllNew, importSelected, excludeCand, restoreExcluded, syncAll, autocatAll, autoSaveAt, flushAutoSave,
         gw, gwBusy, gwProxying, gwNics, gwNet, gwLoadNics, gwIpTest, nicIpv4, isPrivateIp, onIpModeChange, loadGw, gwSave, gwReload, gwIssue, gwCertDel, gwSyncAll,
-        ntEnabled, ntWebhook, ntPanelUrl, ntCooldown, ntEvents, ntEventList, ntHistory, ntBusy,
+        ntEnabled, ntCorpid, ntSecret, ntAgentid, ntTouser, ntApi, ntPanelUrl, ntCooldown, ntEvents, ntEventList, ntHistory, ntBusy,
         loadNotify, ntSave, ntTest, ntEventLabel, ntTs,
         gwNodes, nodeBusy, nodeSteps, nodeForm, loadNodes, nodeLogText,
         gwNodeTest, gwNodeDeploy, gwNodeEdit, gwNodeReset, gwNodeUse, gwNodeCert, gwNodeDel,

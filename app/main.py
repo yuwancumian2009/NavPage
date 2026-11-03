@@ -4032,7 +4032,11 @@ def admin_notify_get(_=Depends(require_admin)):
     s = db.get_settings()
     return {"ok": True,
             "enabled": bool(s.get("notify_enabled")),
-            "webhook": s.get("notify_wecom_webhook") or "",
+            "corpid": s.get("notify_wecom_corpid") or "",
+            "secret": s.get("notify_wecom_secret") or "",
+            "agentid": s.get("notify_wecom_agentid") or "",
+            "touser": s.get("notify_wecom_touser") or "@all",
+            "api": s.get("notify_wecom_api") or "",
             "events": s.get("notify_events") or [],
             "panel_url": s.get("notify_panel_url") or "",
             "cooldown": int(s.get("notify_cooldown") or 300),
@@ -4042,7 +4046,11 @@ def admin_notify_get(_=Depends(require_admin)):
 
 class NotifyBody(BaseModel):
     enabled: bool | None = None
-    webhook: str | None = None
+    corpid: str | None = None
+    secret: str | None = None
+    agentid: str | None = None
+    touser: str | None = None
+    api: str | None = None
     events: list | None = None
     panel_url: str | None = None
     cooldown: int | None = None
@@ -4053,11 +4061,22 @@ def admin_notify_save(body: NotifyBody, _=Depends(require_admin)):
     patch = {}
     if body.enabled is not None:
         patch["notify_enabled"] = bool(body.enabled)
-    if body.webhook is not None:
-        w = (body.webhook or "").strip()
-        if w and not w.startswith("http"):
-            return _err("webhook 要以 http(s):// 开头（企业微信群机器人地址）")
-        patch["notify_wecom_webhook"] = w
+    if body.corpid is not None:
+        patch["notify_wecom_corpid"] = (body.corpid or "").strip()
+    if body.secret is not None:
+        patch["notify_wecom_secret"] = (body.secret or "").strip()
+    if body.agentid is not None:
+        aid = (body.agentid or "").strip()
+        if aid and not aid.isdigit():
+            return _err("AgentId 必须是数字（企业微信后台「我的企业→应用管理」里能看到）")
+        patch["notify_wecom_agentid"] = aid
+    if body.touser is not None:
+        patch["notify_wecom_touser"] = (body.touser or "").strip() or "@all"
+    if body.api is not None:
+        api = (body.api or "").strip().rstrip("/")
+        if api and not api.startswith("http"):
+            return _err("接口地址要以 http(s):// 开头，留空则用 qyapi.weixin.qq.com")
+        patch["notify_wecom_api"] = api
     if body.events is not None:
         patch["notify_events"] = [str(x) for x in body.events if str(x) in notify.EVENTS]
     if body.panel_url is not None:

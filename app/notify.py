@@ -1,10 +1,12 @@
-"""通知中心：把面板里值得知道的事推到企业微信群（图文卡片消息）。
+"""通知中心：把面板里值得知道的事推到企业微信「自建应用」（应用消息 · 图文卡片）。
 
 设计要点（都是踩过的坑）：
   * 更新/清理/节点/frp 全在后台线程里跑，通知必须「永不抛异常、永不阻塞」——
-    一个 webhook 超时不能拖住定时任务，所以发送一律丢到 daemon 线程里做。
-  * 企业微信机器人有频率限制（每分钟 20 条），所以要按 (事件, key) 去抖：
-    节点抖动、frp 反复重连时只报一次，冷却期内不重复。
+    一次接口超时不能拖住定时任务，所以发送一律丢到 daemon 线程里做。
+  * 走的是应用消息通道：CorpId + Secret 换 access_token，再按 agentid 发给应用可见范围内的人。
+    接口地址可配（默认 qyapi.weixin.qq.com，海外/受限网络可填自建反代）。token 缓存在进程内，
+    失效（40014/42001）时自动清缓存重试一次。
+  * 事件按 (事件, key) 去抖：节点抖动、frp 反复重连时只报一次，冷却期内不重复。
   * 发送结果落 /data/notify_history.json，UI 里能看最近 30 条，出问题不用翻日志。
 """
 from __future__ import annotations
@@ -15,14 +17,16 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 
 from . import db
 
 HIST_FILE = os.path.join(db.DATA_DIR, "notify_history.json")
 _LOCK = threading.Lock()
 _LAST: dict[tuple[str, str], float] = {}
+_TOK = {"key": "", "token": "", "exp": 0.0}
+API_DEFAULT = "https://qyapi.weixin.qq.com"
 
-# 事件清单：key -> (中文名, 默认冷却秒数)
 EVENTS: dict[str, tuple[str, int]] = {
     "update_ok":   ("容器自动更新完成", 0),
     "update_fail": ("容器更新失败", 0),
@@ -68,53 +72,108 @@ def history() -> list:
     return _hist_read()
 
 
-def _wecom_post(webhook: str, payload: dict, timeout: float = 8.0) -> tuple[bool, str]:
-    """企业微信群机器人 webhook。errcode=0 才算成功（HTTP 200 但 errcode 非 0 很常见）。"""
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(webhook, data=body, method="POST",
-                                 headers={"Content-Type": "application/json"})
+def api_base(s: dict | None = None) -> str:
+    s = s or db.get_settings()
+    return ((s.get("notify_wecom_api") or "").strip() or API_DEFAULT).rstrip("/")
+
+
+def creds(s: dict | None = None) -> tuple[str, str, str]:
+    s = s or db.get_settings()
+    return ((s.get("notify_wecom_corpid") or "").strip(),
+            (s.get("notify_wecom_secret") or "").strip(),
+            str(s.get("notify_wecom_agentid") or "").strip())
+
+
+def configured(s: dict | None = None) -> bool:
+    cid, sec, aid = creds(s)
+    return bool(cid and sec and aid)
+
+
+def _http_json(url: str, payload: dict | None = None, timeout: float = 10.0) -> dict:
+    data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=data, method="POST" if data else "GET",
+        headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             raw = r.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
-        return False, f"HTTP {e.code}: {e.read()[:200].decode('utf-8', 'replace')}"
-    except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
+        raise RuntimeError(f"HTTP {e.code}: {e.read()[:200].decode('utf-8', 'replace')}")
     try:
-        j = json.loads(raw)
+        return json.loads(raw)
     except Exception:
-        return False, f"返回非 JSON：{raw[:160]}"
+        raise RuntimeError(f"返回非 JSON：{raw[:160]}")
+
+
+def _access_token(s: dict) -> str:
+    cid, sec, _aid = creds(s)
+    base = api_base(s)
+    key = f"{base}|{cid}|{sec[-8:]}"
+    now = time.time()
+    with _LOCK:
+        if _TOK["key"] == key and float(_TOK["exp"]) > now + 120:
+            return str(_TOK["token"])
+    j = _http_json(f"{base}/cgi-bin/gettoken?corpid={quote(cid)}&corpsecret={quote(sec)}")
     if int(j.get("errcode") or 0) != 0:
-        return False, f"errcode={j.get('errcode')} errmsg={j.get('errmsg')}"
-    return True, raw[:200]
+        raise RuntimeError(f"取 access_token 失败：errcode={j.get('errcode')} {j.get('errmsg')}")
+    tok = str(j.get("access_token") or "")
+    if not tok:
+        raise RuntimeError("取 access_token 失败：返回里没有 access_token")
+    with _LOCK:
+        _TOK.update({"key": key, "token": tok, "exp": now + int(j.get("expires_in") or 7200)})
+    return tok
 
 
-def _news_payload(title: str, desc: str, url: str = "") -> dict:
-    """图文卡片：article 的 description 只吃纯文本，换行用 \\n。"""
-    article = {
-        "title": (title or "导航页通知")[:128],
-        "description": (desc or "")[:512],
+def _article(title: str, desc: str, url: str = "", picurl: str = "") -> dict:
+    a = {"title": (title or "导航页通知")[:128], "description": (desc or "")[:512]}
+    if url:
+        a["url"] = url
+    if picurl:
+        a["picurl"] = picurl
+    return a
+
+
+def app_send(article: dict, s: dict | None = None) -> tuple[bool, str]:
+    """msgtype=news 的应用消息。返回 (是否成功, 可读结果)。"""
+    s = s or db.get_settings()
+    cid, sec, aid = creds(s)
+    if not (cid and sec and aid):
+        return False, "企业微信应用凭证不完整（CorpId / Secret / AgentId 都要填）"
+    try:
+        agentid = int(aid)
+    except Exception:
+        return False, f"AgentId 不是数字：{aid}"
+    base = api_base(s)
+    touser = (s.get("notify_wecom_touser") or "@all").strip() or "@all"
+    payload = {
+        "touser": touser,
+        "msgtype": "news",
+        "agentid": agentid,
+        "news": {"articles": [article]},
+        "safe": 0,
     }
-    if url:                      # 没配面板地址就别塞 localhost，卡片不给链接即可
-        article["url"] = url
-    return {"msgtype": "news", "news": {"articles": [article]}}
+    for attempt in (1, 2):
+        try:
+            tok = _access_token(s)
+            j = _http_json(f"{base}/cgi-bin/message/send?access_token={quote(tok)}", payload)
+        except Exception as e:
+            return False, f"{type(e).__name__}: {e}"
+        code = int(j.get("errcode") or 0)
+        if code == 0:
+            bad = (j.get("invaliduser") or "").strip()
+            return True, ("发送成功" + (f"（无效接收人：{bad}）" if bad else ""))
+        if code in (40014, 42001) and attempt == 1:
+            with _LOCK:
+                _TOK.update({"key": "", "token": "", "exp": 0.0})
+            continue
+        return False, f"errcode={code} errmsg={j.get('errmsg')}"
+    return False, "发送失败（未知原因）"
 
 
-def _do_send(text_title: str, text_desc: str, url: str, event: str, sync: bool = False):
-    s = db.get_settings()
-    webhook = (s.get("notify_wecom_webhook") or "").strip()
-    if not webhook:
-        return False, "没有配置企业微信 webhook"
-
-    def _worker():
-        ok, msg = _wecom_post(webhook, _news_payload(text_title, text_desc, url))
-        _hist_add({"ts": _now(), "event": event, "title": text_title,
-                   "desc": text_desc, "url": url, "ok": bool(ok), "msg": "" if ok else msg})
-
-    if sync:
-        return _wecom_post(webhook, _news_payload(text_title, text_desc, url))
-    threading.Thread(target=_worker, name="navpage-notify", daemon=True).start()
-    return True, "已入队"
+def _dispatch(title: str, desc: str, url: str, event: str):
+    ok, msg = app_send(_article(title, desc, url))
+    _hist_add({"ts": _now(), "event": event, "title": title, "desc": desc,
+               "url": url, "ok": bool(ok), "msg": "" if ok else msg})
 
 
 def send(event: str, title: str, desc: str = "", url: str = "", key: str = "") -> bool:
@@ -123,7 +182,7 @@ def send(event: str, title: str, desc: str = "", url: str = "", key: str = "") -
         s = db.get_settings()
         if not s.get("notify_enabled"):
             return False
-        if not (s.get("notify_wecom_webhook") or "").strip():
+        if not configured(s):
             return False
         on = s.get("notify_events")
         if isinstance(on, list) and event not in on:
@@ -142,25 +201,28 @@ def send(event: str, title: str, desc: str = "", url: str = "", key: str = "") -
         base = (s.get("notify_panel_url") or "").strip()
         if base:
             if not url:
-                url = base + "/"          # 没指定跳转就落到面板首页，别给企微一个 localhost
+                url = base + "/"
             elif not url.startswith("http"):
                 url = base.rstrip("/") + url
-        _do_send(title, desc, url, event)
+        threading.Thread(target=_dispatch, args=(title, desc, url, event),
+                         name="navpage-notify", daemon=True).start()
         return True
     except Exception:
         return False
 
 
 def test() -> dict:
-    """设置页「发送测试」按钮：同步发一条，直接把企业微信的原始返回给前端。"""
+    """设置页「发送测试」：同步发一条，把企业微信的原始返回摊给前端。"""
     s = db.get_settings()
-    webhook = (s.get("notify_wecom_webhook") or "").strip()
-    if not webhook:
-        return {"ok": False, "error": "先填企业微信机器人 webhook"}
+    if not configured(s):
+        return {"ok": False, "error": "先填 CorpId / 应用 Secret / AgentId"}
     title = "【测试】导航页通知已接通"
-    desc = ("这条是设置页的测试消息。\n"
-            "收到说明 webhook 正确；之后容器更新、镜像清理、节点异常、frp 重连都会按勾选的事件推送。")
-    ok, msg = _wecom_post(webhook, _news_payload(title, desc, url=(s.get("notify_panel_url") or "")))
-    _hist_add({"ts": _now(), "event": "test", "title": title, "desc": desc, "url": "",
-               "ok": bool(ok), "msg": "" if ok else msg})
-    return {"ok": bool(ok), "error": "" if ok else msg}
+    desc = ("这条是设置页的测试消息（企业微信应用 · 图文消息）。\n"
+            "收到说明应用凭证正确；之后容器更新、镜像清理、节点异常、frp 重连都会按勾选的事件推送。")
+    url = (s.get("notify_panel_url") or "").strip()
+    ok, msg = app_send(_article(title, desc, url))
+    _hist_add({"ts": _now(), "event": "test", "title": title, "desc": desc,
+               "url": url, "ok": bool(ok), "msg": "" if ok else msg})
+    return {"ok": bool(ok), "error": "" if ok else msg,
+            "detail": {"api": api_base(s), "agentid": creds(s)[2],
+                       "touser": (s.get("notify_wecom_touser") or "@all")}}

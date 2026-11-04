@@ -76,6 +76,32 @@ class FlapGuard:
             return "down"
         return None
 
+# 事件 → 静态配图（tools/gen_notify_icons.py 生成，放 static/notify/）。
+# 企业微信要求 picurl 能被它的服务器公网拉取，所以这里用「面板地址 + 静态路径」拼，
+# 没配面板地址就干脆不带图（卡片退化成纯文字，不会出现裂图）。
+EVENT_PIC = {
+    "update_ok": "update_ok.png",
+    "update_fail": "update_fail.png",
+    "prune": "prune.png",
+    "node_down": "node_down.png",
+    "node_up": "node_up.png",
+    "frp_down": "frp_down.png",
+    "frp_up": "frp_up.png",
+    "cert_expiring": "cert_expiring.png",
+    "test": "test.png",
+}
+PIC_VER = "2"          # 换图后改这个值，避免企业微信/CDN 缓存旧图
+
+
+def pic_url(s: dict | None = None, event: str = "") -> str:
+    s = s or db.get_settings()
+    base = (s.get("notify_panel_url") or "").strip().rstrip("/")
+    f = EVENT_PIC.get(event)
+    if not base or not f:
+        return ""
+    return f"{base}/notify/{f}?v={PIC_VER}"
+
+
 
 def event_list() -> list[dict]:
     return [{"key": k, "label": v[0], "cooldown": v[1]} for k, v in EVENTS.items()]
@@ -127,16 +153,30 @@ def configured(s: dict | None = None) -> bool:
     return bool(cid and sec and aid)
 
 
-def _http_json(url: str, payload: dict | None = None, timeout: float = 10.0) -> dict:
+# 网络类异常：走自建反代时 SSL 握手偶尔会超时（实测 30 条里有 5 条），重试就能救回来
+_NET_ERR = (urllib.error.URLError, TimeoutError, ConnectionError, OSError)
+
+
+def _http_json(url: str, payload: dict | None = None, timeout: float = 10.0, attempts: int = 3) -> dict:
     data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=data, method="POST" if data else "GET",
-        headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"HTTP {e.code}: {e.read()[:200].decode('utf-8', 'replace')}")
+    raw = ""
+    last = None
+    for i in range(attempts):
+        req = urllib.request.Request(          # 每轮重建：body 只能读一次
+            url, data=data, method="POST" if data else "GET",
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                raw = r.read().decode("utf-8", "replace")
+            break
+        except urllib.error.HTTPError as e:    # 4xx/5xx 是确定性错误，重试没意义
+            raise RuntimeError(f"HTTP {e.code}: {e.read()[:200].decode('utf-8', 'replace')}")
+        except _NET_ERR as e:
+            last = e
+            if i + 1 < attempts:
+                time.sleep(1.2 * (i + 1))
+    else:
+        raise RuntimeError(f"{type(last).__name__}: {last}")
     try:
         return json.loads(raw)
     except Exception:
@@ -209,9 +249,10 @@ def app_send(article: dict, s: dict | None = None) -> tuple[bool, str]:
 
 
 def _dispatch(title: str, desc: str, url: str, event: str):
-    ok, msg = app_send(_article(title, desc, url))
+    pic = pic_url(event=event)
+    ok, msg = app_send(_article(title, desc, url, pic))
     _hist_add({"ts": _now(), "event": event, "title": title, "desc": desc,
-               "url": url, "ok": bool(ok), "msg": "" if ok else msg})
+               "url": url, "pic": pic, "ok": bool(ok), "msg": "" if ok else msg})
 
 
 def send(event: str, title: str, desc: str = "", url: str = "", key: str = "") -> bool:
@@ -260,7 +301,7 @@ def test() -> dict:
     desc = ("这条是设置页的测试消息（企业微信应用 · 图文消息）。\n"
             "收到说明应用凭证正确；之后容器更新、镜像清理、节点异常、frp 重连都会按勾选的事件推送。")
     url = (s.get("notify_panel_url") or "").strip()
-    ok, msg = app_send(_article(title, desc, url))
+    ok, msg = app_send(_article(title, desc, url, pic_url(s, "test")))
     _hist_add({"ts": _now(), "event": "test", "title": title, "desc": desc,
                "url": url, "ok": bool(ok), "msg": "" if ok else msg})
     return {"ok": bool(ok), "error": "" if ok else msg,

@@ -1846,6 +1846,13 @@
               </el-checkbox-group>
             </el-form-item>
           </el-form>
+          <p class="np-sub" style="margin:16px 0 6px;font-size:13px;opacity:.85">配图预览（每种事件一张，显示在卡片顶部）</p>
+          <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;max-width:760px;margin-bottom:6px">
+            <div v-for="e in ntEventList" :key="'pic-' + e.key" style="text-align:center">
+              <img :src="'/notify/' + e.key + '.png?v=2'" style="width:100%;border-radius:6px;display:block;box-shadow:0 1px 3px rgba(0,0,0,.15)">
+              <span style="font-size:12px;opacity:.7">{{ e.label }}</span>
+            </div>
+          </div>
           <p class="np-sub" style="margin:12px 0 6px;font-size:13px;opacity:.85">最近发送</p>
           <el-table :data="ntHistory" size="small" empty-text="还没有发送记录" style="max-width:980px">
             <el-table-column label="时间" width="170">

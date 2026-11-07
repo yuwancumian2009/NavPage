@@ -73,6 +73,23 @@ def image_inspect(image):
     return _get(f"/images/{image}/json")
 
 
+_PLATFORM: dict = {}
+
+
+def platform():
+    """宿主平台 (os, arch)。多架构镜像比对 config digest 时要挑对应的子清单。"""
+    if _PLATFORM.get("v"):
+        return _PLATFORM["v"]
+    v = ("linux", "amd64")
+    try:
+        info = _get("/info") or {}
+        v = (info.get("OSType") or "linux", info.get("Architecture") or "amd64")
+    except Exception:
+        pass
+    _PLATFORM["v"] = v
+    return v
+
+
 def image_index():
     """一次 /images/json 同时建两个索引：(按 tag, 按镜像 ID)。
 
@@ -92,6 +109,8 @@ def image_index():
             # 离线包导入的），只能拿它跟 registry 的 config.digest 比。
             "full_id": (im.get("Id") or "").replace("sha256:", ""),
             "digests": [d for d in (im.get("RepoDigests") or []) if d],
+            # 同一镜像 ID 可能还挂着 tag：容器引用被 pull 挪成裸 ID 时，靠它恢复原引用
+            "tags": tags,
             "created": im.get("Created") or 0,
             "size": im.get("Size") or 0,
         }

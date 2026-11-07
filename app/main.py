@@ -1098,6 +1098,25 @@ def _transient_err(err):
     return any(k in s for k in _TRANSIENT_ERR)
 
 
+def _known_image_ref(name: str) -> str:
+    """容器当前的镜像引用变成裸 ID（tag 被别的 pull 挪走）时，用更新历史里记过的原引用兜底。
+
+    没有这个兜底，一次失败的更新就能把容器永久钉在「未知」状态：自动更新只挑 outdated，
+    unknown 永远跳过，用户看到的就是「这个容器再也不更新了」。
+    """
+    try:
+        if os.path.exists(_HIST_FILE):
+            with open(_HIST_FILE, "r", encoding="utf-8") as f:
+                for r in json.load(f) or []:
+                    if r.get("container") == name:
+                        im = (r.get("image") or "").strip()
+                        if im and not im.startswith("sha256:"):
+                            return im
+    except Exception:
+        pass
+    return ""
+
+
 def _image_rows(force=False):
     """比对本地镜像摘要与 registry 最新摘要。结果按 image_check_cache 秒缓存。"""
     s = db.get_settings()
@@ -1148,9 +1167,25 @@ def _image_rows(force=False):
     for c in cs:
         img = c.get("image") or ""
         li = local_by_id.get(c.get("image_id") or "") or local.get(img) or {}
-        ld = registry.local_digest_for(li.get("digests"), img)
+        lds = registry.local_digests_for(li.get("digests"), img)
+        ld = lds[0] if lds else ""
         rd, err = remote.get(img, ("", "未检查"))
         row_err = err
+        if img.startswith("sha256:"):
+            _known = _known_image_ref(c.get("name") or "")
+            if not _known:
+                # 没有更新历史时，退一步：这个镜像 ID 若还挂着唯一的 tag，那就是它原来的引用
+                _li0 = local_by_id.get(c.get("image_id") or "") or {}
+                _tags0 = [t for t in (_li0.get("tags") or []) if t and t != "<none>:<none>"]
+                if len(_tags0) == 1:
+                    _known = _tags0[0]
+            if _known:
+                # 用历史里记过的原引用继续比对（否则这行永远是「未知」，自动更新再也碰不到）
+                img = _known
+                li = local_by_id.get(c.get("image_id") or "") or local.get(img) or li
+                lds = registry.local_digests_for(li.get("digests"), img)
+                ld = lds[0] if lds else ""
+                rd, err = registry.remote_digest(img, proxy, mirror)
         if img.startswith("sha256:") and li.get("digests"):
             # tag 被别的容器/一次 pull 挪到新镜像后，Docker 会把这个字段降级成裸镜像 ID。
             # 原 tag 已经查不到了，硬猜（比如当成 :latest）可能把别的 tag 的容器更新错，
@@ -1165,6 +1200,19 @@ def _image_rows(force=False):
             })
             continue
         if not ld:
+            # compose build 出来的镜像（名字形如 `<project>-<service>`、没有命名空间、
+            # 也没有 RepoDigests）不可能在 registry 上存在：直接判「本地」，
+            # 既准确又省掉一次白问（实测 14 个自建镜像每小时各浪费一次查询，还招 429）。
+            if "/" not in img and c.get("compose_project"):
+                state[img] = {"status": "local", "ts": time.time(), "is_local_build": True}
+                rows.append({
+                    "container": c.get("name"), "id": c.get("id"), "image": img,
+                    "state": c.get("state"), "project": c.get("compose_project"),
+                    "status": "local", "local_digest": "", "remote_digest": "",
+                    "error": "", "has_repo_digest": False, "is_local_build": True,
+                    "digest_missing": False,
+                })
+                continue
             # RepoDigests 为空 **不等于** 本地构建：飞牛面板装的应用、离线包导入的镜像
             # 都来自 registry，只是 daemon 没留下摘要（用户反馈 openlist 被误判成
             # 「本地镜像」就是这个原因）。带命名空间的引用（有 "/"）去 registry 取
@@ -1219,12 +1267,24 @@ def _image_rows(force=False):
         elif not ld:
             status = "unknown"
             row_err = ""
-        elif registry.normalize(rd) == ld:
+        elif registry.normalize(rd) in lds:
             status = "current"
             row_err = ""
         else:
+            # 摘要对不上，不急着判「可更新」：多架构镜像的本地 RepoDigests 可能记的是
+            # 平台 manifest 摘要，而 registry 顶上是索引摘要。用 config digest（=本地镜像 ID）
+            # 按宿主的 os/arch 再复核一次，内容一致就算最新。
+            #（2026-11-09 用户反馈：MP / lunatv 的 redis 每次都「更新成功」但刷新还显示可更新，
+            #  实测 redis:alpine 本地镜像 ID 与远端 config digest 完全相同，就是口径不一致。）
             status = "outdated"
             row_err = ""
+            try:
+                cfg, _cfg_err = registry.remote_config_digest(img, proxy, mirror,
+                                                             platform=dockerapi.platform())
+                if cfg and registry.normalize(cfg) == "sha256:" + (li.get("full_id") or ""):
+                    status = "current"
+            except Exception:
+                pass
         if not err and status in ("current", "outdated"):
             state[img] = {"status": status, "ts": time.time(),
                           "local": ld, "remote": registry.normalize(rd)}
@@ -1433,7 +1493,19 @@ def _hist_add(rec):
         if os.path.exists(_HIST_FILE):
             with open(_HIST_FILE, "r", encoding="utf-8") as f:
                 arr = json.load(f) or []
-        arr.insert(0, rec)
+        # 有结果的记录，尽量把同一容器那条「已开始，尚未收到结果」占位原地替换，
+        # 否则每次更新都会在历史里留一条永远不结束的占位（自动更新每小时一次时特别脏）。
+        if rec.get("success") is not None and rec.get("container"):
+            for i, r in enumerate(arr):
+                if (r.get("container") == rec.get("container")
+                        and r.get("success") is None
+                        and abs(float(r.get("ts") or 0) - float(rec.get("ts") or 0)) < 6 * 3600):
+                    arr[i] = rec
+                    break
+            else:
+                arr.insert(0, rec)
+        else:
+            arr.insert(0, rec)
         with open(_HIST_FILE, "w", encoding="utf-8") as f:
             json.dump(arr[:30], f, ensure_ascii=False, indent=1)
     except Exception:

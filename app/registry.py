@@ -188,21 +188,33 @@ def normalize(digest):
     return d
 
 
-def local_digest_for(repo_digests, image):
-    """从 /images/{name}/json 的 RepoDigests 里挑出和该镜像对应的摘要。"""
+def local_digests_for(repo_digests, image) -> list[str]:
+    """从 /images/{name}/json 的 RepoDigests 里挑出该镜像的**全部**摘要。
+
+    为什么不能只取一条：多架构镜像（redis:alpine 实测）同一个镜像 ID 会同时带
+    「平台 manifest 摘要」和「索引（manifest list）摘要」两条，比如
+    1166a1ab…（linux/amd64 manifest）和 71885d8c…（index）。
+    而 registry 顶上 tag 返回的是 index 摘要 —— 只比第一条就永远对不上，
+    表现就是「更新成功、刷新后还显示可更新」，自动更新还会每小时白跑一次。
+    """
     registry, repo, _ = parse_ref(image)
     want = repo
-    if registry == "registry-1.docker.io":
-        want = repo
+    out: list[str] = []
     for rd in repo_digests or []:
         if "@" not in rd:
             continue
         name, dg = rd.split("@", 1)
         if name == want or name.endswith("/" + want) or want.endswith(name):
-            return normalize(dg)
-    if repo_digests:
-        return normalize(repo_digests[0])
-    return ""
+            out.append(normalize(dg))
+    if not out:
+        out = [normalize(d.split("@", 1)[1]) for d in (repo_digests or []) if "@" in d]
+    return out
+
+
+def local_digest_for(repo_digests, image):
+    """兼容旧调用：取第一条。新代码请用 local_digests_for 比对全集。"""
+    ds = local_digests_for(repo_digests, image)
+    return ds[0] if ds else ""
 
 
 def _manifest_body(host, repo, ref, proxy=None):
@@ -256,7 +268,7 @@ def _pick_platform_digest(body, want=("linux", "amd64")):
     return ""
 
 
-def remote_config_digest(image, proxy=None, mirror=None):
+def remote_config_digest(image, proxy=None, mirror=None, platform=None):
     """取 registry 上该 tag 的**镜像 config 摘要**（= 本地 `docker images` 的 IMAGE ID）。
 
     为什么需要它：RepoDigests 为空不等于「本地构建」。飞牛面板 / 离线包导入的镜像
@@ -281,9 +293,10 @@ def remote_config_digest(image, proxy=None, mirror=None):
             last = err
             continue
         if body.get("manifests"):
-            d = _pick_platform_digest(body)
+            want = platform or ("linux", "amd64")
+            d = _pick_platform_digest(body, want=want)
             if not d:
-                last = "manifest list 里没有 linux/amd64"
+                last = "manifest list 里没有 %s/%s" % want
                 continue
             body, _ctype, err = _manifest_body(host, repo, d, proxy=px)
             if err:

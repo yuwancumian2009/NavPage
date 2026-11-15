@@ -1479,9 +1479,14 @@ def wbproxy(cfg):
     """wb-proxy（workbuddy2api-hub）：账号积分总览。
 
     数据全部来自面板自己的接口，不读容器内文件：
-      GET /accounts?realm=cn   → accounts[].credits{remain,size,used,packages[],earliest_expiring}
-      GET /usage/analytics?realm=cn&range=today → summary.window{credit,requests}
-    `range=today` 是面板按本地零点算的「今天」，和我们想显示的「今日消耗」一致。
+      GET /accounts?realm=cn|intl → accounts[].credits{remain,size,used,packages[],earliest_expiring}
+      GET /usage/analytics?realm=...&range=today → summary.window{credit,requests}
+
+    两个口径都以面板首页为准（2026-11-12 修）：
+      1. 大数字用「剩余」credits.remain，不用 size —— 面板页签写的是「剩余积分」，
+         用 size（含已消耗）会和点进面板看到的数对不上（hhd 卡实测 4774 vs 4138）。
+      2. 卡上没指定区时国内 + 国际都统计 —— 面板首页两个区都列，
+         只查 cn 会漏掉国际版账号的积分（hhd 国际区还有 220）。
     """
     base = _base(cfg)
     if not base:
@@ -1489,36 +1494,54 @@ def wbproxy(cfg):
     password = (cfg.get("password") or "").strip()
     if not password:
         return _err("没填面板密码：wb-proxy 的 /accounts 只认面板登录密码，API Key 进不去")
-    realm = (cfg.get("realm") or "cn").strip() or "cn"
+    realm_cfg = (cfg.get("realm") or "").strip()
+    realms = [realm_cfg] if realm_cfg in ("cn", "intl") else ["cn", "intl"]
     try:
         warn_days = float(cfg.get("days") or 7)
     except Exception:
         warn_days = 7.0
 
-    accts, pool_usable, analytics = [], None, {}
+    accts, pool_usable, per_realm = [], None, {}
     try:
         with _client() as c:
             h = {"X-Panel-Token": _wb_token(c, base, password)}
-            r = c.get(base + "/accounts", params={"realm": realm}, headers=h)
-            if r.status_code in (401, 403):
-                _WB_TOKEN.clear()          # 密码改过或会话过期：清掉，下次重新登录
-                raise PermissionError("面板密码不对")
-            r.raise_for_status()
-            j = r.json() or {}
-            accts = j.get("accounts") or []
-            pool_usable = j.get("usable")
-            # 今日消耗拿不到就不显示 0 假装拿到了：失败时留 None，指标格显示「—」
-            try:
-                ra = c.get(base + "/usage/analytics",
-                           params={"realm": realm, "range": "today"}, headers=h)
-                if ra.status_code == 200:
-                    analytics = ra.json() or {}
-            except Exception:
-                analytics = {}
+            for rm in realms:
+                r = c.get(base + "/accounts", params={"realm": rm}, headers=h)
+                if r.status_code in (401, 403):
+                    _WB_TOKEN.clear()          # 密码改过或会话过期：清掉，下次重新登录
+                    raise PermissionError("面板密码不对")
+                r.raise_for_status()
+                j = r.json() or {}
+                got = j.get("accounts") or []
+                if j.get("usable") is not None:
+                    pool_usable = (pool_usable or 0) + int(_wb_num(j.get("usable")))
+                # 今日消耗拿不到就留 None（指标格显示「—」），不要用 0 假装拿到了
+                credit = requests_ = None
+                try:
+                    ra = c.get(base + "/usage/analytics",
+                               params={"realm": rm, "range": "today"}, headers=h)
+                    if ra.status_code == 200:
+                        win = ((ra.json() or {}).get("summary") or {}).get("window") or {}
+                        credit, requests_ = win.get("credit"), win.get("requests")
+                except Exception:
+                    pass
+                for a in got:
+                    a["_realm"] = rm
+                accts.extend(got)
+                per_realm[rm] = {
+                    "n": len(got),
+                    "size": sum(_wb_num((a.get("credits") or {}).get("size")) for a in got),
+                    "remain": sum(_wb_num((a.get("credits") or {}).get("remain")) for a in got),
+                    "credit": credit,
+                    "requests": requests_,
+                }
     except PermissionError as e:
         return _err("%s：填的是 wb-proxy 面板的登录密码（不是 API Key）" % e)
     except Exception as e:
         return _err("连不上 wb-proxy：%s" % str(e)[:80])
+
+    if not accts:
+        return _err("面板能连上，但 %s 区没有账号" % "/".join(realms))
 
     now = time.time()
     tot_size = tot_remain = 0.0
@@ -1556,16 +1579,16 @@ def wbproxy(cfg):
                 exp_remain += rem
                 exp_n += 1
 
-    summary = (analytics.get("summary") or {})
-    win = summary.get("window") or {}
-    today_credit = win.get("credit")
-    today_req = win.get("requests")
+    # 今日消耗：按区求和，取不到的区不算，全都取不到才显示「—」
+    _c = [v["credit"] for v in per_realm.values() if v["credit"] is not None]
+    today_credit = _wb_num(sum(_wb_num(x) for x in _c)) if _c else None
+    _q = [v["requests"] for v in per_realm.values() if v["requests"] is not None]
+    today_req = int(sum(_wb_num(x) for x in _q)) if _q else None
 
-    if not accts:
-        return _err("面板能连上，但 %s 区没有账号（realm=%s）" % (realm, realm))
-
+    # 剩余百分比：面板首页也是 remain/size
+    pct = (tot_remain / tot_size * 100.0) if tot_size > 0 else 0.0
     stats = [
-        {"label": "总积分", "value": _wb_credit(tot_size) if have_credit else "—"},
+        {"label": "剩余积分", "value": _wb_credit(tot_remain) if have_credit else "—"},
         {"label": "今日消耗", "value": _wb_credit(today_credit) if today_credit is not None else "—",
          "tone": "warn" if _wb_num(today_credit) > 0 else ""},
         {"label": "可用账号", "value": "%d/%d" % (avail, len(accts)),
@@ -1582,10 +1605,16 @@ def wbproxy(cfg):
     else:
         txt = "账号池正常"
 
-    detail = [["区域", "%s（国内）" % realm if realm == "cn" else realm],
+    names = {"cn": "国内", "intl": "国际"}
+    seen = [r for r in realms if per_realm.get(r, {}).get("n")]
+    detail = [["区域", " + ".join(names.get(r, r) for r in seen) or "—"],
               ["账号数", "%d 个（可用 %d）" % (len(accts), avail)]]
+    if len(seen) > 1:
+        detail.append(["分区剩余", " / ".join(
+            "%s %s" % (names.get(r, r), _wb_credit(per_realm[r]["remain"])) for r in seen)])
     if have_credit:
-        detail.append(["总积分 / 剩余", "%s / %s" % (_wb_credit(tot_size), _wb_credit(tot_remain))])
+        detail.append(["积分（剩余 / 总额）",
+                       "%s / %s" % (_wb_credit(tot_remain), _wb_credit(tot_size))])
     if today_credit is not None:
         detail.append(["今日消耗", "%s 积分%s" % (_wb_credit(today_credit),
                                               "（%d 次请求）" % today_req if today_req else "")])
@@ -1599,7 +1628,8 @@ def wbproxy(cfg):
                           str(p.get("cycle_end_time") or p.get("expire_time") or "")[:10])])
     for a in accts[:6]:
         cr = a.get("credits") or {}
-        detail.append([str(a.get("nickname") or a.get("uid") or "?")[:12],
+        tag = names.get(a.get("_realm"), "")
+        detail.append([str(a.get("nickname") or a.get("uid") or "?")[:12] + ("·" + tag if tag else ""),
                        "剩 %s / 共 %s%s" % (_wb_credit(cr.get("remain")), _wb_credit(cr.get("size")),
                                           "" if a.get("enabled") else "（已停用）")])
     if pool_usable is not None:
@@ -1608,7 +1638,7 @@ def wbproxy(cfg):
     progress = None
     if tot_size > 0:
         progress = {"value": max(0.0, min(1.0, tot_remain / tot_size)),
-                    "label": "剩余 %.0f%%" % (tot_remain / tot_size * 100)}
+                    "label": "剩余 %.0f%%" % pct}
     return _rich(txt, stats, detail, progress, dense=True)
 
 

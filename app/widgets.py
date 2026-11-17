@@ -1064,13 +1064,71 @@ def _ow_call(c, base, user, pwd, obj, method, args=None):
     raise last
 
 
-def _ow_file(c, base, user, pwd, path, default=""):
-    """file.read 只对 ACL 白名单里的路径可用；读不到就当没有这项数据。"""
+def _ow_file(c, base, user, pwd, path, default="", strict=False):
+    """file.read 只对 ACL 白名单里的路径可用；读不到就当没有这项数据。
+
+    strict=True 时把异常抛上去：第一次取 /proc/net/dev 用它，否则登录失败会被
+    吞成「读不到网口」，排查时看不到真实原因。
+    """
     try:
         r = _ow_call(c, base, user, pwd, "file", "read", {"path": path})
         return ((r or {}).get("data")) or default
     except Exception:
+        if strict:
+            raise
         return default
+
+
+def _ow_iface_names(dev_text):
+    """/proc/net/dev 里的接口名列表（去掉表头）。"""
+    names = []
+    for line in (dev_text or "").splitlines():
+        if ":" not in line:
+            continue
+        name = line.split(":", 1)[0].strip()
+        if not name or name.startswith("Inter-") or name == "face":
+            continue
+        names.append(name)
+    return names
+
+
+def _ow_pick_iface(dev_text, netconf="", override=""):
+    """挑出 LAN 接口名。
+
+    写死 br-lan 在「单网口旁路由」形态下会失败：iStoreOS 把 LAN 直接挂在 eth0 上，
+    根本不存在 br-lan 桥。顺序：显式配置 > /etc/config/network 里 lan 的 device
+    （或它的桥端口）> br-lan/br0/eth0 > 流量最大的非 lo 接口。
+    """
+    have = _ow_iface_names(dev_text)
+    if override and override in have:
+        return override
+    m = re.search(r"config interface 'lan'\n(.*?)(?:\nconfig |\Z)", netconf or "", re.S)
+    if m:
+        block = m.group(1)
+        d = re.search(r"option (?:device|ifname) '([^']+)'", block)
+        if d and d.group(1) in have:
+            return d.group(1)
+        for port in re.findall(r"list ports '([^']+)'", block):
+            if port in have:
+                return port
+    for cand in (_OW_IFACE, "br-lan", "br0", "eth0"):
+        if cand in have:
+            return cand
+    best, best_rx = "", -1
+    for line in (dev_text or "").splitlines():
+        if ":" not in line:
+            continue
+        name, rest = line.split(":", 1)
+        name = name.strip()
+        if name in ("", "lo"):
+            continue
+        try:
+            rx = int(rest.split()[0])
+        except Exception:
+            continue
+        if rx > best_rx:
+            best, best_rx = name, rx
+    return best
 
 
 def _ow_iface(txt, iface=None):
@@ -1130,11 +1188,14 @@ def openwrt(cfg):
     try:
         with _client() as c:
             t0 = time.time()
-            dev1 = _ow_file(c, base, user, pwd, "/proc/net/dev")
-            rx1, tx1 = _ow_iface(dev1)
+            dev1 = _ow_file(c, base, user, pwd, "/proc/net/dev", strict=True)
+            netconf = _ow_file(c, base, user, pwd, "/etc/config/network")
+            iface = _ow_pick_iface(dev1, netconf, (cfg.get("iface") or "").strip())
+            rx1, tx1 = _ow_iface(dev1, iface)
             if rx1 is None:
-                return _err("读不到网口 %s 的计数：在路由上确认接口名（ip link 里的 br-lan/eth0），"
-                            "或检查 rpcd 的 file.read ACL 是否放行了 /proc/net/dev" % _OW_IFACE)
+                return _err("读不到网口 %s 的计数（这台机器可用网口：%s）："
+                            "可在小组件配置里加 iface 指定接口名"
+                            % (iface or "?", ", ".join(_ow_iface_names(dev1)[:6]) or "无"))
             sysinfo = _ow_call(c, base, user, pwd, "system", "info") or {}
             board = _ow_call(c, base, user, pwd, "system", "board") or {}
             leases = _ow_file(c, base, user, pwd, "/tmp/dhcp.leases")
@@ -1152,7 +1213,7 @@ def openwrt(cfg):
     except Exception as e:
         return _err("连不上 OpenWrt：%s" % str(e)[:70])
 
-    rx2, tx2 = _ow_iface(dev2)
+    rx2, tx2 = _ow_iface(dev2, iface)
     down = ((rx2 - rx1) / dt) if (rx2 is not None and rx2 >= rx1) else 0.0
     up = ((tx2 - tx1) / dt) if (tx2 is not None and tx2 >= tx1) else 0.0
 
@@ -1203,7 +1264,7 @@ def openwrt(cfg):
         detail.append(["本月流量", "↓%s ↑%s%s" % (fmt_compact(mrx), fmt_compact(mtx),
                                                ("（自 %s）" % since) if since else "")])
     if rx2 is not None and (abs(rx2 - mrx) > 1024 * 1024 or abs(tx2 - mtx) > 1024 * 1024):
-        detail.append(["接口累计", "↓%s ↑%s（%s，自开机）" % (fmt_compact(rx2), fmt_compact(tx2), _OW_IFACE)])
+        detail.append(["接口累计", "↓%s ↑%s（%s，自开机）" % (fmt_compact(rx2), fmt_compact(tx2), iface or "?")])
     detail.append(["在线设备", "%d 台（DHCP 租约 %d）" % (n_clients, n_lease)])
     if uptime:
         detail.append(["运行时长", "%s（%.1f 天）" % (fmt_dur(uptime), float(uptime) / 86400.0)])

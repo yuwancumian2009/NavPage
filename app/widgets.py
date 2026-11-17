@@ -1294,7 +1294,13 @@ def _mh_get(c, base, path, secret):
         h["Authorization"] = "Bearer " + secret
     r = c.get(base + path, headers=h)
     if r.status_code in (401, 403):
-        raise PermissionError("mihomo 需要密钥：请在小组件里填 secret")
+        # 401 有两种情况：没填密钥，或填了但和内核里的 secret 不一致。
+        # 混成一句「请填 secret」会把人带偏（实测面板存的是旧路由的密钥）。
+        if secret:
+            raise PermissionError("mihomo 密钥不对（HTTP %d）：面板里填的 secret 与内核配置里的 "
+                                  "secret: 字段不一致，去 OpenClash/YAML 里核对" % r.status_code)
+        raise PermissionError("mihomo 需要密钥：内核开了 external-controller 但没带 secret，"
+                              "请在小组件里填 secret")
     r.raise_for_status()
     return r.json()
 

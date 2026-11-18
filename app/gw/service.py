@@ -344,7 +344,10 @@ class Gateway:
             # 别名：卡片用短域名（qb2）时，容器名那条（qbittorrent）也留一条隧道，
             # 老书签/分享链接不会因为改名而失效。
             suffix = (sub_host or (cfg.get("frp_domain") or "")).strip().strip(".").lower()
-            alias = f"{slugify(it.get('container_name') or '')}.{suffix}" if suffix else ""
+            # 手动建的卡片没有 container_name，slug 就是空串，拼出来是 ".o.hhxin.top"
+            # 这种「没有子域」的域名 —— frps 收到会整份配置拒收。没有 slug 就不建别名。
+            slug = slugify(it.get("container_name") or "")
+            alias = f"{slug}.{suffix}" if (suffix and slug) else ""
             if alias and alias != d and alias not in used_domains:
                 used_domains.add(alias)
                 aname = f"{name}-alt"

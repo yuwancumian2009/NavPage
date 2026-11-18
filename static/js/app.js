@@ -1138,7 +1138,9 @@
           const r = await api.post('/api/admin/gw/item/' + it.id + '/proxy', {}, { timeout: 180000 });
           const d = r.data || {};
           if (d.ok) {
-            ElMessage.success('已生成：' + (d.url_wan || ''));
+            const made = [d.url_wan, d.url_frp].filter(Boolean).join(' / ');
+            ElMessage.success('已生成：' + (made || '（没有可生成的地址）'));
+            if (d.note) ElMessage.warning({ message: d.note, duration: 5000 });
             itemDlg.value = false;
             await reload(); await loadBootstrap(); await loadGw();
           } else {

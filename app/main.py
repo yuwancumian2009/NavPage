@@ -880,12 +880,43 @@ def create_item(body: ItemBody, _=Depends(require_admin)):
     return {"ok": True, "id": iid, "item": resolve_item(db.get_item(iid), "lan")}
 
 
+def _sync_frp_for_item(it: dict | None) -> dict | None:
+    """卡片保存后让 FRP 立刻跟上：按当前设置重算 FRP 地址 + 立即重下发隧道。
+
+    改端口（url_lan 的端口）时隧道目标要跟着变；以前只在 45 秒的自愈循环里纠正，
+    用户改完看不到效果。地址只在「本来就是自动生成的」前提下才覆盖，手填的不动。
+    """
+    if not it:
+        return it
+    s = db.get_settings()
+    if not s.get("frp_enabled"):
+        return it
+    svc = gw_mod.instance()
+    if not svc:
+        return it
+    try:
+        cur = (it.get("url_frp") or "").strip()
+        new = (svc.item_addresses(it) or {}).get("url_frp") or ""
+        if new and new != cur:
+            suffix = (s.get("frp_subdomain_host") or s.get("frp_domain") or "").strip().strip(".").lower()
+            h = netutil.host_of(cur) if cur else ""
+            auto = (not cur) or bool(suffix and h and (h == suffix or h.endswith("." + suffix)))
+            if auto:
+                db.update_item(it["id"], {"url_frp": new})
+                it = db.get_item(it["id"]) or it
+        svc.frp.apply(svc.cfg(), svc.frp_proxies())
+    except Exception:
+        pass
+    return it
+
+
 @app.put("/api/admin/items/{iid}")
 def update_item(iid: int, body: ItemBody, _=Depends(require_admin)):
     if not db.get_item(iid):
         return _err("条目不存在", 404)
     db.update_item(iid, body.model_dump(exclude_unset=True))
-    return {"ok": True, "item": resolve_item(db.get_item(iid), "lan")}
+    it = _sync_frp_for_item(db.get_item(iid))
+    return {"ok": True, "item": resolve_item(db.get_item(iid) or it, "lan")}
 
 
 @app.delete("/api/admin/items/{iid}")
@@ -3866,37 +3897,57 @@ def gw_item_proxy(iid: int, body: dict | None = None, _=Depends(require_admin)):
         db.update_item(iid, {"proxy_domain": custom})
         it = db.get_item(iid) or it
 
+    s_cur = db.get_settings()
     addr = svc.item_addresses(it)
-    if not addr["proxy_domain"]:
-        return _err("先在网关设置里填「根域名」，或者在这张卡片上手动填反代域名")
+    frp_on = bool(s_cur.get("frp_enabled"))
+    # 反代要根域名（或卡片上手填的域名）；FRP 完全不需要 —— 只开隧道的用户
+    # 点这个按钮不该被「先填根域名」拦住（2026-11-18 用户反馈）。
+    if not addr["proxy_domain"] and not (frp_on and addr["url_frp"]):
+        return _err("反代需要先在网关设置里填「根域名」（或在这张卡片上手填反代域名）；"
+                    "只想走 FRP 的话，去「设置 → FRP」打开隧道并填 frps 地址")
     host, port = svc.item_target(it)
     if not (host and port):
-        return _err("这张卡片没有内网地址（或端口），反代不知道转发到哪")
+        return _err("这张卡片没有内网地址（或端口），不知道要转发到哪")
 
-    patch = {"proxy_domain": addr["proxy_domain"]}
+    patch = {}
+    if addr["proxy_domain"]:
+        patch["proxy_domain"] = addr["proxy_domain"]
     if addr["url_wan"]:
         patch["url_wan"] = addr["url_wan"]
     if addr["url_frp"]:
         patch["url_frp"] = addr["url_frp"]
-    db.update_item(iid, patch)
+    if patch:
+        db.update_item(iid, patch)
 
-    # 2) 签发/续期证书（没配 DNS 凭据时不要整单失败，把错误带回去给前端显示）
+    # 2) 证书只跟反代有关（没配 DNS 凭据时不整单失败，把错误带回去给前端显示）
     cert, cert_err = None, ""
-    if bool(body.get("issue", True)):
+    if addr["proxy_domain"] and bool(body.get("issue", True)):
         try:
             cert = asyncio.run_coroutine_threadsafe(
                 svc.ensure_cert_for(addr["proxy_domain"]), _MAIN_LOOP).result(timeout=300)
         except Exception as e:
             cert_err = str(e)[:300]
 
-    # 3) 路由 / frpc 立刻按新域名重来（不重载的话新域名要等重启才生效）
-    try:
-        asyncio.run_coroutine_threadsafe(svc.reload_all(), _MAIN_LOOP).result(timeout=90)
-    except Exception as e:
-        cert_err = cert_err or ("重载网关失败：" + str(e)[:200])
+    # 3) 反代路由立刻按新域名重来（不重载的话新域名要等重启才生效）
+    if addr["proxy_domain"]:
+        try:
+            asyncio.run_coroutine_threadsafe(svc.reload_all(), _MAIN_LOOP).result(timeout=90)
+        except Exception as e:
+            cert_err = cert_err or ("重载网关失败：" + str(e)[:200])
+
+    # 4) FRP 立刻按这张卡片的当前端口重下发隧道：以前只等 45 秒自愈循环，
+    #    用户改完端口点「生成地址」看不到变化，会以为没生效（2026-11-18 反馈）。
+    frp_state = None
+    if frp_on:
+        try:
+            frp_state = svc.frp.apply(svc.cfg(), svc.frp_proxies())
+        except Exception as e:
+            cert_err = cert_err or ("重载 FRP 失败：" + str(e)[:200])
 
     return {"ok": True, "id": iid, "domain": addr["proxy_domain"], "url_wan": addr["url_wan"],
             "url_frp": addr["url_frp"], "target": f"{host}:{port}", "cert": cert,
+            "frp_enabled": frp_on, "frp": frp_state,
+            "note": "" if addr["proxy_domain"] else "没配反代（根域名为空），已只生成 FRP 地址",
             "cert_error": cert_err, "gw_enabled": bool(svc.cfg().get("gw_enabled"))}
 
 

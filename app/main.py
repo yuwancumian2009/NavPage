@@ -176,6 +176,47 @@ def _fetchable_url(raw, ctx):
     return netutil.expand_url(raw, "lan", ctx) or netutil.expand_url(raw, "wan", ctx)
 
 
+def _icon_candidates(raw_lan, raw_wan, raw_frp, ctx):
+    """抓图标用的候选地址：内网 → 外网 → FRP，去重后只留 http(s)。
+
+    同一条卡片常常只有内网地址是通的（或者反过来，只有外网/FRP 通），
+    早先只看内网一个地址，内网抓不到就直接判失败，外网地址等于白填。
+    """
+    out, seen = [], set()
+    for tag, raw in (("内网", raw_lan), ("外网", raw_wan), ("FRP", raw_frp)):
+        raw = (raw or "").strip()
+        if not raw:
+            continue
+        u = _fetchable_url(raw, ctx)
+        if not u or not u.startswith(("http://", "https://")):
+            continue
+        key = u.rstrip("/")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((tag, key))
+    return out
+
+
+def _fetch_icon_any(cands, online=True, budget=50.0):
+    """按候选顺序抓 favicon，第一个抓到就返回。
+
+    返回 (文件名, 来源说明, 取到的地址, 逐个失败原因列表)。全失败时文件名是 None，
+    来源说明里带每个地址为什么失败，前端直接展示给用户看。
+    """
+    t0 = time.time()
+    tried = []
+    for tag, base in cands:
+        if time.time() - t0 > budget:
+            tried.append("%s：超时跳过" % tag)
+            break
+        f, why = icons.fetch_favicon(base, online=online)
+        if f:
+            return f, "%s · %s" % (tag, why), base, tried
+        tried.append("%s（%s）" % (tag, (why or "未知原因")[:70]))
+    return None, "；".join(tried) or "没有可用地址", "", tried
+
+
 # ---------------------------------------------------------------- public
 
 @app.on_event("startup")
@@ -2974,15 +3015,16 @@ def refresh_icons(request: Request, body: RefreshIconsBody, _=Depends(require_ad
     letter_ok = bool(s.get("icon_letter_fallback", True))
 
     def one(it):
-        base = _fetchable_url(it.get("url_lan"), ctx) or _fetchable_url(it.get("url_wan"), ctx)
+        cands = _icon_candidates(it.get("url_lan"), it.get("url_wan"), it.get("url_frp"), ctx)
+        base = cands[0][1] if cands else ""
         if not base:
             # 连地址都没有（纯内网/无前端服务）：照样给一张首字母图
             if letter_ok:
                 return it, icons.make_letter_icon(it.get("name") or ""), "首字母占位图（无可用地址）", True
             return it, None, "地址展开不出来（模板占位符没配）", False
-        f, why = icons.fetch_favicon(base, online=online_ok)
+        f, why, _base, _tried = _fetch_icon_any(cands, online=online_ok, budget=30.0)
         if not f and letter_ok:
-            return it, icons.make_letter_icon(it.get("name") or "", base), "首字母占位图（" + why[:60] + "）", True
+            return it, icons.make_letter_icon(it.get("name") or "", _base or base), "首字母占位图（" + why[:60] + "）", True
         return it, f, why, False
 
     done, fail, skipped = 0, 0, 0
@@ -3258,6 +3300,7 @@ def admin_container_action(body: ContainerActionBody, _=Depends(require_admin)):
 class ItemIconBody(BaseModel):
     url_lan: str = ""
     url_wan: str = ""
+    url_frp: str = ""
     item_id: int = 0
     name: str = ""          # 抓不到 favicon 时用名称首字母生成占位图
 
@@ -3273,35 +3316,39 @@ def admin_item_icon(request: Request, body: ItemIconBody, _=Depends(require_admi
     ctx = netutil.host_context(request, s)
     raw_lan = (body.url_lan or "").strip()
     raw_wan = (body.url_wan or "").strip()
-    if not raw_lan and not raw_wan and body.item_id:
+    raw_frp = (body.url_frp or "").strip()
+    if not raw_lan and not raw_wan and not raw_frp and body.item_id:
         it = next((i for i in db.list_items() if i["id"] == body.item_id), None)
         if it:
             raw_lan = (it.get("url_lan") or "").strip()
             raw_wan = (it.get("url_wan") or "").strip()
+            raw_frp = (it.get("url_frp") or "").strip()
     # ':8096' 这种只填了端口的残缺值：补成模板再展开
     raw_lan = netutil.normalize_url(raw_lan)
     raw_wan = netutil.normalize_url(raw_wan)
-    if not raw_lan and not raw_wan:
+    raw_frp = netutil.normalize_url(raw_frp)
+    if not raw_lan and not raw_wan and not raw_frp:
         return _err("先在地址栏填一个网址，再来抓图标")
-    base = _fetchable_url(raw_lan, ctx) or _fetchable_url(raw_wan, ctx)
-    if not base:
+    # 内网 → 外网 → FRP 逐个试：哪个通就用哪个的图标，全都失败才生成占位图
+    cands = _icon_candidates(raw_lan, raw_wan, raw_frp, ctx)
+    if not cands:
         return _err("地址里还有 {host} 占位符，但「设置 → 网络」里没填内网地址/外网域名，"
                     "展开不出真实网址")
-    if not (base.startswith("http://") or base.startswith("https://")):
-        return _err("地址要以 http:// 或 https:// 开头（当前是 " + base[:40] + "）")
-    f, why = icons.fetch_favicon(base, online=bool(s.get("icon_online_fallback", True)))
+    online_ok = bool(s.get("icon_online_fallback", True))
+    f, why, base, tried = _fetch_icon_any(cands, online=online_ok)
     letter = False
     if not f and s.get("icon_letter_fallback", True):
         # 纯 API / 没有前端的容器根本没有 favicon，用名称首字母生成占位图，别让卡片空着
+        base = cands[0][1]
         label = (body.name or "").strip() or base.split("://", 1)[-1].split("/")[0]
         f = icons.make_letter_icon(label, base)
         letter = True
         if f:
             return {"ok": True, "icon": f, "from": base,
-                    "source": "首字母占位图（" + why[:80] + "）", "letter": True}
+                    "source": "首字母占位图（" + why[:120] + "）", "letter": True, "tried": tried}
     if not f:
         return _err(f"没抓到图标：{why}。可手动上传图标，或打开「首字母占位」")
-    return {"ok": True, "icon": f, "from": base, "source": why, "letter": letter}
+    return {"ok": True, "icon": f, "from": base, "source": why, "letter": letter, "tried": tried}
 
 
 # ---------------------------------------------------------------- 反代面板联动（Gately）

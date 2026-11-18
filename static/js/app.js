@@ -3254,23 +3254,25 @@
         const it = editItem.value || {};
         const url_lan = joinUrl(it.addr_lan, it.port_lan, it.tail_lan);
         const url_wan = joinUrl(it.addr_wan, it.port_wan, it.tail_wan);
-        if (!url_lan && !url_wan && !it.id) {
+        const url_frp = joinUrl(it.addr_frp, it.port_frp, it.tail_frp);
+        if (!url_lan && !url_wan && !url_frp && !it.id) {
           ElMessage.warning('先在上面填一个网址，再抓图标');
           return;
         }
         iconFetching.value = true;
         try {
+          // 三个地址都带上：后端按 内网 → 外网 → FRP 依次试，哪个抓到用哪个
           const r = await api.post('/api/admin/item/icon',
-                                   { url_lan: url_lan, url_wan: url_wan, item_id: it.id || 0,
-                                     name: it.name || '' },
-                                   { timeout: 60000 });
+                                   { url_lan: url_lan, url_wan: url_wan, url_frp: url_frp,
+                                     item_id: it.id || 0, name: it.name || '' },
+                                   { timeout: 90000 });
           if (r.data && r.data.ok) {
             it.icon = r.data.icon;
             if (r.data.letter) {
-              // 站点确实没有 favicon（纯 API/无前端），返回的是本地生成的首字母图
-              ElMessage.warning('站点没有可抓的图标，已生成首字母占位图，记得保存');
+              // 三个地址都没抓到 favicon（纯 API/无前端/被墙），返回的是本地生成的首字母图
+              ElMessage.warning('内网/外网/FRP 都没抓到图标，已生成首字母占位图，记得保存');
             } else {
-              ElMessage.success('已抓到图标（' + r.data.icon + '），记得保存');
+              ElMessage.success('已抓到图标（' + (r.data.source || '') + '），记得保存');
             }
           } else {
             ElMessage.warning((r.data && r.data.error) || '没抓到图标');

@@ -2197,8 +2197,8 @@ def magpie(cfg):
         {"label": "Token", "value": fmt_compact(inp + out) if (inp + out) else "—",
          "tone": "good" if (inp + out) else "muted"},
         cred_cell,
-        {"label": "消耗", "value": _mg_money(cost) if float(cost or 0) > 0 else "—",
-         "tone": "good" if float(cost or 0) > 0 else "muted"},
+        {"label": "消耗", "value": _mg_credit(d.get("credits")) if d.get("credits") is not None else "—",
+         "tone": "good" if (d.get("credits") or 0) > 0 else "muted"},
     ]
     text = "%s %d 次" % (label, calls)
     if errs:
@@ -2212,11 +2212,16 @@ def magpie(cfg):
         _line = "%s / %s" % (_mg_credit(_rm), _mg_credit(_lim) if _lim else "?")
         if _rs:
             _line += "（%s 重置）" % str(_rs)[:10]
-        detail.append(["积分·%s" % _n, _line])
+        detail.append(["剩余积分·%s" % _n, _line])
     if not credits and cred_err:
         detail.append(["积分", cred_err])
     if inp or out:
         detail.append(["Token", "输入 %s · 输出 %s" % (fmt_compact(inp), fmt_compact(out))])
+    if d.get("credits") is not None or float(cost or 0) > 0:
+        _c = "%s 积分" % _mg_credit(d.get("credits")) if d.get("credits") is not None else "—"
+        if float(cost or 0) > 0:
+            _c += "（折合 %s）" % _mg_money(cost)
+        detail.append(["本期消耗", _c])
     hit = (cache / float(inp + cache) * 100.0) if (inp + cache) else 0.0
     if hit:
         detail.append(["缓存命中", "%.1f%%（读 %s）" % (hit, fmt_compact(cache))])

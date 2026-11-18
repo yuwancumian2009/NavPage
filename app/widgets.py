@@ -2045,6 +2045,65 @@ def _mg_money(v):
     return "$%.2f" % v
 
 
+def _mg_credit(v):
+    """积分数字：小额度保 1 位小数，上千取整，上万走 compact。"""
+    try:
+        v = float(v)
+    except Exception:
+        return "—"
+    if v < 0:
+        return "—"
+    if v >= 10000:
+        return fmt_compact(int(v))
+    if v >= 100:
+        return "%.0f" % v
+    return "%.1f" % v
+
+
+def _mg_credit_window(wins):
+    """从 quotas 的 windows 里挑出「余额」那一条。
+
+    magpie 会同时给出 Credits / Extra credits / Total credits / xxx tokens (est.)，
+    卡上要的是能代表账户余额的那条：优先 Total credits，其次 trayKind=month，最后任意 credits 窗口。
+    """
+    best, best_score = None, -1
+    for w in wins or []:
+        name = (w.get("name") or "").lower()
+        unit = (w.get("unit") or "").lower()
+        if "credit" not in unit and "credit" not in name:
+            continue
+        score = 1
+        if "total" in name:
+            score = 3
+        elif (w.get("trayKind") or "") == "month":
+            score = 2
+        if score > best_score:
+            best, best_score = w, score
+    return best
+
+
+def _mg_credits(c, base):
+    """供应商余额：返回 [(provider 名, 剩余, 额度, 重置时间)]；失败抛异常由调用方兜住。"""
+    r = c.get(base + "/api/usage/quotas")
+    r.raise_for_status()
+    out = []
+    for q in (r.json() or []):
+        w = _mg_credit_window(q.get("windows"))
+        if not w:
+            continue
+        remain = w.get("amount")
+        if remain is None:
+            try:
+                remain = float(w.get("limit") or 0) - float(w.get("used") or 0)
+            except Exception:
+                remain = None
+        if remain is None:
+            continue
+        out.append((q.get("name") or q.get("provider") or "?", float(remain),
+                    w.get("limit"), w.get("resetsAt") or ""))
+    return out
+
+
 def magpie(cfg):
     """Magpie 网关（yetone/magpie）用量小组件。
 
@@ -2072,6 +2131,12 @@ def magpie(cfg):
                 raise PermissionError("Magpie 面板密钥不对（HTTP %d）：填 MAGPIE_WEB_KEY 那个值" % r.status_code)
             r.raise_for_status()
             d = r.json() or {}
+            # 供应商余额：读不到就让积分格显示 —，不能拖垮调用数/花费
+            try:
+                credits = _mg_credits(c, base)
+                cred_err = ""
+            except Exception as e:
+                credits, cred_err = [], "余额读取失败：%s" % str(e)[:60]
     except PermissionError as e:
         return _err(str(e))
     except Exception as e:
@@ -2089,17 +2154,45 @@ def magpie(cfg):
     cost = d.get("cost") or 0
     label = _MG_PERIOD_LABEL.get(period, period)
 
+    # 积分格：多供应商时求和（都是 credits 口径），单供应商显示它自己的余额
+    remain_sum, quotal_sum = 0.0, 0.0
+    for _n, _rm, _lim, _rs in credits:
+        remain_sum += _rm
+        try:
+            quotal_sum += float(_lim or 0)
+        except Exception:
+            pass
+    if credits:
+        cred_tone = "muted"
+        if quotal_sum > 0:
+            ratio = remain_sum / quotal_sum
+            cred_tone = "warn" if ratio < 0.15 else "good"
+        else:
+            cred_tone = "good"
+        cred_cell = {"label": "积分", "value": _mg_credit(remain_sum), "tone": cred_tone}
+    else:
+        cred_cell = {"label": "积分", "value": "—", "tone": "muted"}
+
     stats = [
         {"label": "调用", "value": str(calls), "tone": "warn" if errs else ("good" if calls else "muted")},
-        {"label": "输入", "value": fmt_compact(inp), "tone": "good" if inp else "muted"},
-        {"label": "输出", "value": fmt_compact(out), "tone": "good" if out else "muted"},
+        cred_cell,
         {"label": "花费", "value": _mg_money(cost), "tone": "good" if float(cost or 0) > 0 else "muted"},
+        {"label": "Token", "value": fmt_compact(inp + out), "tone": "good" if (inp + out) else "muted"},
     ]
     text = "%s %d 次 · %s" % (label, calls, _mg_money(cost))
     if errs:
         text += " · %d 错误" % errs
 
     detail = [["统计周期", "%s（自 %s）" % (label, str(d.get("since") or "")[:10] or "-")]]
+    for _n, _rm, _lim, _rs in credits:
+        _line = "%s / %s" % (_mg_credit(_rm), _mg_credit(_lim) if _lim else "?")
+        if _rs:
+            _line += "（%s 重置）" % str(_rs)[:10]
+        detail.append(["积分·%s" % _n, _line])
+    if not credits and cred_err:
+        detail.append(["积分", cred_err])
+    if inp or out:
+        detail.append(["Token", "输入 %s · 输出 %s" % (fmt_compact(inp), fmt_compact(out))])
     hit = (cache / float(inp + cache) * 100.0) if (inp + cache) else 0.0
     if hit:
         detail.append(["缓存命中", "%.1f%%（读 %s）" % (hit, fmt_compact(cache))])

@@ -2045,6 +2045,20 @@ def _mg_money(v):
     return "$%.2f" % v
 
 
+def _mg_providers(c, base):
+    """已配置的供应商：返回 [(名字, 模型数, 是否可用)]；读不到返回 []。"""
+    r = c.get(base + "/api/providers")
+    r.raise_for_status()
+    out = []
+    for p in ((r.json() or {}).get("providers") or []):
+        if p.get("off"):
+            continue
+        out.append((p.get("name") or p.get("id") or "?",
+                    len(p.get("models") or []),
+                    bool(p.get("ready", True))))
+    return out
+
+
 def _mg_credit(v):
     """积分数字：小额度保 1 位小数，上千取整，上万走 compact。"""
     try:
@@ -2137,6 +2151,10 @@ def magpie(cfg):
                 cred_err = ""
             except Exception as e:
                 credits, cred_err = [], "余额读取失败：%s" % str(e)[:60]
+            try:
+                provs = _mg_providers(c, base)
+            except Exception:
+                provs = []
     except PermissionError as e:
         return _err(str(e))
     except Exception as e:
@@ -2174,16 +2192,22 @@ def magpie(cfg):
         cred_cell = {"label": "积分", "value": "—", "tone": "muted"}
 
     stats = [
-        {"label": "调用", "value": str(calls), "tone": "warn" if errs else ("good" if calls else "muted")},
+        {"label": "供应商", "value": str(len(provs)) if provs else "—",
+         "tone": "good" if provs else "muted"},
+        {"label": "Token", "value": fmt_compact(inp + out) if (inp + out) else "—",
+         "tone": "good" if (inp + out) else "muted"},
         cred_cell,
-        {"label": "花费", "value": _mg_money(cost), "tone": "good" if float(cost or 0) > 0 else "muted"},
-        {"label": "Token", "value": fmt_compact(inp + out), "tone": "good" if (inp + out) else "muted"},
+        {"label": "消耗", "value": _mg_money(cost) if float(cost or 0) > 0 else "—",
+         "tone": "good" if float(cost or 0) > 0 else "muted"},
     ]
-    text = "%s %d 次 · %s" % (label, calls, _mg_money(cost))
+    text = "%s %d 次" % (label, calls)
     if errs:
         text += " · %d 错误" % errs
 
     detail = [["统计周期", "%s（自 %s）" % (label, str(d.get("since") or "")[:10] or "-")]]
+    if provs:
+        detail.append(["供应商", "、".join("%s（%d 模型%s）" % (n, m, "" if ok else "，未就绪")
+                                          for n, m, ok in provs[:4])])
     for _n, _rm, _lim, _rs in credits:
         _line = "%s / %s" % (_mg_credit(_rm), _mg_credit(_lim) if _lim else "?")
         if _rs:

@@ -2097,7 +2097,7 @@ def _mg_credit_window(wins):
 
 
 def _mg_credits(c, base):
-    """供应商余额：返回 [(provider 名, 剩余, 额度, 重置时间)]；失败抛异常由调用方兜住。"""
+    """供应商积分：返回 [(provider 名, 已用, 总额度, 重置时间)]；失败抛异常由调用方兜住。"""
     r = c.get(base + "/api/usage/quotas")
     r.raise_for_status()
     out = []
@@ -2105,15 +2105,11 @@ def _mg_credits(c, base):
         w = _mg_credit_window(q.get("windows"))
         if not w:
             continue
-        remain = w.get("amount")
-        if remain is None:
-            try:
-                remain = float(w.get("limit") or 0) - float(w.get("used") or 0)
-            except Exception:
-                remain = None
-        if remain is None:
+        # magpie 面板里这行是「已用 / 总额度」（amount 只增不减，读两次能确认）
+        used = w.get("amount")
+        if used is None:
             continue
-        out.append((q.get("name") or q.get("provider") or "?", float(remain),
+        out.append((q.get("name") or q.get("provider") or "?", float(used),
                     w.get("limit"), w.get("resetsAt") or ""))
     return out
 
@@ -2172,24 +2168,26 @@ def magpie(cfg):
     cost = d.get("cost") or 0
     label = _MG_PERIOD_LABEL.get(period, period)
 
-    # 积分格：多供应商时求和（都是 credits 口径），单供应商显示它自己的余额
-    remain_sum, quotal_sum = 0.0, 0.0
-    for _n, _rm, _lim, _rs in credits:
-        remain_sum += _rm
+    # 「已用 / 总额度」：积分格放总额度，消耗格放已用（多供应商求和）
+    used_sum, total_sum = 0.0, 0.0
+    for _n, _u, _lim, _rs in credits:
+        used_sum += _u
         try:
-            quotal_sum += float(_lim or 0)
+            total_sum += float(_lim or 0)
         except Exception:
             pass
     if credits:
         cred_tone = "muted"
-        if quotal_sum > 0:
-            ratio = remain_sum / quotal_sum
-            cred_tone = "warn" if ratio < 0.15 else "good"
+        if total_sum > 0:
+            cred_tone = "warn" if (total_sum - used_sum) / total_sum < 0.15 else "good"
         else:
             cred_tone = "good"
-        cred_cell = {"label": "积分", "value": _mg_credit(remain_sum), "tone": cred_tone}
+        cred_cell = {"label": "积分", "value": _mg_credit(total_sum), "tone": cred_tone}
+        spent_cell = {"label": "消耗", "value": _mg_credit(used_sum),
+                      "tone": "good" if used_sum > 0 else "muted"}
     else:
         cred_cell = {"label": "积分", "value": "—", "tone": "muted"}
+        spent_cell = {"label": "消耗", "value": "—", "tone": "muted"}
 
     stats = [
         {"label": "供应商", "value": str(len(provs)) if provs else "—",
@@ -2197,8 +2195,7 @@ def magpie(cfg):
         {"label": "Token", "value": fmt_compact(inp + out) if (inp + out) else "—",
          "tone": "good" if (inp + out) else "muted"},
         cred_cell,
-        {"label": "消耗", "value": _mg_credit(d.get("credits")) if d.get("credits") is not None else "—",
-         "tone": "good" if (d.get("credits") or 0) > 0 else "muted"},
+        spent_cell,
     ]
     text = "%s %d 次" % (label, calls)
     if errs:
@@ -2208,11 +2205,13 @@ def magpie(cfg):
     if provs:
         detail.append(["供应商", "、".join("%s（%d 模型%s）" % (n, m, "" if ok else "，未就绪")
                                           for n, m, ok in provs[:4])])
-    for _n, _rm, _lim, _rs in credits:
-        _line = "%s / %s" % (_mg_credit(_rm), _mg_credit(_lim) if _lim else "?")
+    for _n, _u, _lim, _rs in credits:
+        _line = "已用 %s / 总额 %s" % (_mg_credit(_u), _mg_credit(_lim) if _lim else "?")
+        if _lim:
+            _line += "，剩 %s" % _mg_credit(float(_lim) - _u)
         if _rs:
             _line += "（%s 重置）" % str(_rs)[:10]
-        detail.append(["剩余积分·%s" % _n, _line])
+        detail.append(["积分·%s" % _n, _line])
     if not credits and cred_err:
         detail.append(["积分", cred_err])
     if inp or out:
@@ -2221,7 +2220,7 @@ def magpie(cfg):
         _c = "%s 积分" % _mg_credit(d.get("credits")) if d.get("credits") is not None else "—"
         if float(cost or 0) > 0:
             _c += "（折合 %s）" % _mg_money(cost)
-        detail.append(["本期消耗", _c])
+        detail.append(["今日已用（按调用统计）", _c])
     hit = (cache / float(inp + cache) * 100.0) if (inp + cache) else 0.0
     if hit:
         detail.append(["缓存命中", "%.1f%%（读 %s）" % (hit, fmt_compact(cache))])

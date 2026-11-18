@@ -2168,7 +2168,7 @@ def magpie(cfg):
     cost = d.get("cost") or 0
     label = _MG_PERIOD_LABEL.get(period, period)
 
-    # 「已用 / 总额度」：积分格放总额度，消耗格放已用（多供应商求和）
+    # 积分格放剩余（总额度 - 已用），消耗格放已用（多供应商求和）
     used_sum, total_sum = 0.0, 0.0
     for _n, _u, _lim, _rs in credits:
         used_sum += _u
@@ -2182,7 +2182,9 @@ def magpie(cfg):
             cred_tone = "warn" if (total_sum - used_sum) / total_sum < 0.15 else "good"
         else:
             cred_tone = "good"
-        cred_cell = {"label": "积分", "value": _mg_credit(total_sum), "tone": cred_tone}
+        # 卡上一格放「剩余」，总额度只在明细里说清楚
+        cred_cell = {"label": "积分", "value": _mg_credit(max(0.0, total_sum - used_sum)),
+                     "tone": cred_tone}
         spent_cell = {"label": "消耗", "value": _mg_credit(used_sum),
                       "tone": "good" if used_sum > 0 else "muted"}
     else:

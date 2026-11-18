@@ -2025,7 +2025,134 @@ def msrewards(cfg):
     return _rich(txt, stats, detail, progress=prog)
 
 
+# ---------------------------------------------------------------- Magpie 网关（yetone/magpie）
+
+_MG_PERIOD_LABEL = {"today": "今日", "1d": "今日", "24h": "今日", "7d": "近 7 天",
+                    "30d": "近 30 天", "90d": "近 90 天", "all": "全部"}
+
+
+def _mg_money(v):
+    try:
+        v = float(v or 0)
+    except Exception:
+        return "$0"
+    if v <= 0:
+        return "$0"
+    if v < 0.01:
+        return "$%.4f" % v
+    if v < 1:
+        return "$%.3f" % v
+    return "$%.2f" % v
+
+
+def magpie(cfg):
+    """Magpie 网关（yetone/magpie）用量小组件。
+
+    数据只能从它的 web 面板拿：先用面板密钥 /?k=<MAGPIE_WEB_KEY> 换 cookie，
+    再取 /api/usage。面板密钥和网关的 sk- 密钥不是同一个东西，填错会一直 401。
+    """
+    base = _base(cfg)
+    if not base:
+        return _err("没填 Magpie 面板地址：如 http://192.168.1.109:3430（面板端口，不是网关的 3425）")
+    key = (cfg.get("apikey") or "").strip() or (cfg.get("password") or "").strip()
+    if not key:
+        return _err("没填面板密钥：填容器环境变量 MAGPIE_WEB_KEY 的值（不是 sk- 开头的网关密钥）")
+    period = (cfg.get("period") or "today").strip().lower() or "today"
+
+    try:
+        with _client(trust_env=False) as c:
+            c.get(base + "/", params={"k": key})          # 换 magpie_web cookie
+            r = c.get(base + "/api/usage", params={"period": period})
+            # 3425 是网关端口，对 /api/* 一律回 not_found_error；别把它误报成「密钥不对」
+            body = (r.text or "")[:600]
+            if (r.status_code == 404 or "magpie serves" in body or "not_found_error" in body
+                    or "gateway key" in body):
+                raise PermissionError("这个地址不是 Magpie 面板：面板是 3430，3425 是给模型调用用的网关端口")
+            if r.status_code in (401, 403):
+                raise PermissionError("Magpie 面板密钥不对（HTTP %d）：填 MAGPIE_WEB_KEY 那个值" % r.status_code)
+            r.raise_for_status()
+            d = r.json() or {}
+    except PermissionError as e:
+        return _err(str(e))
+    except Exception as e:
+        return _err("连不上 Magpie 面板：%s" % str(e)[:90])
+
+    def _i(k):
+        try:
+            return int(d.get(k) or 0)
+        except Exception:
+            return 0
+
+    calls, errs = _i("calls"), _i("errors")
+    inp, out = _i("input"), _i("output")
+    cache = _i("cache_read")
+    cost = d.get("cost") or 0
+    label = _MG_PERIOD_LABEL.get(period, period)
+
+    stats = [
+        {"label": "调用", "value": str(calls), "tone": "warn" if errs else ("good" if calls else "muted")},
+        {"label": "输入", "value": fmt_compact(inp), "tone": "good" if inp else "muted"},
+        {"label": "输出", "value": fmt_compact(out), "tone": "good" if out else "muted"},
+        {"label": "花费", "value": _mg_money(cost), "tone": "good" if float(cost or 0) > 0 else "muted"},
+    ]
+    text = "%s %d 次 · %s" % (label, calls, _mg_money(cost))
+    if errs:
+        text += " · %d 错误" % errs
+
+    detail = [["统计周期", "%s（自 %s）" % (label, str(d.get("since") or "")[:10] or "-")]]
+    hit = (cache / float(inp + cache) * 100.0) if (inp + cache) else 0.0
+    if hit:
+        detail.append(["缓存命中", "%.1f%%（读 %s）" % (hit, fmt_compact(cache))])
+
+    models = [m for m in (d.get("models") or []) if int(m.get("calls") or 0) > 0]
+    models.sort(key=lambda m: -int(m.get("calls") or 0))
+    if models:
+        top = models[:3]
+        detail.append(["模型 TOP", "、".join("%s %d 次" % (str(m.get("model") or m.get("id") or "?").split("/")[-1],
+                                                             int(m.get("calls") or 0)) for m in top)])
+        total_m = len(d.get("models") or [])
+        detail.append(["模型数", "%d 个" % total_m if len(models) >= total_m
+                       else "%d 个（本期用过 %d 个）" % (total_m, len(models))])
+    accts = [a for a in (d.get("accounts") or []) if int(a.get("calls") or 0) > 0]
+    if accts:
+        detail.append(["账号", "、".join("%s/%s" % (a.get("provider") or "?", a.get("account") or "?")
+                                        for a in accts[:3])])
+    keys = [k for k in (d.get("callerKeys") or []) if int(k.get("calls") or 0) > 0]
+    if keys:
+        detail.append(["调用密钥", "、".join("%s %d 次" % (k.get("callerKeyName") or "?", int(k.get("calls") or 0))
+                                          for k in keys[:3])])
+    ttft = d.get("ttft_ms") or 0
+    if ttft:
+        try:
+            detail.append(["平均首字", "%.1f 秒" % (float(ttft) / 1000.0)])
+        except Exception:
+            pass
+    dm, dout = d.get("decode_ms") or 0, d.get("decode_out") or 0
+    if dm and dout:
+        try:
+            detail.append(["解码速度", "%.0f tok/s" % (float(dout) / (float(dm) / 1000.0))])
+        except Exception:
+            pass
+    if errs:
+        detail.append(["错误", "%d 次" % errs])
+
+    return _rich(text, stats, detail)
+
 PROVIDERS = {
+    "magpie": {
+        "label": "Magpie 网关 / 用量", "icon": "🪄",
+        "fields": [
+            {"key": "url", "label": "面板地址", "ph": "http://192.168.1.109:3430",
+             "hint": "magpie 的 web 面板端口 3430；不是网关端口 3425"},
+            {"key": "apikey", "label": "面板密钥", "ph": "MAGPIE_WEB_KEY 的值", "pw": True,
+             "hint": "容器环境变量 MAGPIE_WEB_KEY（docker-compose.yml 里那份）；不是 sk- 开头的网关密钥"},
+            {"key": "period", "label": "统计周期", "ph": "today",
+             "hint": "today / 7d / 30d，默认 today"},
+        ],
+        "hint": "显示调用次数 / 输入 / 输出 / 花费；点开还有缓存命中率、模型与密钥排行、平均首字与解码速度。"
+                "数据来自 magpie 面板的 /api/usage。",
+        "fetch": magpie,
+    },
     "qbittorrent": {
         "label": "qBittorrent", "icon": "⚡",
         "fields": ["url", "username", "password"],

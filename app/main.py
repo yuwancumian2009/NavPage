@@ -57,6 +57,35 @@ def _now():
     return int(time.time())
 
 
+_ICON_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+             ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+             ".ico": "image/x-icon"}
+
+
+def inline_icon_src(item, limit=10240):
+    """小图标直接内联成 data URI。
+
+    小图（<=10KB，绝大多数 favicon）不走 /api/iconfile，页面里一次 HTTP 请求都不发，
+    这样就绕开了浏览器缓存、扩展拦截、网关/代理改写、MIME 判定这些差异——
+    「电脑上看得见、我这看不见」这类问题从根上消失。
+    """
+    raw = (item.get("icon") or "").strip()
+    if not raw or raw.startswith("http://") or raw.startswith("https://"):
+        return ""
+    path = os.path.join(db.ICON_DIR, os.path.basename(raw))
+    mime = _ICON_MIME.get(os.path.splitext(path)[1].lower())
+    if not mime:
+        return ""
+    try:
+        if os.path.getsize(path) > limit:
+            return ""
+        import base64
+        with open(path, "rb") as f:
+            return "data:%s;base64,%s" % (mime, base64.b64encode(f.read()).decode())
+    except Exception:
+        return ""
+
+
 def icon_url_for(item):
     raw = (item.get("icon") or "").strip()
     if not raw:
@@ -147,6 +176,7 @@ def resolve_item(item, mode, ctx=None):
     out["availability"] = "+".join(avail) if avail else "none"
     out["has_frp"] = bool(frp)
     out["icon_url"] = icon_url_for(item)
+    out["icon_src"] = inline_icon_src(item)
     # 小组件配置里含密码 / API Key，只把类型下发给前端，凭据留在服务端
     w = item.get("widget") or {}
     out["has_widget"] = bool(w.get("type"))

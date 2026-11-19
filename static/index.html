@@ -148,7 +148,7 @@
              @click="onCardClick($event, it)"
              @contextmenu="onCardMenu($event, it)">
             <div class="np-card-icon">
-              <img v-if="it.icon_url" :src="it.icon_url" alt="" loading="lazy" decoding="async" @error="onIconError(it)">
+              <img v-if="it.icon_src || it.icon_url" :src="it.icon_src || it.icon_url" alt="" loading="lazy" decoding="async" @error="onIconError(it)">
               <span v-else class="np-initial" :style="{background: colorOf(it.name)}">{{ initial(it.name) }}</span>
             </div>
             <div class="np-card-text">
@@ -269,8 +269,8 @@
               <tbody>
                 <tr v-for="it in items" :key="it.id" :class="{dim: it.hidden}">
                   <td>
-                    <span class="np-mini" :style="it.icon_url ? {} : {background: colorOf(it.name)}">
-                      <img v-if="it.icon_url" :src="it.icon_url" alt="" loading="lazy" decoding="async" @error="onIconError(it)">
+                    <span class="np-mini" :style="(it.icon_src || it.icon_url) ? {} : {background: colorOf(it.name)}">
+                      <img v-if="it.icon_src || it.icon_url" :src="it.icon_src || it.icon_url" alt="" loading="lazy" decoding="async" @error="onIconError(it)">
                       <template v-else>{{ initial(it.name) }}</template>
                     </span>
                   </td>

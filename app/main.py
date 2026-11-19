@@ -63,7 +63,14 @@ def icon_url_for(item):
         return ""
     if raw.startswith("http://") or raw.startswith("https://"):
         return "/api/icon?url=" + quote(raw, safe="")
-    return "/api/iconfile/" + quote(os.path.basename(raw), safe="")
+    name = os.path.basename(raw)
+    # 带上文件 mtime 做版本号：图标被重抓/替换后 URL 会变，浏览器不会继续用旧的失败结果
+    # （/api/iconfile 的 Cache-Control 是 7 天，同名文件换内容时旧缓存会一直显示不出来）
+    try:
+        v = int(os.path.getmtime(os.path.join(db.ICON_DIR, name)))
+    except Exception:
+        v = 0
+    return "/api/iconfile/" + quote(name, safe="") + ("?v=%d" % v if v else "")
 
 
 def resolve_item(item, mode, ctx=None):

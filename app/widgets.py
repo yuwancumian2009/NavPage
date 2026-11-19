@@ -2261,7 +2261,184 @@ def magpie(cfg):
 
     return _rich(text, stats, detail)
 
+# ---------------------------------------------------------------- 爱快 iKuai
+
+# 没填 ifname 时按这几个常见 WAN 逻辑名轮询一遍（3.x 是 adsl1/wan1，4.x 多是 wan1）
+_IK_WAN_NAMES = ("adsl1", "wan1", "wan2", "eth3")
+_IK_ISP = {"CTCC": "电信", "CUCC": "联通", "CMCC": "移动", "CRTC": "铁通", "CERNET": "教育网"}
+
+
+def _ik_md5(s):
+    import hashlib
+    return hashlib.md5((s or "").encode()).hexdigest()
+
+
+def _ik_unwrap(d):
+    """/Action/call 的返回有两种包法：{code,results:{...}} 或直接 {...}。"""
+    if not isinstance(d, dict):
+        return {}
+    res = d.get("results")
+    return res if isinstance(res, dict) else d
+
+
+def _ik_call(c, base, func, param, action="show"):
+    r = c.post(base + "/Action/call", json={"func_name": func, "action": action, "param": param})
+    r.raise_for_status()
+    d = r.json() or {}
+    code = d.get("code")
+    if code not in (0, "0", None):
+        raise RuntimeError("%s（%s）" % (d.get("message") or d.get("ErrMsg") or "接口报错", code))
+    return _ik_unwrap(d)
+
+
+def _ik_pct(v):
+    try:
+        return float(str(v).strip().rstrip("%"))
+    except Exception:
+        return None
+
+
+def ikuai(cfg):
+    """爱快 iKuai 路由：直接调它的 HTTP API（/Action/login + /Action/call）。
+
+    只发 HTTP 请求读数据，不装代理/不改路由/不碰宿主机网络；
+    navpage 能访问到爱快的管理地址就能用（跨网段靠现有路由即可）。
+    """
+    base = _base(cfg)
+    if not base:
+        return _err("没填爱快地址：填管理后台地址，如 http://192.168.1.1")
+    if "://" not in base:
+        base = "http://" + base
+    user = (cfg.get("username") or cfg.get("user") or "admin").strip() or "admin"
+    pwd = cfg.get("password") or ""
+    if not pwd:
+        return _err("没填爱快密码：账号默认 admin，密码是爱快后台的登录密码")
+    iface = (cfg.get("iface") or "").strip()
+
+    try:
+        with _client(trust_env=False) as c:
+            md5 = _ik_md5(pwd)
+            lr = c.post(base + "/Action/login", json={"username": user, "passwd": md5, "pass": md5})
+            lr.raise_for_status()
+            try:
+                lj = lr.json() or {}
+            except Exception:
+                lj = {}
+            res = lj.get("Result")
+            if res is not None and str(res) != "10000":
+                return _err("爱快登录失败：%s（检查账号/密码）" % (lj.get("ErrMsg") or "Result=%s" % res))
+            st = _ik_call(c, base, "homepage", {"TYPE": "sysstat"})
+            sysstat = st.get("sysstat") or {}
+            if not sysstat:
+                return _err("爱快没返回 sysstat：确认这台是爱快（不是 iStoreOS/OpenWrt），且允许 HTTP 访问后台")
+            wan = {}
+            try:
+                if iface:
+                    wan = (_ik_call(c, base, "homepage",
+                                    {"TYPE": "wan_stat", "ifname": iface, "interface": iface}).get("wan_stat") or {})
+                else:
+                    wan = (_ik_call(c, base, "homepage", {"TYPE": "wan_stat"}).get("wan_stat") or {})
+                    if not wan:
+                        for nm in _IK_WAN_NAMES:
+                            d3 = _ik_call(c, base, "homepage",
+                                          {"TYPE": "wan_stat", "ifname": nm, "interface": nm})
+                            wan = d3.get("wan_stat") or {}
+                            if wan:
+                                iface = nm
+                                break
+            except Exception:
+                wan = {}
+    except PermissionError as e:
+        return _err(str(e))
+    except Exception as e:
+        msg = str(e)
+        if "404" in msg or "405" in msg:
+            return _err("这个地址没有爱快的登录接口（/Action/login 返回 404/405）："
+                        "确认填的是爱快后台地址，不是 iStoreOS / OpenWrt / 其它面板")
+        return _err("连不上爱快：%s" % msg[:80])
+
+    stream = sysstat.get("stream") or {}
+    mem = sysstat.get("memory") or {}
+    ou = sysstat.get("online_user") or {}
+    ver = sysstat.get("verinfo") or {}
+    down = float(stream.get("download") or 0)
+    up = float(stream.get("upload") or 0)
+    users = int(ou.get("count") or 0)
+    cpus = [_ik_pct(x) for x in (sysstat.get("cpu") or [])]
+    cpus = [x for x in cpus if x is not None]
+    cpu_avg = (sum(cpus) / len(cpus)) if cpus else None
+    mem_used = _ik_pct(mem.get("used"))
+
+    stats = [
+        {"label": "用户", "value": str(users), "tone": "good" if users else "muted"},
+        {"label": "下载", "value": fmt_speed(down), "tone": "good"},
+        {"label": "上传", "value": fmt_speed(up), "tone": "good"},
+        {"label": "CPU", "value": ("%.0f%%" % cpu_avg) if cpu_avg is not None else "-",
+         "tone": "bad" if (cpu_avg or 0) >= 90 else ("warn" if (cpu_avg or 0) >= 70 else "good")},
+    ]
+    txt = "↓%s ↑%s" % (fmt_speed(down), fmt_speed(up))
+
+    detail = []
+    host = str(sysstat.get("hostname") or "")
+    ip = str(sysstat.get("ip_addr") or "")
+    if host or ip:
+        detail.append(["设备", ("%s（%s）" % (host, ip)) if host and ip else (host or ip)])
+    if ver.get("verstring"):
+        detail.append(["固件", str(ver.get("verstring"))])
+    up_s = sysstat.get("uptime")
+    if up_s:
+        detail.append(["运行时长", "%s（%.1f 天）" % (fmt_dur(up_s), float(up_s) / 86400.0)])
+    if cpus:
+        temp = sysstat.get("cputemp") or []
+        t = ""
+        try:
+            if temp:
+                t = " · %s℃" % temp[0]
+        except Exception:
+            t = ""
+        detail.append(["CPU", "%d 核 平均 %.0f%%%s" % (len(cpus), cpu_avg or 0, t)])
+    if mem.get("total"):
+        # 爱快的 memory 单位是 KB，不是字节
+        total = float(mem.get("total") or 0) * 1024.0
+        avail = float(mem.get("available") or 0) * 1024.0
+        if total:
+            used_pct = mem_used if mem_used is not None else (total - avail) * 100.0 / total
+            detail.append(["内存", "%.0f%%（%s / %s）" % (used_pct, fmt_bytes(total - avail), fmt_bytes(total))])
+    if stream.get("connect_num") is not None:
+        detail.append(["连接数", "%s（TCP %s / UDP %s）" % (stream.get("connect_num"),
+                                                     stream.get("tcp_connect_num", "-"),
+                                                     stream.get("udp_connect_num", "-"))])
+    if stream.get("total_down") or stream.get("total_up"):
+        detail.append(["累计流量", "↓%s ↑%s" % (fmt_compact(stream.get("total_down")),
+                                            fmt_compact(stream.get("total_up")))])
+    if wan:
+        isp = _IK_ISP.get(str(wan.get("isp") or "").upper(), str(wan.get("isp") or ""))
+        bits = [str(wan.get("ip_addr") or "-")]
+        if isp:
+            bits.append(isp)
+        if wan.get("rtt"):
+            bits.append("%sms" % wan.get("rtt"))
+        if wan.get("result") and wan.get("result") != "success":
+            bits.append(str(wan.get("errmsg") or "线路异常"))
+        detail.append(["WAN%s" % (("·" + iface) if iface else ""), " · ".join(bits)])
+    return _rich(txt, stats, detail)
+
+
 PROVIDERS = {
+    "ikuai": {
+        "label": "爱快 iKuai / 路由", "icon": "🧭",
+        "fields": [
+            {"key": "url", "label": "管理地址", "ph": "http://192.168.1.1",
+             "hint": "爱快后台地址（走它的 HTTP API，不需要开 SSH）"},
+            {"key": "username", "label": "账号", "ph": "admin", "hint": "爱快后台登录账号"},
+            {"key": "password", "label": "密码", "ph": "爱快后台密码", "pw": True},
+            {"key": "iface", "label": "WAN 接口名（可留空）", "ph": "adsl1 / wan1",
+             "hint": "留空自动探测；填了只读这条线路的 WAN 信息"},
+        ],
+        "hint": "读 /Action/call 的 sysstat + wan_stat：上下行速率、在线终端、CPU/内存/温度、"
+                "连接数、累计流量、WAN 线路 IP 与延迟。只发 HTTP 请求，不动任何网络配置。",
+        "fetch": ikuai,
+    },
     "magpie": {
         "label": "Magpie 网关 / 用量", "icon": "🪄",
         "fields": [

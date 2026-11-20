@@ -1,3 +1,6 @@
+## 2.7.9
+- magpie 小组件「今日消耗」改用面板口径：/api/usage/quotas 的 moreDaily 今日数值（之前用的 /api/usage credits 偏大）。
+
 ## 2.7.8
 - 小图标（≤10KB）直接内联成 data URI：页面不再发 /api/iconfile 请求，彻底绕开浏览器缓存/扩展/网关差异导致的图标不显示。
 

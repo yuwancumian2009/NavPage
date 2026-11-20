@@ -2096,12 +2096,71 @@ def _mg_credit_window(wins):
     return best
 
 
+def _mg_today_fmt(v):
+    """今日消耗格式：<100 两位小数（面板就是 67.98 这种），100~999 一位，上千取整。"""
+    try:
+        v = float(v)
+    except Exception:
+        return "—"
+    if v >= 1000:
+        return "%.0f" % v
+    if v >= 100:
+        return "%.1f" % v
+    return "%.2f" % v
+
+
+def _mg_daily_today(q):
+    """面板「每天用掉的积分」里今天那一条（moreDaily[].days[-1].used）。
+
+    这是面板自己算的今日消耗（基础积分 / 额外积分分开记），和 /api/usage 的 credits
+    不是一回事——后者按请求累计，口径更大。取值顺序：积分合计 → 额外积分 → 基础积分。
+    """
+    blocks = q.get("moreDaily") or []
+
+    def pick(window):
+        for b in blocks:
+            if str(b.get("window") or "").strip().lower() != window:
+                continue
+            days = b.get("days") or []
+            if days:
+                try:
+                    return float(days[-1].get("used") or 0)
+                except Exception:
+                    return None
+        return None
+
+    total = pick("total credits")
+    extra = pick("extra credits")
+    base_used = pick("credits")
+    if total is None:
+        days = (q.get("daily") or {}).get("days") or []
+        if days:
+            try:
+                total = float(days[-1].get("used") or 0)
+            except Exception:
+                total = None
+    if total is None:
+        total = extra
+    if base_used is None and total is not None:
+        # moreDaily 里没有「积分」区块时，面板的今日基础消耗就是 0（额度没动）
+        base_used = 0.0
+    return {"total": total, "extra": extra, "base": base_used}
+
+
 def _mg_credits(c, base):
-    """供应商积分：返回 [(provider 名, 已用, 总额度, 重置时间)]；失败抛异常由调用方兜住。"""
+    """供应商积分 + 今日消耗。
+
+    返回 ([(provider 名, 已用, 总额度, 重置时间)], {"total": 今日合计, "extra": ..., "base": ...})；
+    失败抛异常，由调用方兜住。
+    """
     r = c.get(base + "/api/usage/quotas")
     r.raise_for_status()
-    out = []
+    out, today = [], {"total": None, "extra": None, "base": None}
     for q in (r.json() or []):
+        d0 = _mg_daily_today(q)
+        for k, v in d0.items():
+            if v is not None:
+                today[k] = (today[k] or 0.0) + v
         w = _mg_credit_window(q.get("windows"))
         if not w:
             continue
@@ -2109,10 +2168,9 @@ def _mg_credits(c, base):
         used = w.get("amount")
         if used is None:
             continue
-        out.append((q.get("name") or q.get("provider") or "?", float(used),
-                    w.get("limit"), w.get("resetsAt") or ""))
-    return out
-
+        out.append((q.get("name") or q.get("provider") or "?",
+                    float(used), w.get("limit"), w.get("resetsAt") or ""))
+    return out, today
 
 def magpie(cfg):
     """Magpie 网关（yetone/magpie）用量小组件。
@@ -2143,10 +2201,11 @@ def magpie(cfg):
             d = r.json() or {}
             # 供应商余额：读不到就让积分格显示 —，不能拖垮调用数/花费
             try:
-                credits = _mg_credits(c, base)
+                credits, mg_today = _mg_credits(c, base)
                 cred_err = ""
             except Exception as e:
-                credits, cred_err = [], "余额读取失败：%s" % str(e)[:60]
+                credits, mg_today = [], {"total": None, "extra": None, "base": None}
+                cred_err = "余额读取失败：%s" % str(e)[:60]
             try:
                 provs = _mg_providers(c, base)
             except Exception:
@@ -2185,11 +2244,15 @@ def magpie(cfg):
         # 卡上一格放「剩余」，总额度只在明细里说清楚
         cred_cell = {"label": "积分", "value": _mg_credit(max(0.0, total_sum - used_sum)),
                      "tone": cred_tone}
-        spent_cell = {"label": "消耗", "value": _mg_credit(used_sum),
-                      "tone": "good" if used_sum > 0 else "muted"}
+        # 消耗格 = 面板「每天用掉的积分 · 今天」（不是累计已用，也不是 /api/usage 的 credits）
+        today_used = mg_today.get("total")
+        if today_used is None:
+            today_used = d.get("credits")
+        spent_cell = {"label": "今日消耗", "value": _mg_today_fmt(today_used),
+                      "tone": "good" if (today_used or 0) > 0 else "muted"}
     else:
         cred_cell = {"label": "积分", "value": "—", "tone": "muted"}
-        spent_cell = {"label": "消耗", "value": "—", "tone": "muted"}
+        spent_cell = {"label": "今日消耗", "value": "—", "tone": "muted"}
 
     stats = [
         {"label": "供应商", "value": str(len(provs)) if provs else "—",
@@ -2214,6 +2277,16 @@ def magpie(cfg):
         if _rs:
             _line += "（%s 重置）" % str(_rs)[:10]
         detail.append(["积分·%s" % _n, _line])
+    if mg_today.get("total") is not None:
+        _t = "%s 积分" % _mg_today_fmt(mg_today.get("total"))
+        _parts = []
+        if mg_today.get("base") is not None:
+            _parts.append("基础 %s" % _mg_today_fmt(mg_today.get("base")))
+        if mg_today.get("extra") is not None:
+            _parts.append("额外 %s" % _mg_today_fmt(mg_today.get("extra")))
+        if _parts:
+            _t += "（%s）" % " · ".join(_parts)
+        detail.append(["今日消耗（面板）", _t])
     if not credits and cred_err:
         detail.append(["积分", cred_err])
     if inp or out:
